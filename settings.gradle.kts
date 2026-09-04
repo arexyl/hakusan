@@ -14,6 +14,12 @@ dependencyResolutionManagement {
   }
 }
 
+buildCache {
+  local {
+    directory = file("build/cache/gradle")
+  }
+}
+
 rootProject.name = "hakusan"
 
 include(

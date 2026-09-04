@@ -1,6 +1,10 @@
 import org.gradle.buildconfiguration.tasks.UpdateDaemonJvm
 
 buildscript {
+  configurations.classpath {
+    resolutionStrategy.activateDependencyLocking()
+  }
+
   dependencies {
     classpath(libs.kotlin.gradle)
   }
