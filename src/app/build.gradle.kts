@@ -44,6 +44,10 @@ kotlin {
   }
 }
 
+dependencyLocking {
+  lockAllConfigurations()
+}
+
 dependencies {
   implementation(project(":app:ui"))
   implementation(project(":app:sdk"))

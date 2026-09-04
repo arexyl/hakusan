@@ -32,6 +32,10 @@ kotlin {
   }
 }
 
+dependencyLocking {
+  lockAllConfigurations()
+}
+
 dependencies {
   implementation(project(":app:sdk"))
   implementation(project(":reader"))

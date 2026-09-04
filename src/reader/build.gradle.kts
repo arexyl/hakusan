@@ -31,3 +31,7 @@ kotlin {
     languageVersion = KotlinVersion.KOTLIN_2_4
   }
 }
+
+dependencyLocking {
+  lockAllConfigurations()
+}
