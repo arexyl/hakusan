@@ -1,0 +1,14 @@
+.gradle/
+.kotlin/
+
+build/
+
+*.jks
+*.keystore
+
+keystore.properties
+local.properties
+signing.properties
+
+.DS_Store
+Thumbs.db
