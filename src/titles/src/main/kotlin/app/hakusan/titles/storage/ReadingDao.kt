@@ -11,7 +11,14 @@ import kotlinx.coroutines.flow.Flow
 
 @Dao
 internal abstract class ReadingDao {
-  @Query("SELECT * FROM chapters WHERE title_storage_id = :titleStorageId")
+  @Query(
+    """
+    SELECT *
+    FROM chapters
+    WHERE title_storage_id = :titleStorageId
+    ORDER BY canonical_index
+    """,
+  )
   abstract suspend fun loadChapters(
     titleStorageId: Long,
   ): List<ChapterEntity>
@@ -48,6 +55,20 @@ internal abstract class ReadingDao {
     titleStorageId: Long,
     displayName: String,
     canonicalIndex: Int,
+  ): Int
+
+  @Query(
+    """
+    UPDATE chapters
+    SET display_name = :displayName
+    WHERE storage_id = :storageId
+      AND title_storage_id = :titleStorageId
+    """,
+  )
+  abstract suspend fun updateChapterMetadata(
+    storageId: Long,
+    titleStorageId: Long,
+    displayName: String,
   ): Int
 
   @Query(
