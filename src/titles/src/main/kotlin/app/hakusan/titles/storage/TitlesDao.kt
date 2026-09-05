@@ -85,7 +85,7 @@ internal abstract class TitlesDao {
       ON title_categories.category_id = categories.id
     LEFT JOIN titles
       ON titles.storage_id = title_categories.title_storage_id
-    ORDER BY categories.id, titles.storage_id
+    ORDER BY categories.id, title_categories.title_storage_id
     """,
   )
   abstract fun observeLibraryShelfRows(): Flow<List<LibraryShelfRow>>

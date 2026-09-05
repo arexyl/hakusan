@@ -6,25 +6,26 @@ internal object LibraryAddPolicy {
     categories: List<LibraryCategory>,
     selection: LibraryCategorySelection,
   ): InitialCategoryResolution {
-    val categoriesById = categories.associateBy(LibraryCategory::id)
-    check(categoriesById.size == categories.size) {
+    if (selection == LibraryCategorySelection.Automatic) {
+      when (categories.size) {
+        0 -> return InitialCategoryResolution.CreateDefault
+        1 -> return InitialCategoryResolution.Assign(
+          setOf(categories.single().id),
+        )
+      }
+    }
+
+    val categoryIds = categories.mapTo(HashSet()) { it.id }
+    check(categoryIds.size == categories.size) {
       "Category identities must be unique."
     }
 
     return when (selection) {
-      LibraryCategorySelection.Automatic -> when (categories.size) {
-        0 -> InitialCategoryResolution.CreateDefault
-        1 -> InitialCategoryResolution.Assign(
-          setOf(categories.single().id),
-        )
-
-        else -> InitialCategoryResolution.SelectionRequired(
-          categories.toOwnedSet(),
-        )
-      }
+      LibraryCategorySelection.Automatic ->
+        InitialCategoryResolution.SelectionRequired(categories.toOwnedSet())
 
       is LibraryCategorySelection.Explicit -> {
-        val missingIds = selection.categoryIds - categoriesById.keys
+        val missingIds = selection.categoryIds - categoryIds
         if (missingIds.isEmpty()) {
           InitialCategoryResolution.Assign(selection.categoryIds)
         } else {

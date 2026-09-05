@@ -101,6 +101,12 @@ class LibraryContractTest {
         ),
       ),
     )
+    assertThrows(IllegalStateException::class.java) {
+      LibraryAddPolicy.resolve(
+        categories = listOf(first, category(1, "Renamed")),
+        selection = LibraryCategorySelection.Automatic,
+      )
+    }
   }
 
   @Test
@@ -144,6 +150,18 @@ class LibraryContractTest {
           LibraryShelf.create(
             category = category(1, "Default"),
             titleIds = listOf(TitleId(OTHER_TITLE_ID)),
+          ),
+        ),
+      )
+    }
+    assertThrows(IllegalArgumentException::class.java) {
+      LibraryShelfState.create(
+        titlesById = mapOf(title.id to title),
+        shelves = listOf(
+          firstShelf,
+          LibraryShelf.create(
+            category = category(1, "Renamed"),
+            titleIds = listOf(title.id),
           ),
         ),
       )

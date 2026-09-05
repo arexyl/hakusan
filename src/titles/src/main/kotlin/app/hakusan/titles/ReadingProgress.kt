@@ -104,56 +104,69 @@ data class TitleReadingProgress private constructor(
   val libraryResumePosition: LibraryResumePosition?,
 ) {
   init {
-    val canonicalIds = canonicalChapters.map { it.chapter.id }
-    require(canonicalIds.toSet().size == canonicalIds.size) {
+    val resume = libraryResumePosition
+    var allOwned = true
+    var resumeAliasConflict = false
+    var resumeIdPresent = false
+    var resumeIdRead = false
+    val canonicalIds = HashSet<ChapterId>(canonicalChapters.size)
+    val canonicalAliases = HashSet<SourceChapterAlias>(
+      canonicalChapters.size,
+    )
+    canonicalChapters.forEach { state ->
+      val chapter = state.chapter
+      canonicalIds += chapter.id
+      canonicalAliases += chapter.alias
+      if (
+        chapter.titleId != titleId || chapter.alias.titleAlias != titleAlias
+      ) {
+        allOwned = false
+      }
+      if (resume != null) {
+        if (
+          chapter.alias == resume.chapter.alias &&
+          chapter.id != resume.chapter.id
+        ) {
+          resumeAliasConflict = true
+        }
+        if (chapter.id == resume.chapter.id) {
+          resumeIdPresent = true
+          if (state.isRead) {
+            resumeIdRead = true
+          }
+        }
+      }
+    }
+    require(canonicalIds.size == canonicalChapters.size) {
       "Canonical reading progress must not repeat a chapter identity."
     }
-    require(
-      canonicalChapters.map { it.chapter.alias }.toSet().size ==
-        canonicalChapters.size
-    ) {
+    require(canonicalAliases.size == canonicalChapters.size) {
       "Canonical reading progress must not repeat a source chapter alias."
     }
-    require(canonicalChapters.all { state ->
-      state.chapter.titleId == titleId &&
-        state.chapter.alias.titleAlias == titleAlias
-    }) {
+    require(allOwned) {
       "Every canonical chapter must belong to the progress title."
     }
     require(
-      libraryResumePosition == null ||
+      resume == null ||
         (
-          libraryResumePosition.position.titleId == titleId &&
-            libraryResumePosition.chapter.alias.titleAlias == titleAlias
+          resume.position.titleId == titleId &&
+            resume.chapter.alias.titleAlias == titleAlias
         )
     ) {
       "A resume position must belong to the progress title."
     }
-    require(
-      libraryResumePosition == null ||
-        canonicalChapters.none { state ->
-          state.chapter.alias == libraryResumePosition.chapter.alias &&
-            state.chapter.id != libraryResumePosition.chapter.id
-        }
-    ) {
+    require(!resumeAliasConflict) {
       "One source chapter alias must not identify two chapters."
     }
-    require(libraryResumePosition == null || isInLibrary) {
+    require(resume == null || isInLibrary) {
       "Only a Library title may expose a persistent resume position."
     }
     require(
-      libraryResumePosition == null ||
-        libraryResumePosition.isCurrentlyAvailable ==
-        (libraryResumePosition.chapter.id in canonicalIds)
+      resume == null || resume.isCurrentlyAvailable == resumeIdPresent
     ) {
       "Resume availability must derive from the canonical sequence."
     }
-    require(
-      libraryResumePosition == null ||
-        canonicalChapters.none {
-          it.chapter.id == libraryResumePosition.chapter.id && it.isRead
-        }
-    ) {
+    require(resume == null || !resumeIdRead) {
       "A read chapter must not retain a resume position."
     }
   }

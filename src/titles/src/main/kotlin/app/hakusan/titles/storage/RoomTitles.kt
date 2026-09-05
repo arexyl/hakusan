@@ -170,34 +170,56 @@ internal class RoomTitles(
     rows: List<LibraryShelfRow>,
   ): LibraryShelfState {
     val titlesById = LinkedHashMap<TitleId, LibraryTitle>()
-    val shelvesByCategory = LinkedHashMap<CategoryId, ShelfAccumulator>()
+    val shelvesByCategoryId = LinkedHashMap<Long, ShelfAccumulator>()
 
     rows.forEach { row ->
-      val category = LibraryCategory(
-        id = CategoryId(row.categoryId),
-        name = row.categoryName,
-      )
-      val shelf = shelvesByCategory.getOrPut(category.id) {
-        ShelfAccumulator(category)
+      val shelf = shelvesByCategoryId.getOrPut(row.categoryId) {
+        ShelfAccumulator(
+          LibraryCategory(
+            id = CategoryId(row.categoryId),
+            name = row.categoryName,
+          ),
+        )
       }
-      check(shelf.category == category) {
+      check(shelf.category.name == row.categoryName) {
         "One category identity produced conflicting shelf metadata."
       }
 
-      row.toLibraryTitle()?.let { title ->
-        val previous = titlesById.putIfAbsent(title.id, title)
-        check(previous == null || previous == title) {
-          "One title identity produced conflicting shelf metadata."
+      val storedTitleId = row.titleId
+      if (storedTitleId == null) {
+        check(
+          row.sourceIdentity == null &&
+            row.sourceTitleKey == null &&
+            row.titleDisplayName == null &&
+            row.titleDescription == null
+        ) {
+          "An empty shelf row contained partial title metadata."
         }
-        check(shelf.titleIds.add(title.id)) {
-          "One shelf contained a duplicate title identity."
+        return@forEach
+      }
+
+      val titleId = TitleId(storedTitleId)
+      val existing = titlesById[titleId]
+      val title = when {
+        existing == null -> row.toLibraryTitle(titleId).also { created ->
+          titlesById[titleId] = created
         }
+
+        existing.hasSameMetadataAs(row) -> existing
+        else -> {
+          // Preserve field validation on corrupted projection rows.
+          row.toLibraryTitle(titleId)
+          error("One title identity produced conflicting shelf metadata.")
+        }
+      }
+      check(shelf.titleIds.add(title.id)) {
+        "One shelf contained a duplicate title identity."
       }
     }
 
     return LibraryShelfState.create(
       titlesById = titlesById,
-      shelves = shelvesByCategory.values.map { shelf ->
+      shelves = shelvesByCategoryId.values.map { shelf ->
         LibraryShelf.create(
           category = shelf.category,
           titleIds = shelf.titleIds,
@@ -206,29 +228,25 @@ internal class RoomTitles(
     )
   }
 
-  private fun LibraryShelfRow.toLibraryTitle(): LibraryTitle? {
-    val storedTitleId = titleId
-    if (storedTitleId == null) {
-      check(
-        sourceIdentity == null &&
-          sourceTitleKey == null &&
-          titleDisplayName == null &&
-          titleDescription == null
-      ) {
-        "An empty shelf row contained partial title metadata."
-      }
-      return null
-    }
-    return LibraryTitle(
-      id = TitleId(storedTitleId),
-      alias = SourceTitleAlias(
-        sourceIdentity = checkNotNull(sourceIdentity),
-        sourceTitleKey = checkNotNull(sourceTitleKey),
-      ),
-      displayName = checkNotNull(titleDisplayName),
-      description = titleDescription,
-    )
-  }
+  private fun LibraryShelfRow.toLibraryTitle(
+    titleId: TitleId,
+  ): LibraryTitle = LibraryTitle(
+    id = titleId,
+    alias = SourceTitleAlias(
+      sourceIdentity = checkNotNull(sourceIdentity),
+      sourceTitleKey = checkNotNull(sourceTitleKey),
+    ),
+    displayName = checkNotNull(titleDisplayName),
+    description = titleDescription,
+  )
+
+  private fun LibraryTitle.hasSameMetadataAs(
+    row: LibraryShelfRow,
+  ): Boolean =
+    alias.sourceIdentity == row.sourceIdentity &&
+      alias.sourceTitleKey == row.sourceTitleKey &&
+      displayName == row.titleDisplayName &&
+      description == row.titleDescription
 
   private fun successfulMembership(
     titleId: TitleId,

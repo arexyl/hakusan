@@ -24,6 +24,7 @@ import app.hakusan.titles.SourceTitleAlias
 import app.hakusan.titles.TitleId
 import app.hakusan.titles.TitleReadingProgress
 import androidx.room3.withWriteTransaction
+import java.util.ArrayList
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.distinctUntilChanged
@@ -106,7 +107,10 @@ internal class RoomReading(
   ): Flow<TitleReadingProgress?> =
     readingDao.observeReadingProgressRows(titleId.value)
       .map(::toReadingProgress)
-      .distinctUntilChanged()
+      .distinctUntilChanged { previous, current ->
+        previous?.libraryResumePosition == current?.libraryResumePosition &&
+          previous == current
+      }
 
   suspend fun recordActualPosition(
     update: ActualPositionUpdate,
@@ -413,12 +417,8 @@ internal class RoomReading(
     }
 
     val first = rows.first()
-    check(rows.all { row ->
-      row.titleId == first.titleId &&
-        row.titleSourceIdentity == first.titleSourceIdentity &&
-        row.titleSourceKey == first.titleSourceKey &&
-        row.isLibraryMember == first.isLibraryMember
-    }) {
+    // Preserve projection failure priority: title, canonical, then resume.
+    check(rows.all { row -> row.hasSameTitleStateAs(first) }) {
       "One progress query returned conflicting title state."
     }
     val titleId = TitleId(first.titleId)
@@ -426,24 +426,46 @@ internal class RoomReading(
       sourceIdentity = first.titleSourceIdentity,
       sourceTitleKey = first.titleSourceKey,
     )
-    val canonical = rows.mapNotNull { row ->
-      row.toCanonicalChapterState(titleId, titleAlias)
+    val canonical = ArrayList<ChapterReadingState>(rows.size)
+    val resumeChapterId = first.resumeChapterId
+    var canonicalResumeState: ChapterReadingState? = null
+    var canonicalResumeIndex: Int? = null
+    var canonicalIndexesAreDense = true
+    rows.forEach { row ->
+      val state = row.toCanonicalChapterState(titleId, titleAlias)
+        ?: return@forEach
+      if (row.chapterCanonicalIndex != canonical.size) {
+        canonicalIndexesAreDense = false
+      }
+      if (
+        canonicalResumeState == null && row.chapterId == resumeChapterId
+      ) {
+        canonicalResumeState = state
+        canonicalResumeIndex = canonical.size
+      }
+      canonical += state
     }
-    check(
-      rows.mapNotNull(ReadingProgressRow::chapterCanonicalIndex) ==
-        canonical.indices.toList()
-    ) {
+    check(canonicalIndexesAreDense) {
       "Observed canonical chapter indexes must be dense."
     }
 
-    val storedResume = rows.map { it.toStoredResume() }.distinct()
-    check(storedResume.size == 1) {
+    val storedResume = first.toStoredResume()
+    var resumeStateAgrees = true
+    for (index in 1 until rows.size) {
+      val row = rows[index]
+      row.validateStoredResumeState()
+      if (!row.hasSameResumeStateAs(first)) {
+        resumeStateAgrees = false
+      }
+    }
+    check(resumeStateAgrees) {
       "One progress query returned conflicting resume state."
     }
-    val resume = storedResume.single()?.toLibraryResumePosition(
+    val resume = storedResume?.toLibraryResumePosition(
       titleId = titleId,
       titleAlias = titleAlias,
-      canonical = canonical,
+      canonicalState = canonicalResumeState,
+      canonicalStateIndex = canonicalResumeIndex,
     )
     return TitleReadingProgress.create(
       titleId = titleId,
@@ -452,6 +474,48 @@ internal class RoomReading(
       canonicalChapters = canonical,
       libraryResumePosition = resume,
     )
+  }
+
+  private fun ReadingProgressRow.hasSameTitleStateAs(
+    other: ReadingProgressRow,
+  ): Boolean =
+    titleId == other.titleId &&
+      titleSourceIdentity == other.titleSourceIdentity &&
+      titleSourceKey == other.titleSourceKey &&
+      isLibraryMember == other.isLibraryMember
+
+  private fun ReadingProgressRow.hasSameResumeStateAs(
+    other: ReadingProgressRow,
+  ): Boolean =
+    resumeChapterId == other.resumeChapterId &&
+      resumeChapterSourceKey == other.resumeChapterSourceKey &&
+      resumeChapterDisplayName == other.resumeChapterDisplayName &&
+      resumeChapterCanonicalIndex == other.resumeChapterCanonicalIndex &&
+      resumeChapterIsRead == other.resumeChapterIsRead &&
+      resumeUnitKind == other.resumeUnitKind &&
+      resumeUnitIndex == other.resumeUnitIndex
+
+  private fun ReadingProgressRow.validateStoredResumeState() {
+    if (resumeChapterId == null) {
+      check(
+        resumeChapterSourceKey == null &&
+          resumeChapterDisplayName == null &&
+          resumeChapterCanonicalIndex == null &&
+          resumeUnitKind == null &&
+          resumeUnitIndex == null &&
+          !resumeChapterIsRead
+      ) {
+        "An empty resume row contained partial position state."
+      }
+      return
+    }
+    check(!resumeChapterIsRead) {
+      "A read chapter retained a persistent resume position."
+    }
+    checkNotNull(resumeChapterSourceKey)
+    checkNotNull(resumeChapterDisplayName)
+    checkNotNull(resumeUnitKind)
+    checkNotNull(resumeUnitIndex)
   }
 
   private fun ReadingProgressRow.toCanonicalChapterState(
@@ -516,15 +580,15 @@ internal class RoomReading(
   private fun StoredResume.toLibraryResumePosition(
     titleId: TitleId,
     titleAlias: SourceTitleAlias,
-    canonical: List<ChapterReadingState>,
+    canonicalState: ChapterReadingState?,
+    canonicalStateIndex: Int?,
   ): LibraryResumePosition {
     val domainChapterId = ChapterId(chapterId)
-    val canonicalState = canonical.find { it.chapter.id == domainChapterId }
     check((canonicalState != null) == (canonicalIndex != null)) {
       "Resume availability disagreed with its canonical index."
     }
     if (canonicalState != null) {
-      check(canonical.indexOf(canonicalState) == canonicalIndex) {
+      check(canonicalStateIndex == canonicalIndex) {
         "Resume canonical index disagreed with the current sequence."
       }
       check(
