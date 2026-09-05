@@ -57,6 +57,7 @@ class ReadingProgressContractTest {
       ReconcileChapterSnapshot.of(
         TITLE_ALIAS,
         listOf(
+          observed("first", "First"),
           ReconcileSourceChapter(
             SourceChapterAlias(foreignTitle, "chapter"),
             "Chapter",
@@ -67,8 +68,53 @@ class ReadingProgressContractTest {
     assertThrows(IllegalArgumentException::class.java) {
       ReconcileChapterSnapshot.of(
         TITLE_ALIAS,
-        listOf(observed("same", "One"), observed("same", "Two")),
+        listOf(
+          observed("first", "First"),
+          observed("same", "One"),
+          observed("same", "Two"),
+        ),
       )
+    }
+  }
+
+  @Test
+  fun `canonical states reject duplicate and foreign chapters`() {
+    val first = chapter(CHAPTER_ID, "first")
+    val middle = chapter(OTHER_CHAPTER_ID, "middle")
+
+    val invalidSequences = listOf(
+      listOf(first, middle, chapter(CHAPTER_ID, "duplicate-id")),
+      listOf(first, middle, chapter(THIRD_CHAPTER_ID, "first")),
+      listOf(
+        first,
+        middle,
+        chapter(
+          id = FOURTH_CHAPTER_ID,
+          sourceKey = "foreign",
+          titleId = FOREIGN_TITLE_ID,
+        ),
+      ),
+    )
+
+    invalidSequences.forEach { chapters ->
+      assertThrows(IllegalArgumentException::class.java) {
+        CanonicalChapterSnapshot.create(
+          titleId = TITLE_ID,
+          titleAlias = TITLE_ALIAS,
+          chapters = chapters,
+        )
+      }
+      assertThrows(IllegalArgumentException::class.java) {
+        TitleReadingProgress.create(
+          titleId = TITLE_ID,
+          titleAlias = TITLE_ALIAS,
+          isInLibrary = false,
+          canonicalChapters = chapters.map { chapter ->
+            ChapterReadingState(chapter, isRead = false)
+          },
+          libraryResumePosition = null,
+        )
+      }
     }
   }
 
@@ -152,12 +198,6 @@ class ReadingProgressContractTest {
   @Test
   fun `reading progress rejects contradictory resume state`() {
     val current = chapter(CHAPTER_ID, "chapter")
-    val position = ReadingPosition(
-      titleId = TITLE_ID,
-      chapterId = current.id,
-      unitKind = ReadingContentUnitKind.PAGE,
-      unitIndex = 0,
-    )
 
     assertThrows(IllegalArgumentException::class.java) {
       TitleReadingProgress.create(
@@ -165,11 +205,7 @@ class ReadingProgressContractTest {
         titleAlias = TITLE_ALIAS,
         isInLibrary = false,
         canonicalChapters = emptyList(),
-        libraryResumePosition = LibraryResumePosition(
-          chapter = current,
-          position = position,
-          isCurrentlyAvailable = false,
-        ),
+        libraryResumePosition = resume(current, isCurrentlyAvailable = false),
       )
     }
     assertThrows(IllegalArgumentException::class.java) {
@@ -180,11 +216,7 @@ class ReadingProgressContractTest {
         canonicalChapters = listOf(
           ChapterReadingState(current, isRead = false),
         ),
-        libraryResumePosition = LibraryResumePosition(
-          chapter = current,
-          position = position,
-          isCurrentlyAvailable = false,
-        ),
+        libraryResumePosition = resume(current, isCurrentlyAvailable = false),
       )
     }
     assertThrows(IllegalArgumentException::class.java) {
@@ -195,11 +227,36 @@ class ReadingProgressContractTest {
         canonicalChapters = listOf(
           ChapterReadingState(current, isRead = true),
         ),
-        libraryResumePosition = LibraryResumePosition(
-          chapter = current,
-          position = position,
-          isCurrentlyAvailable = true,
+        libraryResumePosition = resume(current, isCurrentlyAvailable = true),
+      )
+    }
+    val sameAlias = chapter(OTHER_CHAPTER_ID, "chapter")
+    assertThrows(IllegalArgumentException::class.java) {
+      TitleReadingProgress.create(
+        titleId = TITLE_ID,
+        titleAlias = TITLE_ALIAS,
+        isInLibrary = true,
+        canonicalChapters = listOf(
+          ChapterReadingState(current, isRead = false),
         ),
+        libraryResumePosition = resume(
+          sameAlias,
+          isCurrentlyAvailable = false,
+        ),
+      )
+    }
+    val foreign = chapter(
+      id = THIRD_CHAPTER_ID,
+      sourceKey = "foreign",
+      titleAlias = FOREIGN_TITLE_ALIAS,
+    )
+    assertThrows(IllegalArgumentException::class.java) {
+      TitleReadingProgress.create(
+        titleId = TITLE_ID,
+        titleAlias = TITLE_ALIAS,
+        isInLibrary = true,
+        canonicalChapters = emptyList(),
+        libraryResumePosition = resume(foreign, isCurrentlyAvailable = false),
       )
     }
   }
@@ -215,21 +272,45 @@ class ReadingProgressContractTest {
   private fun chapter(
     id: UUID,
     sourceKey: String,
+    titleId: TitleId = TITLE_ID,
+    titleAlias: SourceTitleAlias = TITLE_ALIAS,
   ): Chapter = Chapter(
     id = ChapterId(id),
-    titleId = TITLE_ID,
-    alias = SourceChapterAlias(TITLE_ALIAS, sourceKey),
+    titleId = titleId,
+    alias = SourceChapterAlias(titleAlias, sourceKey),
     displayName = sourceKey,
+  )
+
+  private fun resume(
+    chapter: Chapter,
+    isCurrentlyAvailable: Boolean,
+  ): LibraryResumePosition = LibraryResumePosition(
+    chapter = chapter,
+    position = ReadingPosition(
+      titleId = chapter.titleId,
+      chapterId = chapter.id,
+      unitKind = ReadingContentUnitKind.PAGE,
+      unitIndex = 0,
+    ),
+    isCurrentlyAvailable = isCurrentlyAvailable,
   )
 
   private companion object {
     val TITLE_ALIAS = SourceTitleAlias("source", "title")
+    val FOREIGN_TITLE_ALIAS = SourceTitleAlias("other-source", "title")
     val TITLE_ID = TitleId(
       UUID.fromString("00000000-0000-7000-8000-000000000001"),
+    )
+    val FOREIGN_TITLE_ID = TitleId(
+      UUID.fromString("00000000-0000-7000-8000-000000000005"),
     )
     val CHAPTER_ID: UUID =
       UUID.fromString("00000000-0000-7000-8000-000000000002")
     val OTHER_CHAPTER_ID: UUID =
       UUID.fromString("00000000-0000-7000-8000-000000000003")
+    val THIRD_CHAPTER_ID: UUID =
+      UUID.fromString("00000000-0000-7000-8000-000000000004")
+    val FOURTH_CHAPTER_ID: UUID =
+      UUID.fromString("00000000-0000-7000-8000-000000000006")
   }
 }

@@ -49,11 +49,18 @@ data class ReconcileChapterSnapshot private constructor(
       chapters: Iterable<ReconcileSourceChapter>,
     ): ReconcileChapterSnapshot {
       val ownedChapters = chapters.toOwnedList()
-      require(ownedChapters.all { it.alias.titleAlias == titleAlias }) {
+      var allOwned = true
+      val aliases = HashSet<SourceChapterAlias>(ownedChapters.size)
+      ownedChapters.forEach { chapter ->
+        if (chapter.alias.titleAlias != titleAlias) {
+          allOwned = false
+        }
+        aliases += chapter.alias
+      }
+      require(allOwned) {
         "Every chapter must belong to the reconciled title alias."
       }
-      val distinctAliases = ownedChapters.mapTo(HashSet()) { it.alias }
-      require(distinctAliases.size == ownedChapters.size) {
+      require(aliases.size == ownedChapters.size) {
         "A chapter snapshot must not repeat a source chapter alias."
       }
       return ReconcileChapterSnapshot(titleAlias, ownedChapters)
@@ -78,15 +85,25 @@ data class CanonicalChapterSnapshot private constructor(
   val chapters: List<Chapter>,
 ) {
   init {
-    require(chapters.all { chapter ->
-      chapter.titleId == titleId && chapter.alias.titleAlias == titleAlias
-    }) {
+    var allOwned = true
+    val ids = HashSet<ChapterId>(chapters.size)
+    val aliases = HashSet<SourceChapterAlias>(chapters.size)
+    chapters.forEach { chapter ->
+      if (
+        chapter.titleId != titleId || chapter.alias.titleAlias != titleAlias
+      ) {
+        allOwned = false
+      }
+      ids += chapter.id
+      aliases += chapter.alias
+    }
+    require(allOwned) {
       "Every canonical chapter must belong to the snapshot title."
     }
-    require(chapters.map { it.id }.toSet().size == chapters.size) {
+    require(ids.size == chapters.size) {
       "A canonical snapshot must not repeat a chapter identity."
     }
-    require(chapters.map { it.alias }.toSet().size == chapters.size) {
+    require(aliases.size == chapters.size) {
       "A canonical snapshot must not repeat a source chapter alias."
     }
   }

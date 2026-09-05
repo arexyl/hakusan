@@ -155,13 +155,16 @@ data class LibraryShelfState private constructor(
       "Each title map key must match its title identity."
     }
 
-    val categoryIds = shelves.mapTo(HashSet()) { it.category.id }
+    val categoryIds = HashSet<CategoryId>(shelves.size)
+    val referencedTitleIds = HashSet<TitleId>(titlesById.size)
+    shelves.forEach { shelf ->
+      categoryIds += shelf.category.id
+      referencedTitleIds.addAll(shelf.titleIds)
+    }
     require(categoryIds.size == shelves.size) {
       "Each category must have exactly one shelf."
     }
 
-    val referencedTitleIds = shelves
-      .flatMapTo(HashSet()) { it.titleIds }
     require(referencedTitleIds == titlesById.keys) {
       "Shelf membership and shared title state must agree."
     }

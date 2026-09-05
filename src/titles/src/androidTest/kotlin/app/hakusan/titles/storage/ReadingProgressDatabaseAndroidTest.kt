@@ -1104,6 +1104,15 @@ class ReadingProgressDatabaseAndroidTest {
         unitIndex = 4,
       )
       record(middlePosition)
+      val available = progress(titleId)
+      val availableResume = checkNotNull(available.libraryResumePosition)
+      assertEquals(middlePosition, availableResume.position)
+      assertEquals(snapshot.chapters[1], availableResume.chapter)
+      assertEquals(
+        available.canonicalChapters[1].chapter,
+        availableResume.chapter,
+      )
+      assertTrue(availableResume.isCurrentlyAvailable)
       val observedOmission = async(start = CoroutineStart.UNDISPATCHED) {
         withTimeout(FLOW_TIMEOUT_MILLIS) {
           titles.observeReadingProgress(titleId).first {
@@ -1125,6 +1134,10 @@ class ReadingProgressDatabaseAndroidTest {
         },
       )
       assertEquals(middlePosition, progress.libraryResumePosition?.position)
+      assertEquals(
+        snapshot.chapters[1],
+        progress.libraryResumePosition?.chapter,
+      )
       assertFalse(progress.libraryResumePosition?.isCurrentlyAvailable ?: true)
     }
 

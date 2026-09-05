@@ -258,6 +258,13 @@ class TitlesDatabaseAndroidTest {
       val secondCategoryId = CategoryId(
         dao.insertCategory(CategoryEntity(name = "Want to read")),
       )
+      val emptyState = titles.observeLibraryShelves().first()
+      assertTrue(emptyState.titlesById.isEmpty())
+      assertEquals(
+        setOf(firstCategoryId, secondCategoryId),
+        emptyState.shelves.mapTo(HashSet()) { it.category.id },
+      )
+      assertTrue(emptyState.shelves.all { it.titleIds.isEmpty() })
       val firstId = titles.reconcileSourceTitle(
         title("first-source", "title", displayName = "Same name"),
       )
