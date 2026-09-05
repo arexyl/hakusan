@@ -80,6 +80,7 @@ data class ChapterRefreshGeneration internal constructor(
   internal val ordinal: Long,
 )
 
+/** Private per-gate request identity and synchronization monitor. */
 internal class ChapterRefreshOwner
 
 /**
@@ -101,12 +102,11 @@ data class ChapterRefreshRequest internal constructor(
 class ChapterRefreshGate(
   val title: SourceTitleKey,
 ) {
-  private val lock = Any()
   private val owner = ChapterRefreshOwner()
   private var currentRequest: ChapterRefreshRequest? = null
   private var lastOrdinal = -1L
 
-  fun issue(): ChapterRefreshRequest = synchronized(lock) {
+  fun issue(): ChapterRefreshRequest = synchronized(owner) {
     check(lastOrdinal < Long.MAX_VALUE) {
       "Chapter refresh generation is exhausted."
     }
@@ -120,7 +120,7 @@ class ChapterRefreshGate(
 
   fun accept(
     completion: ChapterRefreshCompletion,
-  ): ChapterRefreshAcceptance = synchronized(lock) {
+  ): ChapterRefreshAcceptance = synchronized(owner) {
     if (completion.request != currentRequest) {
       return@synchronized ChapterRefreshAcceptance.RejectedNotCurrent
     }
