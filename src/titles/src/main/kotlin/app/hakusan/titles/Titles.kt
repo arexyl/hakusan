@@ -45,4 +45,35 @@ interface Titles {
    * collection without changing stored state.
    */
   fun observeLibraryShelves(): Flow<LibraryShelfState>
+
+  /** Observes current canonical chapters, read status, and Library resume. */
+  fun observeReadingProgress(
+    titleId: TitleId,
+  ): Flow<TitleReadingProgress?>
+
+  /**
+   * Persists one current actual position only for a Library title. Reordered
+   * events return without mutation. Preview, prefetch, loading, and canceled
+   * navigation are not actual input.
+   */
+  suspend fun recordActualPosition(
+    update: ActualPositionUpdate,
+  ): ActualPositionResult
+
+  /**
+   * Applies one accepted actual chapter-boundary transition atomically.
+   * The caller maps its reader-gate classification into the completion.
+   */
+  suspend fun completeChapterBoundary(
+    completion: ChapterBoundaryCompletion,
+  ): CompletionResult
+
+  /**
+   * Applies completion intent for the current canonical final chapter.
+   * The caller supplies this only after the final forward reading gesture.
+   * Completion is order-independent because it writes no successor position.
+   */
+  suspend fun completeFinalChapter(
+    completion: FinalChapterCompletion,
+  ): CompletionResult
 }

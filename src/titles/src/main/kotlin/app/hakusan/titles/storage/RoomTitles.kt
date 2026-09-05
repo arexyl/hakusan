@@ -1,8 +1,13 @@
 package app.hakusan.titles.storage
 
+import app.hakusan.titles.ActualPositionResult
+import app.hakusan.titles.ActualPositionUpdate
 import app.hakusan.titles.ApplicationUuidFactory
 import app.hakusan.titles.CategoryId
+import app.hakusan.titles.ChapterBoundaryCompletion
 import app.hakusan.titles.ChapterReconciliationResult
+import app.hakusan.titles.CompletionResult
+import app.hakusan.titles.FinalChapterCompletion
 import app.hakusan.titles.InitialCategoryResolution
 import app.hakusan.titles.LibraryAddFailure
 import app.hakusan.titles.LibraryAddPolicy
@@ -17,6 +22,7 @@ import app.hakusan.titles.ReconcileChapterSnapshot
 import app.hakusan.titles.ReconcileSourceTitle
 import app.hakusan.titles.SourceTitleAlias
 import app.hakusan.titles.TitleId
+import app.hakusan.titles.TitleReadingProgress
 import app.hakusan.titles.Titles
 import androidx.room3.withWriteTransaction
 import java.util.LinkedHashMap
@@ -143,6 +149,22 @@ internal class RoomTitles(
     dao.observeLibraryShelfRows()
       .map(::toShelfState)
       .distinctUntilChanged()
+
+  override fun observeReadingProgress(
+    titleId: TitleId,
+  ): Flow<TitleReadingProgress?> = reading.observeReadingProgress(titleId)
+
+  override suspend fun recordActualPosition(
+    update: ActualPositionUpdate,
+  ): ActualPositionResult = reading.recordActualPosition(update)
+
+  override suspend fun completeChapterBoundary(
+    completion: ChapterBoundaryCompletion,
+  ): CompletionResult = reading.completeChapterBoundary(completion)
+
+  override suspend fun completeFinalChapter(
+    completion: FinalChapterCompletion,
+  ): CompletionResult = reading.completeFinalChapter(completion)
 
   private fun toShelfState(
     rows: List<LibraryShelfRow>,
