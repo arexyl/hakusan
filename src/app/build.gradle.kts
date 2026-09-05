@@ -4,6 +4,7 @@ import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
 plugins {
   alias(libs.plugins.android.application)
+  alias(libs.plugins.metro)
 }
 
 layout.buildDirectory = layout.settingsDirectory.dir("build/work/app")
@@ -17,6 +18,7 @@ android {
     applicationId = "app.hakusan"
     minSdk = 33
     targetSdk = 37
+    testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     versionCode = 1
     versionName = "0.0.0"
   }
@@ -59,7 +61,10 @@ dependencies {
   implementation(project(":titles"))
   implementation(project(":extensions"))
   implementation(project(":reader"))
+  implementation(libs.kotlinx.coroutines.core)
 
+  androidTestImplementation(libs.androidx.test.junit)
+  androidTestRuntimeOnly(libs.androidx.test.runner)
   testImplementation(libs.junit.jupiter.api)
   testRuntimeOnly(libs.junit.jupiter.engine)
   testRuntimeOnly(libs.junit.platform.launcher)

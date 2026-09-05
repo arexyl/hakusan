@@ -56,6 +56,7 @@ dependencies {
   api(libs.kotlinx.coroutines.core)
 
   implementation(libs.room.runtime)
+  implementation(libs.sqlite.framework)
   ksp(libs.room.compiler)
 
   androidTestImplementation(libs.androidx.test.junit)

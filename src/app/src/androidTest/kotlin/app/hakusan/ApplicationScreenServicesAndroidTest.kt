@@ -1,0 +1,381 @@
+package app.hakusan
+
+import android.content.Context
+import app.hakusan.debug.source.DeterministicSource
+import app.hakusan.debug.source.UnavailableOperation
+import app.hakusan.extensions.ChapterRefreshCompletion
+import app.hakusan.extensions.ChapterRefreshRequest
+import app.hakusan.extensions.ChapterSequenceStatus
+import app.hakusan.extensions.SourceBackend
+import app.hakusan.extensions.SourceBrowseResult
+import app.hakusan.extensions.SourceChapter
+import app.hakusan.extensions.SourceIdentity
+import app.hakusan.extensions.SourceResult
+import app.hakusan.extensions.SourceTitle
+import app.hakusan.extensions.SourceTitleDetails
+import app.hakusan.extensions.SourceTitleKey
+import app.hakusan.sdk.AddToLibraryScreenResult
+import app.hakusan.sdk.BrowseScreenFailure
+import app.hakusan.sdk.BrowseScreenResult
+import app.hakusan.sdk.ContinueSelectionResult
+import app.hakusan.sdk.ContinueState
+import app.hakusan.sdk.DetailsScreenFailure
+import app.hakusan.sdk.DetailsScreenResult
+import app.hakusan.sdk.ScreenReadingStart
+import app.hakusan.sdk.ScreenSourceId
+import app.hakusan.titles.ChapterReconciliationResult
+import app.hakusan.titles.ReconcileChapterSnapshot
+import app.hakusan.titles.Titles
+import app.hakusan.titles.TitlesStore
+import app.hakusan.titles.openTitlesStore
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
+import java.util.concurrent.atomic.AtomicInteger
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.yield
+import org.junit.After
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
+import org.junit.Assert.assertTrue
+import org.junit.Before
+import org.junit.Test
+import org.junit.runner.RunWith
+
+@RunWith(AndroidJUnit4::class)
+class ApplicationScreenServicesAndroidTest {
+  private lateinit var store: TitlesStore
+
+  private val context: Context
+    get() = InstrumentationRegistry
+      .getInstrumentation()
+      .targetContext
+      .applicationContext
+
+  @Before
+  fun openStore() {
+    context.deleteDatabase(DATABASE_NAME)
+    store = openTitlesStore(context)
+  }
+
+  @After
+  fun closeStore() {
+    store.close()
+    context.deleteDatabase(DATABASE_NAME)
+  }
+
+  @Test
+  fun deterministicSourceCompletesBrowseDetailsLibraryAndContinue(): Unit =
+    runBlocking {
+      withTimeout(TEST_TIMEOUT_MILLIS) {
+        val graph = graph(DeterministicSource())
+        assertSame(graph.browseScreenService, graph.libraryScreenService)
+        assertSame(
+          graph.browseScreenService,
+          graph.titleDetailsScreenService,
+        )
+        assertTrue(
+          graph.libraryScreenService.observeLibrary().first().shelves.isEmpty(),
+        )
+
+        val source = graph.browseScreenService.catalog().sources.single()
+        val browse = graph.browseScreenService
+          .loadBrowse(source.id)
+          .successScreen()
+        val browseTitle = browse.titles.single()
+        val details = graph.titleDetailsScreenService
+          .loadDetails(browseTitle.key)
+          .successScreen()
+
+        assertEquals(
+          listOf("Chapter 10", "Chapter 2", "Chapter 1"),
+          details.chapters.map { it.displayName },
+        )
+        assertFalse(details.isInLibrary)
+        val initialTarget =
+          (details.continueState as ContinueState.Ready).target
+        assertEquals(details.chapters.first().id, initialTarget.chapterId)
+        assertSame(ScreenReadingStart.Beginning, initialTarget.start)
+
+        assertSame(
+          AddToLibraryScreenResult.Success,
+          graph.titleDetailsScreenService.addToLibrary(details.id),
+        )
+        val library = graph.libraryScreenService.observeLibrary().first {
+          details.id in it.titlesById
+        }
+        assertEquals("Default", library.shelves.single().name)
+        assertEquals(listOf(details.id), library.shelves.single().titleIds)
+        assertEquals(
+          3,
+          library.titlesById.getValue(details.id).progress.chapterCount,
+        )
+
+        val memberDetails = graph.titleDetailsScreenService
+          .loadDetails(browseTitle.key)
+          .successScreen()
+        assertTrue(memberDetails.isInLibrary)
+        val selected = graph.titleDetailsScreenService
+          .selectContinue(details.id) as ContinueSelectionResult.Selected
+        assertEquals(details.chapters.first().id, selected.target.chapterId)
+      }
+    }
+
+  @Test
+  fun expectedSourceFailuresRemainScreenSpecific(): Unit = runBlocking {
+    withTimeout(TEST_TIMEOUT_MILLIS) {
+      val missing = graph(DeterministicSource()).browseScreenService
+        .loadBrowse(ScreenSourceId("missing"))
+      assertEquals(
+        BrowseScreenResult.Failure(BrowseScreenFailure.SourceNotFound),
+        missing,
+      )
+
+      val browseFailure = graph(
+        DeterministicSource(UnavailableOperation.BROWSE),
+      ).browseScreenService.loadBrowse(SOURCE_ID)
+      assertEquals(
+        BrowseScreenResult.Failure(BrowseScreenFailure.SourceUnavailable),
+        browseFailure,
+      )
+
+      val titleKey = graph(DeterministicSource()).browseScreenService
+        .loadBrowse(SOURCE_ID)
+        .successScreen()
+        .titles
+        .single()
+        .key
+      val detailsFailure = graph(
+        DeterministicSource(UnavailableOperation.DETAILS),
+      ).titleDetailsScreenService.loadDetails(titleKey)
+      assertEquals(
+        DetailsScreenResult.Failure(
+          DetailsScreenFailure.DetailsUnavailable,
+        ),
+        detailsFailure,
+      )
+
+      val chapterFailure = graph(
+        DeterministicSource(UnavailableOperation.CHAPTERS),
+      ).titleDetailsScreenService.loadDetails(titleKey)
+      assertEquals(
+        DetailsScreenResult.Failure(
+          DetailsScreenFailure.ChaptersUnavailable,
+        ),
+        chapterFailure,
+      )
+      val invalidBrowse = graph(ForeignBrowseSource())
+        .browseScreenService
+        .loadBrowse(SOURCE_ID)
+      assertEquals(
+        BrowseScreenResult.Failure(BrowseScreenFailure.InvalidObservation),
+        invalidBrowse,
+      )
+      val invalidDetails = graph(ForeignDetailsSource())
+        .titleDetailsScreenService
+        .loadDetails(titleKey)
+      assertEquals(
+        DetailsScreenResult.Failure(
+          DetailsScreenFailure.InvalidTitleObservation,
+        ),
+        invalidDetails,
+      )
+      val invalidChapters = graph(InvalidChapterSource())
+        .titleDetailsScreenService
+        .loadDetails(titleKey)
+      assertEquals(
+        DetailsScreenResult.Failure(
+          DetailsScreenFailure.InvalidChapterSnapshot,
+        ),
+        invalidChapters,
+      )
+    }
+  }
+
+  @Test
+  fun laterRefreshRejectsAnOlderCompletion(): Unit = runBlocking {
+    withTimeout(TEST_TIMEOUT_MILLIS) {
+      val source = ControlledSource()
+      val service = graph(source).titleDetailsScreenService
+
+      val firstLoad = async(start = CoroutineStart.UNDISPATCHED) {
+        service.loadDetails(TITLE_KEY.toScreenKey())
+      }
+      val firstRequest = source.awaitRequest()
+      val secondLoad = async(start = CoroutineStart.UNDISPATCHED) {
+        service.loadDetails(TITLE_KEY.toScreenKey())
+      }
+      val secondRequest = source.awaitRequest()
+
+      secondRequest.complete(listOf(chapter("new", "New")))
+      assertTrue(secondLoad.await() is DetailsScreenResult.Success)
+      firstRequest.complete(listOf(chapter("old", "Old")))
+      assertSame(DetailsScreenResult.RejectedNotCurrent, firstLoad.await())
+    }
+  }
+
+  @Test
+  fun acceptedRefreshesSerializeThroughReconciliation(): Unit = runBlocking {
+    withTimeout(TEST_TIMEOUT_MILLIS) {
+      val source = ControlledSource()
+      val blockingTitles = BlockingFirstReconciliation(store.titles)
+      val service = graph(source, blockingTitles).titleDetailsScreenService
+
+      val firstLoad = async(start = CoroutineStart.UNDISPATCHED) {
+        service.loadDetails(TITLE_KEY.toScreenKey())
+      }
+      source.awaitRequest().complete(listOf(chapter("first", "First")))
+      blockingTitles.firstEntered.await()
+
+      val secondLoad = async(start = CoroutineStart.UNDISPATCHED) {
+        service.loadDetails(TITLE_KEY.toScreenKey())
+      }
+      source.awaitRequest().complete(
+        listOf(
+          chapter("first", "First"),
+          chapter("second", "Second"),
+        ),
+      )
+      yield()
+      assertFalse(secondLoad.isCompleted)
+
+      blockingTitles.releaseFirst.complete(Unit)
+      assertTrue(firstLoad.await() is DetailsScreenResult.Success)
+      val finalScreen = secondLoad.await().successScreen()
+      assertEquals(listOf("First", "Second"), finalScreen.chapters.map {
+        it.displayName
+      })
+    }
+  }
+
+  private fun graph(
+    source: SourceBackend,
+    titles: Titles = store.titles,
+  ): ApplicationGraph = createApplicationGraph(
+    sourceRegistry = SourceRegistry.of(listOf(source)),
+    titles = titles,
+  )
+
+  private class ForeignBrowseSource(
+    private val delegate: SourceBackend = DeterministicSource(),
+  ) : SourceBackend by delegate {
+    override suspend fun browse(): SourceResult<SourceBrowseResult> =
+      SourceBrowseResult.create(
+        source = SourceIdentity("foreign"),
+        titles = emptyList(),
+      )
+  }
+
+  private class ForeignDetailsSource(
+    private val delegate: SourceBackend = DeterministicSource(),
+  ) : SourceBackend by delegate {
+    override suspend fun details(
+      title: SourceTitleKey,
+    ): SourceResult<SourceTitleDetails> = SourceResult.Success(
+      SourceTitleDetails(
+        title = SourceTitle(
+          key = SourceTitleKey(identity, "foreign"),
+          displayName = "Foreign",
+        ),
+        description = null,
+      ),
+    )
+  }
+
+  private class InvalidChapterSource(
+    private val delegate: SourceBackend = DeterministicSource(),
+  ) : SourceBackend by delegate {
+    override suspend fun refreshChapters(
+      request: ChapterRefreshRequest,
+    ): ChapterRefreshCompletion = ChapterRefreshCompletion.completed(
+      request = request,
+      status = ChapterSequenceStatus.PARTIAL,
+      chapters = emptyList(),
+    )
+  }
+
+  private class ControlledSource(
+    private val delegate: SourceBackend = DeterministicSource(),
+  ) : SourceBackend by delegate {
+    private val requests = Channel<PendingRequest>(Channel.UNLIMITED)
+
+    override suspend fun refreshChapters(
+      request: ChapterRefreshRequest,
+    ): ChapterRefreshCompletion {
+      val pending = PendingRequest(request)
+      requests.send(pending)
+      return pending.completion.await()
+    }
+
+    suspend fun awaitRequest(): PendingRequest = requests.receive()
+  }
+
+  private class PendingRequest(
+    private val request: ChapterRefreshRequest,
+  ) {
+    val completion = CompletableDeferred<ChapterRefreshCompletion>()
+
+    fun complete(chapters: List<SourceChapter>) {
+      completion.complete(
+        ChapterRefreshCompletion.completed(
+          request = request,
+          status = ChapterSequenceStatus.COMPLETE,
+          chapters = chapters,
+        ),
+      )
+    }
+  }
+
+  private class BlockingFirstReconciliation(
+    private val delegate: Titles,
+  ) : Titles by delegate {
+    private val calls = AtomicInteger()
+    val firstEntered = CompletableDeferred<Unit>()
+    val releaseFirst = CompletableDeferred<Unit>()
+
+    override suspend fun reconcileChapterSnapshot(
+      input: ReconcileChapterSnapshot,
+    ): ChapterReconciliationResult {
+      if (calls.getAndIncrement() == 0) {
+        firstEntered.complete(Unit)
+        releaseFirst.await()
+      }
+      return delegate.reconcileChapterSnapshot(input)
+    }
+  }
+
+  private companion object {
+    const val DATABASE_NAME = "hakusan.db"
+    const val TEST_TIMEOUT_MILLIS = 10_000L
+    val SOURCE_ID = ScreenSourceId("app.hakusan.debug.source")
+    val TITLE_KEY = SourceTitleKey(
+      source = SourceIdentity(SOURCE_ID.value),
+      key = "canonical-order-fixture",
+    )
+
+    fun chapter(
+      key: String,
+      displayName: String,
+    ): SourceChapter = SourceChapter(
+      key = app.hakusan.extensions.SourceChapterKey(TITLE_KEY, key),
+      displayName = displayName,
+    )
+  }
+}
+
+private fun BrowseScreenResult.successScreen() = when (this) {
+  is BrowseScreenResult.Success -> screen
+  is BrowseScreenResult.Failure -> error("Expected browse success: $error")
+}
+
+private fun DetailsScreenResult.successScreen() = when (this) {
+  is DetailsScreenResult.Success -> screen
+  is DetailsScreenResult.Failure -> error("Expected details success: $error")
+  DetailsScreenResult.RejectedNotCurrent -> error("Details load was rejected")
+}
