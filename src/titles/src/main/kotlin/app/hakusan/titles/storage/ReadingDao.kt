@@ -87,6 +87,20 @@ internal abstract class ReadingDao {
 
   @Query(
     """
+    SELECT *
+    FROM chapters
+    WHERE title_storage_id = :titleStorageId
+      AND id IN (:firstChapterId, :secondChapterId)
+    """,
+  )
+  abstract suspend fun findChaptersByIdsForTitle(
+    titleStorageId: Long,
+    firstChapterId: UUID,
+    secondChapterId: UUID,
+  ): List<ChapterEntity>
+
+  @Query(
+    """
     SELECT storage_id
     FROM chapters
     WHERE title_storage_id = :titleStorageId
@@ -105,25 +119,18 @@ internal abstract class ReadingDao {
       SELECT 1
       FROM title_categories
       WHERE title_storage_id = :titleStorageId
-    )
-    """,
-  )
-  abstract suspend fun hasLibraryMembership(
-    titleStorageId: Long,
-  ): Boolean
-
-  @Query(
-    """
-    SELECT EXISTS(
+    ) AS is_library_member,
+    EXISTS(
       SELECT 1
       FROM read_chapters
       WHERE chapter_storage_id = :chapterStorageId
-    )
+    ) AS is_chapter_read
     """,
   )
-  abstract suspend fun isChapterRead(
+  abstract suspend fun loadLibraryChapterFacts(
+    titleStorageId: Long,
     chapterStorageId: Long,
-  ): Boolean
+  ): LibraryChapterFacts
 
   @Insert(onConflict = OnConflictStrategy.IGNORE)
   abstract suspend fun insertReadChapterOrIgnore(
@@ -169,6 +176,13 @@ internal abstract class ReadingDao {
     titleId: UUID,
   ): Flow<List<ReadingProgressRow>>
 }
+
+internal data class LibraryChapterFacts(
+  @ColumnInfo(name = "is_library_member")
+  val isLibraryMember: Boolean,
+  @ColumnInfo(name = "is_chapter_read")
+  val isChapterRead: Boolean,
+)
 
 internal data class ReadingProgressRow(
   @ColumnInfo(name = "title_id")
