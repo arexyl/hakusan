@@ -3,6 +3,8 @@ import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
 plugins {
   alias(libs.plugins.android.library)
+  alias(libs.plugins.compose.compiler)
+  alias(libs.plugins.serialization)
 }
 
 layout.buildDirectory = layout.settingsDirectory.dir("build/work/app-ui")
@@ -14,6 +16,10 @@ android {
 
   defaultConfig {
     minSdk = 33
+  }
+
+  buildFeatures {
+    compose = true
   }
 
   compileOptions {
@@ -37,6 +43,19 @@ dependencyLocking {
 }
 
 dependencies {
+  implementation(platform(libs.compose.bom))
   implementation(project(":app:sdk"))
   implementation(project(":reader"))
+  implementation(libs.activity.compose)
+  implementation(libs.compose.animation)
+  implementation(libs.compose.foundation)
+  implementation(libs.compose.material3)
+  implementation(libs.compose.runtime)
+  implementation(libs.compose.ui)
+  implementation(libs.kotlinx.serialization.core)
+  implementation(libs.navigation3.runtime)
+  implementation(libs.navigation3.ui)
+
+  debugImplementation(libs.compose.ui.tooling)
+  debugImplementation(libs.compose.ui.tooling.preview)
 }

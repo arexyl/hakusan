@@ -4,6 +4,7 @@ import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
 plugins {
   alias(libs.plugins.android.application)
+  alias(libs.plugins.compose.compiler)
   alias(libs.plugins.metro)
 }
 
@@ -31,6 +32,10 @@ android {
     }
   }
 
+  buildFeatures {
+    compose = true
+  }
+
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_25
     targetCompatibility = JavaVersion.VERSION_25
@@ -56,14 +61,19 @@ dependencyLocking {
 }
 
 dependencies {
+  implementation(platform(libs.compose.bom))
   implementation(project(":app:ui"))
   implementation(project(":app:sdk"))
   implementation(project(":titles"))
   implementation(project(":extensions"))
   implementation(project(":reader"))
+  implementation(libs.activity.compose)
   implementation(libs.kotlinx.coroutines.core)
 
+  androidTestImplementation(platform(libs.compose.bom))
   androidTestImplementation(libs.androidx.test.junit)
+  androidTestImplementation(libs.compose.ui.test.junit4)
+  androidTestImplementation(libs.espresso.core)
   androidTestRuntimeOnly(libs.androidx.test.runner)
   testImplementation(libs.junit.jupiter.api)
   testRuntimeOnly(libs.junit.jupiter.engine)
