@@ -1,11 +1,18 @@
+import org.gradle.api.tasks.testing.Test
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
 plugins {
   alias(libs.plugins.android.library)
+  alias(libs.plugins.ksp)
+  alias(libs.plugins.room)
 }
 
 layout.buildDirectory = layout.settingsDirectory.dir("build/work/titles")
+
+room3 {
+  schemaDirectory("$projectDir/schema")
+}
 
 android {
   namespace = "app.hakusan.titles"
@@ -32,6 +39,18 @@ kotlin {
   }
 }
 
+tasks.withType<Test>().configureEach {
+  useJUnitPlatform()
+}
+
 dependencyLocking {
   lockAllConfigurations()
+}
+
+dependencies {
+  implementation(libs.room.runtime)
+  ksp(libs.room.compiler)
+
+  testImplementation(libs.junit.jupiter)
+  testRuntimeOnly(libs.junit.platform.launcher)
 }

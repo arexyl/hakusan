@@ -1,0 +1,365 @@
+{
+  "formatVersion": 1,
+  "database": {
+    "version": 1,
+    "identityHash": "00bae439ff90b763859a33fd2e0c9b71",
+    "entities": [
+      {
+        "tableName": "categories",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`id` INTEGER PRIMARY KEY NOT NULL, `name` TEXT NOT NULL)",
+        "fields": [
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "name",
+            "columnName": "name",
+            "affinity": "TEXT",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "id"
+          ],
+          "algorithm": "ROWID"
+        }
+      },
+      {
+        "tableName": "chapters",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`storage_id` INTEGER PRIMARY KEY NOT NULL, `id` BLOB NOT NULL, `title_storage_id` INTEGER NOT NULL, `source_chapter_key` TEXT NOT NULL, `display_name` TEXT NOT NULL, `canonical_index` INTEGER, FOREIGN KEY(`title_storage_id`) REFERENCES `titles`(`storage_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "storageId",
+            "columnName": "storage_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "titleStorageId",
+            "columnName": "title_storage_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceChapterKey",
+            "columnName": "source_chapter_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "displayName",
+            "columnName": "display_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "canonicalIndex",
+            "columnName": "canonical_index",
+            "affinity": "INTEGER"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "storage_id"
+          ],
+          "algorithm": "ROWID"
+        },
+        "indices": [
+          {
+            "name": "index_chapters_id",
+            "unique": true,
+            "columnNames": [
+              "id"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_chapters_id` ON `${TABLE_NAME}` (`id`)"
+          },
+          {
+            "name": "index_chapters_title_alias",
+            "unique": true,
+            "columnNames": [
+              "title_storage_id",
+              "source_chapter_key"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_chapters_title_alias` ON `${TABLE_NAME}` (`title_storage_id`, `source_chapter_key`)"
+          },
+          {
+            "name": "index_chapters_title_canonical",
+            "unique": true,
+            "columnNames": [
+              "title_storage_id",
+              "canonical_index"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_chapters_title_canonical` ON `${TABLE_NAME}` (`title_storage_id`, `canonical_index`)"
+          },
+          {
+            "name": "index_chapters_storage_title",
+            "unique": true,
+            "columnNames": [
+              "storage_id",
+              "title_storage_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_chapters_storage_title` ON `${TABLE_NAME}` (`storage_id`, `title_storage_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "titles",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "title_storage_id"
+            ],
+            "referencedColumns": [
+              "storage_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "library_resume_positions",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`title_storage_id` INTEGER NOT NULL, `chapter_storage_id` INTEGER NOT NULL, `unit_kind` TEXT NOT NULL, `unit_index` INTEGER NOT NULL, PRIMARY KEY(`title_storage_id`), FOREIGN KEY(`chapter_storage_id`, `title_storage_id`) REFERENCES `chapters`(`storage_id`, `title_storage_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "titleStorageId",
+            "columnName": "title_storage_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "chapterStorageId",
+            "columnName": "chapter_storage_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "unitKind",
+            "columnName": "unit_kind",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "unitIndex",
+            "columnName": "unit_index",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "title_storage_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_library_resume_positions_chapter_title",
+            "unique": false,
+            "columnNames": [
+              "chapter_storage_id",
+              "title_storage_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_library_resume_positions_chapter_title` ON `${TABLE_NAME}` (`chapter_storage_id`, `title_storage_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "chapters",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "chapter_storage_id",
+              "title_storage_id"
+            ],
+            "referencedColumns": [
+              "storage_id",
+              "title_storage_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "read_chapters",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`chapter_storage_id` INTEGER NOT NULL, PRIMARY KEY(`chapter_storage_id`), FOREIGN KEY(`chapter_storage_id`) REFERENCES `chapters`(`storage_id`) ON UPDATE NO ACTION ON DELETE CASCADE )",
+        "fields": [
+          {
+            "fieldPath": "chapterStorageId",
+            "columnName": "chapter_storage_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "chapter_storage_id"
+          ]
+        },
+        "foreignKeys": [
+          {
+            "table": "chapters",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "chapter_storage_id"
+            ],
+            "referencedColumns": [
+              "storage_id"
+            ]
+          }
+        ]
+      },
+      {
+        "tableName": "title_categories",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`title_storage_id` INTEGER NOT NULL, `category_id` INTEGER NOT NULL, PRIMARY KEY(`title_storage_id`, `category_id`), FOREIGN KEY(`title_storage_id`) REFERENCES `titles`(`storage_id`) ON UPDATE NO ACTION ON DELETE CASCADE , FOREIGN KEY(`category_id`) REFERENCES `categories`(`id`) ON UPDATE NO ACTION ON DELETE RESTRICT ) WITHOUT ROWID",
+        "fields": [
+          {
+            "fieldPath": "titleStorageId",
+            "columnName": "title_storage_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "categoryId",
+            "columnName": "category_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": false,
+          "columnNames": [
+            "title_storage_id",
+            "category_id"
+          ]
+        },
+        "indices": [
+          {
+            "name": "index_title_categories_category_title",
+            "unique": false,
+            "columnNames": [
+              "category_id",
+              "title_storage_id"
+            ],
+            "orders": [],
+            "createSql": "CREATE INDEX IF NOT EXISTS `index_title_categories_category_title` ON `${TABLE_NAME}` (`category_id`, `title_storage_id`)"
+          }
+        ],
+        "foreignKeys": [
+          {
+            "table": "titles",
+            "onDelete": "CASCADE",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "title_storage_id"
+            ],
+            "referencedColumns": [
+              "storage_id"
+            ]
+          },
+          {
+            "table": "categories",
+            "onDelete": "RESTRICT",
+            "onUpdate": "NO ACTION",
+            "columns": [
+              "category_id"
+            ],
+            "referencedColumns": [
+              "id"
+            ]
+          }
+        ],
+        "withoutRowId": true
+      },
+      {
+        "tableName": "titles",
+        "createSql": "CREATE TABLE IF NOT EXISTS `${TABLE_NAME}` (`storage_id` INTEGER PRIMARY KEY NOT NULL, `id` BLOB NOT NULL, `source_identity` TEXT NOT NULL, `source_title_key` TEXT NOT NULL, `display_name` TEXT NOT NULL, `description` TEXT)",
+        "fields": [
+          {
+            "fieldPath": "storageId",
+            "columnName": "storage_id",
+            "affinity": "INTEGER",
+            "notNull": true
+          },
+          {
+            "fieldPath": "id",
+            "columnName": "id",
+            "affinity": "BLOB",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceIdentity",
+            "columnName": "source_identity",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "sourceTitleKey",
+            "columnName": "source_title_key",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "displayName",
+            "columnName": "display_name",
+            "affinity": "TEXT",
+            "notNull": true
+          },
+          {
+            "fieldPath": "description",
+            "columnName": "description",
+            "affinity": "TEXT"
+          }
+        ],
+        "primaryKey": {
+          "autoGenerate": true,
+          "columnNames": [
+            "storage_id"
+          ],
+          "algorithm": "ROWID"
+        },
+        "indices": [
+          {
+            "name": "index_titles_id",
+            "unique": true,
+            "columnNames": [
+              "id"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_titles_id` ON `${TABLE_NAME}` (`id`)"
+          },
+          {
+            "name": "index_titles_source_alias",
+            "unique": true,
+            "columnNames": [
+              "source_identity",
+              "source_title_key"
+            ],
+            "orders": [],
+            "createSql": "CREATE UNIQUE INDEX IF NOT EXISTS `index_titles_source_alias` ON `${TABLE_NAME}` (`source_identity`, `source_title_key`)"
+          }
+        ]
+      }
+    ],
+    "setupQueries": [
+      "CREATE TABLE IF NOT EXISTS room_master_table (id INTEGER PRIMARY KEY,identity_hash TEXT)",
+      "INSERT OR REPLACE INTO room_master_table (id,identity_hash) VALUES(42, '00bae439ff90b763859a33fd2e0c9b71')"
+    ]
+  }
+}
