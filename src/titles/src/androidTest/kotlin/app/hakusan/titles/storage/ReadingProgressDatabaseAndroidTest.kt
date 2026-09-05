@@ -1053,44 +1053,46 @@ class ReadingProgressDatabaseAndroidTest {
 
   @Test
   fun canceledQueuedBoundaryDoesNotMutateProgress(): Unit = runBlocking {
-    val alias = SourceTitleAlias("source", "title")
-    val titleId = createTitle(alias, addToLibrary = true)
-    val snapshot = reconcile(alias, "first" to "First", "final" to "Final")
-    val initialPosition = position(
-      titleId,
-      snapshot.chapters[0],
-      unitIndex = 2,
-    )
-    record(initialPosition)
-    val writerEntered = CompletableDeferred<Unit>()
-    val releaseWriter = CompletableDeferred<Unit>()
-    val writer = launch {
-      database.withWriteTransaction {
-        writerEntered.complete(Unit)
-        releaseWriter.await()
+    withTimeout(TEST_TIMEOUT_MILLIS) {
+      val alias = SourceTitleAlias("source", "title")
+      val titleId = createTitle(alias, addToLibrary = true)
+      val snapshot = reconcile(alias, "first" to "First", "final" to "Final")
+      val initialPosition = position(
+        titleId,
+        snapshot.chapters[0],
+        unitIndex = 2,
+      )
+      record(initialPosition)
+      val writerEntered = CompletableDeferred<Unit>()
+      val releaseWriter = CompletableDeferred<Unit>()
+      val writer = launch {
+        database.withWriteTransaction {
+          writerEntered.complete(Unit)
+          releaseWriter.await()
+        }
       }
-    }
-    writerEntered.await()
+      writerEntered.await()
 
-    val boundary = launch(start = CoroutineStart.UNDISPATCHED) {
-      titles.completeChapterBoundary(
-        boundary(
-          completed = snapshot.chapters[0],
-          started = position(titleId, snapshot.chapters[1], unitIndex = 0),
-        ),
+      val boundary = launch(start = CoroutineStart.UNDISPATCHED) {
+        titles.completeChapterBoundary(
+          boundary(
+            completed = snapshot.chapters[0],
+            started = position(titleId, snapshot.chapters[1], unitIndex = 0),
+          ),
+        )
+      }
+      boundary.cancel()
+      releaseWriter.complete(Unit)
+      boundary.join()
+      writer.join()
+
+      assertTrue(boundary.isCancelled)
+      assertEquals(0, queryLong("SELECT COUNT(*) FROM read_chapters"))
+      assertEquals(
+        initialPosition,
+        progress(titleId).libraryResumePosition?.position,
       )
     }
-    boundary.cancel()
-    releaseWriter.complete(Unit)
-    boundary.join()
-    writer.join()
-
-    assertTrue(boundary.isCancelled)
-    assertEquals(0, queryLong("SELECT COUNT(*) FROM read_chapters"))
-    assertEquals(
-      initialPosition,
-      progress(titleId).libraryResumePosition?.position,
-    )
   }
 
   @Test
@@ -1202,7 +1204,7 @@ class ReadingProgressDatabaseAndroidTest {
       )
       assertTrue(availableResume.isCurrentlyAvailable)
       val observedOmission = async(start = CoroutineStart.UNDISPATCHED) {
-        withTimeout(FLOW_TIMEOUT_MILLIS) {
+        withTimeout(TEST_TIMEOUT_MILLIS) {
           titles.observeReadingProgress(titleId).first {
             it?.libraryResumePosition?.isCurrentlyAvailable == false
           }
@@ -1250,7 +1252,7 @@ class ReadingProgressDatabaseAndroidTest {
       val firstObserved = CompletableDeferred<Unit>()
       val observations = mutableListOf<TitleReadingProgress>()
       val updated = async(start = CoroutineStart.UNDISPATCHED) {
-        withTimeout(FLOW_TIMEOUT_MILLIS) {
+        withTimeout(TEST_TIMEOUT_MILLIS) {
           titles.observeReadingProgress(titleId).first { progress ->
             val current = checkNotNull(progress)
             observations += current
@@ -1281,7 +1283,7 @@ class ReadingProgressDatabaseAndroidTest {
       .chapters.single()
     val membershipInitial = CompletableDeferred<Unit>()
     val membershipUpdate = async(start = CoroutineStart.UNDISPATCHED) {
-      withTimeout(FLOW_TIMEOUT_MILLIS) {
+      withTimeout(TEST_TIMEOUT_MILLIS) {
         titles.observeReadingProgress(libraryTitleId).first { progress ->
           membershipInitial.complete(Unit)
           progress?.isInLibrary == true
@@ -1295,7 +1297,7 @@ class ReadingProgressDatabaseAndroidTest {
     val resumePosition = position(libraryTitleId, libraryChapter, unitIndex = 4)
     val resumeInitial = CompletableDeferred<Unit>()
     val resumeUpdate = async(start = CoroutineStart.UNDISPATCHED) {
-      withTimeout(FLOW_TIMEOUT_MILLIS) {
+      withTimeout(TEST_TIMEOUT_MILLIS) {
         titles.observeReadingProgress(libraryTitleId).first { progress ->
           resumeInitial.complete(Unit)
           progress?.libraryResumePosition?.position == resumePosition
@@ -1314,7 +1316,7 @@ class ReadingProgressDatabaseAndroidTest {
     val readChapter = reconcile(readAlias, "only" to "Only").chapters.single()
     val readInitial = CompletableDeferred<Unit>()
     val readUpdate = async(start = CoroutineStart.UNDISPATCHED) {
-      withTimeout(FLOW_TIMEOUT_MILLIS) {
+      withTimeout(TEST_TIMEOUT_MILLIS) {
         titles.observeReadingProgress(readTitleId).first { progress ->
           readInitial.complete(Unit)
           progress?.canonicalChapters?.single()?.isRead == true
@@ -1610,7 +1612,7 @@ class ReadingProgressDatabaseAndroidTest {
   )
 
   private companion object {
-    const val FLOW_TIMEOUT_MILLIS = 5_000L
+    const val TEST_TIMEOUT_MILLIS = 5_000L
     val FIRST_CHAPTER_ID: UUID = uuid(1)
     val SECOND_CHAPTER_ID: UUID = uuid(2)
     val UNKNOWN_TITLE_ID: UUID = uuid(999)

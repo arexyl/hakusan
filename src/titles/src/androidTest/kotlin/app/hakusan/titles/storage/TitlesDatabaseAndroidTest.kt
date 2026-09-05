@@ -116,22 +116,24 @@ class TitlesDatabaseAndroidTest {
 
   @Test
   fun concurrentReconciliationConvergesOnOneIdentity(): Unit = runBlocking {
-    val start = CompletableDeferred<Unit>()
-    val input = title("source", "title")
+    withTimeout(TEST_TIMEOUT_MILLIS) {
+      val start = CompletableDeferred<Unit>()
+      val input = title("source", "title")
 
-    val ids = coroutineScope {
-      val pending = List(16) {
-        async {
-          start.await()
-          titles.reconcileSourceTitle(input)
+      val ids = coroutineScope {
+        val pending = List(16) {
+          async {
+            start.await()
+            titles.reconcileSourceTitle(input)
+          }
         }
+        start.complete(Unit)
+        pending.awaitAll()
       }
-      start.complete(Unit)
-      pending.awaitAll()
-    }
 
-    assertEquals(1, ids.toSet().size)
-    assertEquals(1, queryLong("SELECT COUNT(*) FROM titles"))
+      assertEquals(1, ids.toSet().size)
+      assertEquals(1, queryLong("SELECT COUNT(*) FROM titles"))
+    }
   }
 
   @Test
@@ -178,7 +180,7 @@ class TitlesDatabaseAndroidTest {
         ),
       )
       val observedAdd = async(start = CoroutineStart.UNDISPATCHED) {
-        withTimeout(FLOW_TIMEOUT_MILLIS) {
+        withTimeout(TEST_TIMEOUT_MILLIS) {
           titles.observeLibraryShelves().first {
             id in it.titlesById
           }
@@ -213,7 +215,7 @@ class TitlesDatabaseAndroidTest {
       assertEquals(1, queryLong("SELECT COUNT(*) FROM title_categories"))
 
       val observedUpdate = async(start = CoroutineStart.UNDISPATCHED) {
-        withTimeout(FLOW_TIMEOUT_MILLIS) {
+        withTimeout(TEST_TIMEOUT_MILLIS) {
           titles.observeLibraryShelves().first {
             it.titlesById[id]?.displayName == "Updated"
           }
@@ -313,21 +315,23 @@ class TitlesDatabaseAndroidTest {
 
   @Test
   fun concurrentFirstAddsShareOneDefaultCategory(): Unit = runBlocking {
-    val firstId = titles.reconcileSourceTitle(title("source", "first"))
-    val secondId = titles.reconcileSourceTitle(title("source", "second"))
+    withTimeout(TEST_TIMEOUT_MILLIS) {
+      val firstId = titles.reconcileSourceTitle(title("source", "first"))
+      val secondId = titles.reconcileSourceTitle(title("source", "second"))
 
-    val results = coroutineScope {
-      listOf(
-        async { titles.addToLibrary(firstId) },
-        async { titles.addToLibrary(secondId) },
-      ).awaitAll()
+      val results = coroutineScope {
+        listOf(
+          async { titles.addToLibrary(firstId) },
+          async { titles.addToLibrary(secondId) },
+        ).awaitAll()
+      }
+
+      assertTrue(results.all { it is LibraryAddResult.Success })
+      assertEquals(listOf("Default"), dao.loadCategories().map { it.name })
+      assertEquals(2, queryLong("SELECT COUNT(*) FROM title_categories"))
+      assertEquals(2, titles.observeLibraryShelves().first()
+        .shelves.single().titleCount)
     }
-
-    assertTrue(results.all { it is LibraryAddResult.Success })
-    assertEquals(listOf("Default"), dao.loadCategories().map { it.name })
-    assertEquals(2, queryLong("SELECT COUNT(*) FROM title_categories"))
-    assertEquals(2, titles.observeLibraryShelves().first()
-      .shelves.single().titleCount)
   }
 
   @Test
@@ -380,28 +384,30 @@ class TitlesDatabaseAndroidTest {
 
   @Test
   fun canceledQueuedAddDoesNotMutateMembership(): Unit = runBlocking {
-    val id = titles.reconcileSourceTitle(title("source", "title"))
-    val writerEntered = CompletableDeferred<Unit>()
-    val releaseWriter = CompletableDeferred<Unit>()
-    val writer = launch {
-      database.withWriteTransaction {
-        writerEntered.complete(Unit)
-        releaseWriter.await()
+    withTimeout(TEST_TIMEOUT_MILLIS) {
+      val id = titles.reconcileSourceTitle(title("source", "title"))
+      val writerEntered = CompletableDeferred<Unit>()
+      val releaseWriter = CompletableDeferred<Unit>()
+      val writer = launch {
+        database.withWriteTransaction {
+          writerEntered.complete(Unit)
+          releaseWriter.await()
+        }
       }
-    }
-    writerEntered.await()
+      writerEntered.await()
 
-    val add = launch(start = CoroutineStart.UNDISPATCHED) {
-      titles.addToLibrary(id)
-    }
-    add.cancel()
-    releaseWriter.complete(Unit)
-    add.join()
-    writer.join()
+      val add = launch(start = CoroutineStart.UNDISPATCHED) {
+        titles.addToLibrary(id)
+      }
+      add.cancel()
+      releaseWriter.complete(Unit)
+      add.join()
+      writer.join()
 
-    assertTrue(add.isCancelled)
-    assertEquals(0, queryLong("SELECT COUNT(*) FROM categories"))
-    assertEquals(0, queryLong("SELECT COUNT(*) FROM title_categories"))
+      assertTrue(add.isCancelled)
+      assertEquals(0, queryLong("SELECT COUNT(*) FROM categories"))
+      assertEquals(0, queryLong("SELECT COUNT(*) FROM title_categories"))
+    }
   }
 
   private suspend fun queryLong(sql: String): Long =
@@ -430,7 +436,7 @@ class TitlesDatabaseAndroidTest {
   )
 
   private companion object {
-    const val FLOW_TIMEOUT_MILLIS = 5_000L
+    const val TEST_TIMEOUT_MILLIS = 5_000L
     const val UUID_ATTEMPT_COUNT = 16
     val FIRST_ID: UUID =
       UUID.fromString("00000000-0000-7000-8000-000000000001")
