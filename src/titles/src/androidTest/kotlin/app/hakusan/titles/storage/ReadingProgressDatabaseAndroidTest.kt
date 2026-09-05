@@ -268,6 +268,94 @@ class ReadingProgressDatabaseAndroidTest {
   }
 
   @Test
+  fun failedAppendRollsBackEarlierPrefixMetadataUpdate() {
+    val alias = SourceTitleAlias("source", "title")
+    val initial = runBlocking {
+      createTitle(alias)
+      reconcile(alias, "first" to "First", "second" to "Second")
+    }
+    runBlocking {
+      executeSql(
+        """
+        CREATE TRIGGER fail_appended_chapter
+        BEFORE INSERT ON chapters
+        WHEN NEW.source_chapter_key = 'third'
+        BEGIN
+          SELECT RAISE(ABORT, 'injected appended chapter failure');
+        END
+        """.trimIndent(),
+      )
+    }
+
+    assertThrows(SQLiteException::class.java) {
+      runBlocking {
+        reconcile(
+          alias,
+          "first" to "First renamed",
+          "second" to "Second",
+          "third" to "Third",
+        )
+      }
+    }
+
+    runBlocking {
+      assertCanonicalSnapshotPersisted(initial)
+      assertEquals(2, queryLong("SELECT COUNT(*) FROM chapters"))
+    }
+  }
+
+  @Test
+  fun failedReturningChapterRollsBackEarlierPrefixMetadataUpdate() {
+    val alias = SourceTitleAlias("source", "title")
+    val prepared = runBlocking {
+      val titleId = createTitle(alias)
+      val initial = reconcile(
+        alias,
+        "first" to "First",
+        "second" to "Second",
+        "third" to "Third",
+      )
+      val omitted = reconcile(alias, "first" to "First", "second" to "Second")
+      Triple(titleId, initial, omitted)
+    }
+    runBlocking {
+      executeSql(
+        """
+        CREATE TRIGGER fail_returning_chapter
+        BEFORE UPDATE ON chapters
+        WHEN OLD.source_chapter_key = 'third'
+        BEGIN
+          SELECT RAISE(ABORT, 'injected returning chapter failure');
+        END
+        """.trimIndent(),
+      )
+    }
+
+    assertThrows(SQLiteException::class.java) {
+      runBlocking {
+        reconcile(
+          alias,
+          "first" to "First renamed",
+          "second" to "Second",
+          "third" to "Third renamed",
+        )
+      }
+    }
+
+    runBlocking {
+      assertCanonicalSnapshotPersisted(prepared.third)
+      val storedTitle = checkNotNull(
+        database.titlesDao().findTitleById(prepared.first.value),
+      )
+      val storedThird = readingDao.loadChapters(storedTitle.storageId)
+        .single { it.sourceChapterKey == "third" }
+      assertEquals(prepared.second.chapters.last().id.value, storedThird.id)
+      assertEquals("Third", storedThird.displayName)
+      assertNull(storedThird.canonicalIndex)
+    }
+  }
+
+  @Test
   fun chapterUuidCollisionRetriesWithoutChangingExistingIdentity(): Unit =
     runBlocking {
       val alias = SourceTitleAlias("source", "title")

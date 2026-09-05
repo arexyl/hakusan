@@ -5,6 +5,7 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.fail
@@ -249,6 +250,55 @@ class ChapterSnapshotTest {
   }
 
   @Test
+  fun `a structurally equal request copy remains current`() {
+    val gate = ChapterRefreshGate(title)
+    val request = gate.issue()
+    val requestCopy = request.copy()
+
+    assertNotSame(request, requestCopy)
+    assertEquals(request, requestCopy)
+    assertEquals(
+      completed(requestCopy).result,
+      gate.accept(completed(requestCopy)).acceptedResult(),
+    )
+  }
+
+  @Test
+  fun `mixed issue and acceptance leave the issued request current`() {
+    repeat(25) {
+      val gate = ChapterRefreshGate(title)
+      val previous = gate.issue()
+      val previousCompletion = completed(previous)
+      val (issued, previousAcceptance) = racePair(
+        first = gate::issue,
+        second = { gate.accept(previousCompletion) },
+      )
+
+      when (previousAcceptance) {
+        is ChapterRefreshAcceptance.Accepted -> {
+          assertEquals(previousCompletion.result, previousAcceptance.result)
+        }
+
+        ChapterRefreshAcceptance.RejectedNotCurrent -> {
+          assertSame(
+            ChapterRefreshAcceptance.RejectedNotCurrent,
+            previousAcceptance,
+          )
+        }
+      }
+      val issuedCompletion = completed(issued)
+      assertEquals(
+        issuedCompletion.result,
+        gate.accept(issuedCompletion).acceptedResult(),
+      )
+      assertSame(
+        ChapterRefreshAcceptance.RejectedNotCurrent,
+        gate.accept(issuedCompletion),
+      )
+    }
+  }
+
+  @Test
   fun `concurrent issue calls produce unique increasing generations`() {
     val gate = ChapterRefreshGate(title)
     val requests = race(workerCount = 4) {
@@ -296,6 +346,35 @@ class ChapterSnapshotTest {
     status = ChapterSequenceStatus.COMPLETE,
     chapters = listOf(chapter("chapter", "Chapter")),
   )
+}
+
+private fun <First, Second> racePair(
+  first: () -> First,
+  second: () -> Second,
+): Pair<First, Second> {
+  val executor = Executors.newFixedThreadPool(2) { task ->
+    Thread(task, "chapter-refresh-mixed-race").apply {
+      isDaemon = true
+    }
+  }
+  val start = CyclicBarrier(3)
+  val firstResult = executor.submit<First> {
+    start.await(5L, TimeUnit.SECONDS)
+    first()
+  }
+  val secondResult = executor.submit<Second> {
+    start.await(5L, TimeUnit.SECONDS)
+    second()
+  }
+
+  return try {
+    start.await(5L, TimeUnit.SECONDS)
+    firstResult.get(5L, TimeUnit.SECONDS) to
+      secondResult.get(5L, TimeUnit.SECONDS)
+  } finally {
+    executor.shutdownNow()
+    executor.awaitTermination(5L, TimeUnit.SECONDS)
+  }
 }
 
 private fun <Value> race(

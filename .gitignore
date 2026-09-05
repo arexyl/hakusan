@@ -10,5 +10,12 @@ keystore.properties
 local.properties
 signing.properties
 
+# JVM crash and heap diagnostics
+*.hprof
+*.hprof.gz
+hs_err_pid*.log
+hs_*_pid*.jfr
+replay_pid*.log
+
 .DS_Store
 Thumbs.db
