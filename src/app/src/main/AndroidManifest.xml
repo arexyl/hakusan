@@ -6,7 +6,18 @@
     android:icon="@mipmap/ic_launcher"
     android:name=".HakusanApplication"
     android:label="@string/app_name"
-    android:roundIcon="@mipmap/ic_launcher">
+    android:roundIcon="@mipmap/ic_launcher"
+    android:theme="@style/Theme.Hakusan">
+    <activity
+      android:name=".HakusanActivity"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+    </activity>
+
     <!-- Keep the application-owned database in the main process. -->
     <service
       android:name="androidx.room3.MultiInstanceInvalidationService"
