@@ -9,15 +9,12 @@ import kotlinx.coroutines.sync.withLock
  * The value is opaque and cannot be reconstructed or persisted. Reader input,
  * position, content, and task lifetime remain separate state.
  */
-class ReaderSession internal constructor(
-  internal val owner: Any,
-)
+class ReaderSession internal constructor()
 
 /**
  * One process-local event identity issued in its session's actual event order.
  */
 class ReaderSessionEvent internal constructor(
-  internal val owner: Any,
   internal val session: ReaderSession,
   internal val ordinal: Long,
 )
@@ -56,40 +53,41 @@ sealed interface ReaderSessionAcceptance<out Value> {
  */
 class ReaderSessionGate {
   private val mutex = Mutex()
-  private val owner = Any()
-  private var current: CurrentSession? = null
+  private var current: ReaderSession? = null
+  private var nextOrdinal = 0L
+  private var lastCommittedOrdinal = -1L
 
   /** Starts a new current session and supersedes the previous one. */
   suspend fun start(): ReaderSession = mutex.withLock {
-    ReaderSession(owner).also { session ->
-      current = CurrentSession(session)
-    }
+    val session = ReaderSession()
+    current = session
+    nextOrdinal = 0L
+    lastCommittedOrdinal = -1L
+    session
   }
 
   /** Issues the next event token if [session] is still current. */
   suspend fun issue(
     session: ReaderSession,
   ): ReaderSessionAcceptance<ReaderSessionEvent> = mutex.withLock {
-    val currentSession = current
-    if (!ownsCurrent(session) || currentSession == null) {
+    if (current !== session) {
       return@withLock ReaderSessionAcceptance.RejectedNotCurrent
     }
-    check(currentSession.nextOrdinal < Long.MAX_VALUE) {
+    check(nextOrdinal < Long.MAX_VALUE) {
       "Reader session event order is exhausted."
     }
     val event = ReaderSessionEvent(
-      owner = owner,
       session = session,
-      ordinal = currentSession.nextOrdinal,
+      ordinal = nextOrdinal,
     )
-    currentSession.nextOrdinal += 1
+    nextOrdinal += 1L
     ReaderSessionAcceptance.Accepted(event)
   }
 
   /** Closes [session] if it is still current. Repeating close is a no-op. */
   suspend fun close(session: ReaderSession) {
     mutex.withLock {
-      if (ownsCurrent(session)) {
+      if (current === session) {
         current = null
       }
     }
@@ -107,36 +105,21 @@ class ReaderSessionGate {
   ): ReaderSessionAcceptance<Value> {
     mutex.lock()
     try {
-      val currentSession = current
-      if (!ownsCurrent(event) || currentSession == null) {
+      if (current !== event.session) {
         return ReaderSessionAcceptance.RejectedNotCurrent
       }
-      val recency = if (
-        event.ordinal > currentSession.lastCommittedOrdinal
-      ) {
+      val recency = if (event.ordinal > lastCommittedOrdinal) {
         ReaderEventRecency.CURRENT
       } else {
         ReaderEventRecency.REORDERED
       }
       val value = block(recency)
       if (recency == ReaderEventRecency.CURRENT) {
-        currentSession.lastCommittedOrdinal = event.ordinal
+        lastCommittedOrdinal = event.ordinal
       }
       return ReaderSessionAcceptance.Accepted(value)
     } finally {
       mutex.unlock()
     }
   }
-
-  private fun ownsCurrent(session: ReaderSession): Boolean =
-    session.owner === owner && current?.session === session
-
-  private fun ownsCurrent(event: ReaderSessionEvent): Boolean =
-    event.owner === owner && ownsCurrent(event.session)
-
-  private class CurrentSession(
-    val session: ReaderSession,
-    var nextOrdinal: Long = 0,
-    var lastCommittedOrdinal: Long = -1,
-  )
 }

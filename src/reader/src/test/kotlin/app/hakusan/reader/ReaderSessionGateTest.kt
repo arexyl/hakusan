@@ -19,6 +19,10 @@ class ReaderSessionGateTest {
     val gate = ReaderSessionGate()
     val first = gate.start()
     val firstEvent = issue(gate, first)
+    assertEquals(
+      ReaderSessionAcceptance.Accepted(ReaderEventRecency.CURRENT),
+      gate.withCurrent(firstEvent) { it },
+    )
     val second = gate.start()
     var staleBlockInvoked = false
 
@@ -34,9 +38,11 @@ class ReaderSessionGateTest {
     )
     assertFalse(staleBlockInvoked)
     gate.close(first)
+    val secondEvent = issue(gate, second)
+    assertEquals(0L, secondEvent.ordinal)
     assertEquals(
       ReaderSessionAcceptance.Accepted(ReaderEventRecency.CURRENT),
-      gate.withCurrent(issue(gate, second)) { it },
+      gate.withCurrent(secondEvent) { it },
     )
   }
 
@@ -51,6 +57,10 @@ class ReaderSessionGateTest {
     assertSame(
       ReaderSessionAcceptance.RejectedNotCurrent,
       secondGate.withCurrent(foreignEvent) { "unexpected" },
+    )
+    assertSame(
+      ReaderSessionAcceptance.RejectedNotCurrent,
+      secondGate.issue(foreignSession),
     )
     secondGate.close(foreignSession)
     assertEquals(
