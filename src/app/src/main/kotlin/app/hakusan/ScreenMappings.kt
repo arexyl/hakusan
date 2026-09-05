@@ -25,8 +25,10 @@ import app.hakusan.sdk.ScreenSourceId
 import app.hakusan.sdk.ScreenTitleId
 import app.hakusan.sdk.ScreenTitleKey
 import app.hakusan.sdk.TitleDetailsScreen
-import app.hakusan.titles.LibraryShelfState
+import app.hakusan.titles.LibraryResumeAvailability
 import app.hakusan.titles.LibraryShelf
+import app.hakusan.titles.LibraryShelfState
+import app.hakusan.titles.LibrarySummaryState
 import app.hakusan.titles.LibraryTitle
 import app.hakusan.titles.ReconcileChapterSnapshot
 import app.hakusan.titles.ReconcileSourceChapter
@@ -34,7 +36,6 @@ import app.hakusan.titles.ReconcileSourceTitle
 import app.hakusan.titles.ReadingContentUnitKind
 import app.hakusan.titles.SourceChapterAlias
 import app.hakusan.titles.SourceTitleAlias
-import app.hakusan.titles.TitleId
 import app.hakusan.titles.TitleReadingProgress
 import java.util.LinkedHashMap
 
@@ -174,53 +175,39 @@ internal fun ContinueState.toSelectionResult(): ContinueSelectionResult =
       ContinueSelectionResult.Unavailable(reason)
   }
 
-internal fun LibraryShelfState.toLibraryScreen(
-  progressByTitleId: Map<TitleId, TitleReadingProgress>,
-): LibraryScreen {
-  check(progressByTitleId.keys == titlesById.keys) {
-    "Library title and progress identities must agree."
-  }
-  val orderedTitles = CheckpointLibraryOrder.titles(titlesById.values)
+internal fun LibrarySummaryState.toLibraryScreen(): LibraryScreen {
+  val order = CheckpointLibraryOrder.create(shelfState)
   val screenTitles = LinkedHashMap<ScreenTitleId, LibraryTitleItem>(
-    orderedTitles.size,
+    order.titles.size,
   )
-  orderedTitles.forEach { title ->
+  order.titles.forEach { title ->
     val progress = progressByTitleId.getValue(title.id)
-    check(progress.isInLibrary && progress.titleAlias == title.alias) {
-      "Library metadata and reading progress must describe one member."
-    }
     val screenId = ScreenTitleId(title.id.value)
-    val resume = progress.libraryResumePosition
     screenTitles[screenId] = LibraryTitleItem(
       id = screenId,
       key = title.alias.toScreenKey(),
       displayName = title.displayName,
       description = title.description,
       progress = LibraryTitleProgress(
-        chapterCount = progress.canonicalChapters.size,
-        readChapterCount = progress.canonicalChapters.count { it.isRead },
-        resumeState = when {
-          resume == null -> LibraryResumeState.NONE
-          resume.isCurrentlyAvailable ->
-            LibraryResumeState.AVAILABLE
-
-          else -> LibraryResumeState.TEMPORARILY_UNAVAILABLE
+        chapterCount = progress.chapterCount,
+        readChapterCount = progress.readChapterCount,
+        resumeState = when (progress.resumeAvailability) {
+          LibraryResumeAvailability.NONE -> LibraryResumeState.NONE
+          LibraryResumeAvailability.AVAILABLE -> LibraryResumeState.AVAILABLE
+          LibraryResumeAvailability.TEMPORARILY_UNAVAILABLE ->
+            LibraryResumeState.TEMPORARILY_UNAVAILABLE
         },
       ),
     )
   }
-  val screenShelves = CheckpointLibraryOrder.shelves(this)
-    .map { shelf ->
-      LibraryShelfItem.of(
-        id = ScreenShelfId(shelf.category.id.value),
-        name = shelf.category.name,
-        titleIds = CheckpointLibraryOrder.titles(
-          shelf.titleIds.map { titlesById.getValue(it) },
-        )
-          .map { it.id }
-          .map { ScreenTitleId(it.value) },
-      )
-    }
+  val screenShelves = order.shelves.map { orderedShelf ->
+    val shelf = orderedShelf.shelf
+    LibraryShelfItem.of(
+      id = ScreenShelfId(shelf.category.id.value),
+      name = shelf.category.name,
+      titleIds = orderedShelf.titles.map { ScreenTitleId(it.id.value) },
+    )
+  }
   return LibraryScreen.of(screenTitles, screenShelves)
 }
 
@@ -228,47 +215,60 @@ internal fun LibraryShelfState.toLibraryScreen(
  * Temporary Checkpoint 1 ordering based only on visible title metadata.
  * Durable user-selected shelf order remains owned by the later settings slice.
  */
-internal object CheckpointLibraryOrder {
-  private val titleComparator =
-    compareBy<LibraryTitle> { it.displayName }
-      .thenComparator { first, second ->
-        compareValues(first.description, second.description)
-      }
+private class CheckpointLibraryOrder private constructor(
+  val titles: List<LibraryTitle>,
+  val shelves: List<OrderedLibraryShelf>,
+) {
+  companion object {
+    private val titleComparator =
+      compareBy<LibraryTitle> { it.displayName }
+        .thenComparator { first, second ->
+          compareValues(first.description, second.description)
+        }
 
-  fun titles(titles: Iterable<LibraryTitle>): List<LibraryTitle> =
-    titles.sortedWith(titleComparator)
-
-  fun shelves(state: LibraryShelfState): List<LibraryShelf> =
-    state.shelves.sortedWith { first, second ->
-      val nameOrder = first.category.name.compareTo(second.category.name)
-      if (nameOrder != 0) {
-        nameOrder
-      } else {
-        compareTitleLists(
-          first.titleIds.map { state.titlesById.getValue(it) },
-          second.titleIds.map { state.titlesById.getValue(it) },
-        )
-      }
+    fun create(state: LibraryShelfState): CheckpointLibraryOrder {
+      val titles = state.titlesById.values.sortedWith(titleComparator)
+      val shelves = state.shelves
+        .map { shelf ->
+          OrderedLibraryShelf(
+            shelf = shelf,
+            titles = shelf.titleIds
+              .map { state.titlesById.getValue(it) }
+              .sortedWith(titleComparator),
+          )
+        }
+        .sortedWith { first, second ->
+          val nameOrder = first.shelf.category.name.compareTo(
+            second.shelf.category.name,
+          )
+          if (nameOrder != 0) {
+            nameOrder
+          } else {
+            compareTitleLists(first.titles, second.titles)
+          }
+        }
+      return CheckpointLibraryOrder(titles, shelves)
     }
 
-  private fun compareTitleLists(
-    first: List<LibraryTitle>,
-    second: List<LibraryTitle>,
-  ): Int {
-    val firstOrdered = titles(first)
-    val secondOrdered = titles(second)
-    repeat(minOf(firstOrdered.size, secondOrdered.size)) { index ->
-      val itemOrder = titleComparator.compare(
-        firstOrdered[index],
-        secondOrdered[index],
-      )
-      if (itemOrder != 0) {
-        return itemOrder
+    private fun compareTitleLists(
+      first: List<LibraryTitle>,
+      second: List<LibraryTitle>,
+    ): Int {
+      repeat(minOf(first.size, second.size)) { index ->
+        val itemOrder = titleComparator.compare(first[index], second[index])
+        if (itemOrder != 0) {
+          return itemOrder
+        }
       }
+      return first.size.compareTo(second.size)
     }
-    return firstOrdered.size.compareTo(secondOrdered.size)
   }
 }
+
+private data class OrderedLibraryShelf(
+  val shelf: LibraryShelf,
+  val titles: List<LibraryTitle>,
+)
 
 private fun ReadingContentUnitKind.toScreenKind(): ScreenContentUnitKind =
   when (this) {

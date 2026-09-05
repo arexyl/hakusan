@@ -126,7 +126,6 @@ data class TitleDetailsScreen private constructor(
         titleId = id,
         titleKey = key,
         chapters = ownedChapters,
-        isInLibrary = isInLibrary,
         state = continueState,
       )
       return TitleDetailsScreen(
@@ -229,7 +228,6 @@ private fun validateContinue(
   titleId: ScreenTitleId,
   titleKey: ScreenTitleKey,
   chapters: List<DetailsChapterItem>,
-  isInLibrary: Boolean,
   state: ContinueState,
 ) {
   when (state) {
@@ -248,9 +246,6 @@ private fun validateContinue(
         "The Continue target must identify one canonical chapter."
       }
       if (target.start is ScreenReadingStart.Resume) {
-        require(isInLibrary) {
-          "Only a Library title may expose a persistent resume position."
-        }
         require(!chapter.isRead) {
           "A read chapter must not expose a resume position."
         }
@@ -271,9 +266,6 @@ private fun validateContinue(
       }
 
       is ContinueUnavailableReason.SavedTargetUnavailable -> {
-        require(isInLibrary) {
-          "Only a Library title may retain a persistent unavailable target."
-        }
         require(reason.chapterKey.titleKey == titleKey) {
           "The unavailable saved target must belong to the screen title."
         }

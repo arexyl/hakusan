@@ -180,3 +180,60 @@ data class LibraryShelfState private constructor(
     )
   }
 }
+
+/** Availability of the one retained Library resume position. */
+enum class LibraryResumeAvailability {
+  NONE,
+  AVAILABLE,
+  TEMPORARILY_UNAVAILABLE,
+}
+
+/** Compact reading progress for one title in a Library observation. */
+data class LibraryTitleProgressSummary(
+  val chapterCount: Int,
+  val readChapterCount: Int,
+  val resumeAvailability: LibraryResumeAvailability,
+) {
+  init {
+    require(chapterCount >= 0) {
+      "Library chapter count must not be negative."
+    }
+    require(readChapterCount in 0..chapterCount) {
+      "Library read chapter count must be within the chapter count."
+    }
+    require(
+      resumeAvailability != LibraryResumeAvailability.AVAILABLE ||
+        (chapterCount > 0 && readChapterCount < chapterCount),
+    ) {
+      "An available Library resume requires one unread canonical chapter."
+    }
+  }
+}
+
+/**
+ * One coherent Library shelf and progress observation.
+ *
+ * Progress contains exactly the titles referenced by [shelfState]. Ordering
+ * remains a presentation concern.
+ */
+@ConsistentCopyVisibility
+data class LibrarySummaryState private constructor(
+  val shelfState: LibraryShelfState,
+  val progressByTitleId: Map<TitleId, LibraryTitleProgressSummary>,
+) {
+  init {
+    require(progressByTitleId.keys == shelfState.titlesById.keys) {
+      "Library shelf and progress identities must agree."
+    }
+  }
+
+  internal companion object {
+    fun create(
+      shelfState: LibraryShelfState,
+      progressByTitleId: Map<TitleId, LibraryTitleProgressSummary>,
+    ): LibrarySummaryState = LibrarySummaryState(
+      shelfState = shelfState,
+      progressByTitleId = progressByTitleId.toOwnedMap(),
+    )
+  }
+}

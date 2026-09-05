@@ -73,9 +73,14 @@ dependencies {
   androidTestImplementation(platform(libs.compose.bom))
   androidTestImplementation(libs.androidx.test.junit)
   androidTestImplementation(libs.compose.ui.test.junit4)
-  androidTestImplementation(libs.espresso.core)
   androidTestRuntimeOnly(libs.androidx.test.runner)
   testImplementation(libs.junit.jupiter.api)
   testRuntimeOnly(libs.junit.jupiter.engine)
   testRuntimeOnly(libs.junit.platform.launcher)
+
+  constraints {
+    androidTestImplementation(libs.espresso.core) {
+      because("Compose UI Test's Espresso 3.5.0 fails on API 37")
+    }
+  }
 }

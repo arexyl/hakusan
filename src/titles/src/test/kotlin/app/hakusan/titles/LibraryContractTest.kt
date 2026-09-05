@@ -168,6 +168,46 @@ class LibraryContractTest {
     }
   }
 
+  @Test
+  fun `Library summary owns progress and requires exact title coverage`() {
+    val title = LibraryTitle(
+      id = TitleId(TITLE_ID),
+      alias = SourceTitleAlias("source", "title"),
+      displayName = "Title",
+      description = null,
+    )
+    val shelfState = LibraryShelfState.create(
+      titlesById = mapOf(title.id to title),
+      shelves = listOf(
+        LibraryShelf.create(
+          category = category(1, "Default"),
+          titleIds = listOf(title.id),
+        ),
+      ),
+    )
+    val progress = LibraryTitleProgressSummary(
+      chapterCount = 3,
+      readChapterCount = 1,
+      resumeAvailability = LibraryResumeAvailability.AVAILABLE,
+    )
+    val mutableProgress = linkedMapOf(title.id to progress)
+    val summary = LibrarySummaryState.create(shelfState, mutableProgress)
+
+    mutableProgress.clear()
+
+    assertEquals(mapOf(title.id to progress), summary.progressByTitleId)
+    assertThrows(IllegalArgumentException::class.java) {
+      LibrarySummaryState.create(shelfState, emptyMap())
+    }
+    assertThrows(IllegalArgumentException::class.java) {
+      LibraryTitleProgressSummary(
+        chapterCount = 1,
+        readChapterCount = 1,
+        resumeAvailability = LibraryResumeAvailability.AVAILABLE,
+      )
+    }
+  }
+
   private fun category(
     id: Long,
     name: String,

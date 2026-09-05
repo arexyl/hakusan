@@ -1,7 +1,7 @@
 package app.hakusan.ui
 
-import androidx.annotation.DrawableRes
 import androidx.activity.compose.BackHandler
+import androidx.annotation.DrawableRes
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateContentSize
 import androidx.compose.foundation.layout.Arrangement
@@ -16,6 +16,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.selection.selectable
+import androidx.compose.foundation.selection.selectableGroup
 import androidx.compose.material3.HorizontalFloatingToolbar
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -62,7 +63,9 @@ internal fun HakusanShell(
 ) {
   val libraryLabel = stringResource(R.string.destination_library)
   val catalogLabel = stringResource(R.string.destination_catalog)
-  val saveableStateDecorator =
+  val librarySaveableStateDecorator =
+    rememberSaveableStateHolderNavEntryDecorator<NavKey>()
+  val catalogSaveableStateDecorator =
     rememberSaveableStateHolderNavEntryDecorator<NavKey>()
   BackHandler(
     enabled = navigationState.currentBackStack.size <= 1,
@@ -84,8 +87,20 @@ internal fun HakusanShell(
             onExit()
           }
         },
-        entryDecorators = remember(saveableStateDecorator) {
-          listOf(saveableStateDecorator)
+        entryDecorators = remember(
+          destination,
+          librarySaveableStateDecorator,
+          catalogSaveableStateDecorator,
+        ) {
+          listOf(
+            when (destination) {
+              PrimaryDestination.LIBRARY ->
+                librarySaveableStateDecorator
+
+              PrimaryDestination.CATALOG ->
+                catalogSaveableStateDecorator
+            },
+          )
         },
         entryProvider = { route ->
           when (route) {
@@ -157,7 +172,7 @@ private fun BrowsingIsland(
 ) {
   HorizontalFloatingToolbar(
     expanded = true,
-    modifier = modifier,
+    modifier = modifier.selectableGroup(),
   ) {
     DestinationItem(
       selected = selectedDestination == PrimaryDestination.LIBRARY,

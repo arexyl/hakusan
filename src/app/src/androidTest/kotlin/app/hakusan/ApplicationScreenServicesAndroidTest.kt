@@ -1,6 +1,8 @@
 package app.hakusan
 
 import android.content.Context
+import android.content.ContextWrapper
+import android.database.sqlite.SQLiteDatabase
 import app.hakusan.debug.source.DeterministicSource
 import app.hakusan.debug.source.UnavailableOperation
 import app.hakusan.extensions.ChapterRefreshCompletion
@@ -30,6 +32,7 @@ import app.hakusan.titles.TitlesStore
 import app.hakusan.titles.openTitlesStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
@@ -51,23 +54,32 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class ApplicationScreenServicesAndroidTest {
   private lateinit var store: TitlesStore
-
-  private val context: Context
-    get() = InstrumentationRegistry
-      .getInstrumentation()
-      .targetContext
-      .applicationContext
+  private lateinit var context: TestDatabaseContext
 
   @Before
   fun openStore() {
-    context.deleteDatabase(DATABASE_NAME)
+    val targetContext = InstrumentationRegistry.getInstrumentation()
+      .targetContext
+      .applicationContext
+    context = TestDatabaseContext(targetContext)
+    check(
+      context.getDatabasePath(DATABASE_NAME) !=
+        targetContext.getDatabasePath(DATABASE_NAME),
+    ) {
+      "Application composition tests must not own the target database."
+    }
+    context.prepareDatabase(DATABASE_NAME)
     store = openTitlesStore(context)
   }
 
   @After
   fun closeStore() {
-    store.close()
-    context.deleteDatabase(DATABASE_NAME)
+    if (::store.isInitialized) {
+      store.close()
+    }
+    if (::context.isInitialized) {
+      context.deleteDatabase(DATABASE_NAME)
+    }
   }
 
   @Test
@@ -75,11 +87,6 @@ class ApplicationScreenServicesAndroidTest {
     runBlocking {
       withTimeout(TEST_TIMEOUT_MILLIS) {
         val graph = graph(DeterministicSource())
-        assertSame(graph.browseScreenService, graph.libraryScreenService)
-        assertSame(
-          graph.browseScreenService,
-          graph.titleDetailsScreenService,
-        )
         assertTrue(
           graph.libraryScreenService.observeLibrary().first().shelves.isEmpty(),
         )
@@ -216,9 +223,46 @@ class ApplicationScreenServicesAndroidTest {
       secondRequest.complete(listOf(chapter("new", "New")))
       assertTrue(secondLoad.await() is DetailsScreenResult.Success)
       firstRequest.complete(listOf(chapter("old", "Old")))
-      assertSame(DetailsScreenResult.RejectedNotCurrent, firstLoad.await())
+      assertTrue(firstLoad.await() === DetailsScreenResult.RejectedNotCurrent)
     }
   }
+
+  @Test
+  fun laterLoadRejectsAnOlderDetailsCompletionBeforePersistence(): Unit =
+    runBlocking {
+      withTimeout(TEST_TIMEOUT_MILLIS) {
+        val source = ControlledDetailsSource()
+        val graph = graph(source)
+        val service = graph.titleDetailsScreenService
+
+        val firstLoad = async(start = CoroutineStart.UNDISPATCHED) {
+          service.loadDetails(TITLE_KEY.toScreenKey())
+        }
+        val firstDetails = source.awaitDetails()
+        val secondLoad = async(start = CoroutineStart.UNDISPATCHED) {
+          service.loadDetails(TITLE_KEY.toScreenKey())
+        }
+        val secondDetails = source.awaitDetails()
+
+        secondDetails.complete("Current title")
+        val current = secondLoad.await().successScreen()
+        assertEquals("Current title", current.displayName)
+        assertSame(
+          AddToLibraryScreenResult.Success,
+          service.addToLibrary(current.id),
+        )
+
+        firstDetails.complete("Stale title")
+        assertSame(DetailsScreenResult.RejectedNotCurrent, firstLoad.await())
+        val library = graph.libraryScreenService.observeLibrary().first {
+          current.id in it.titlesById
+        }
+        assertEquals(
+          "Current title",
+          library.titlesById.getValue(current.id).displayName,
+        )
+      }
+    }
 
   @Test
   fun acceptedRefreshesSerializeThroughReconciliation(): Unit = runBlocking {
@@ -316,6 +360,39 @@ class ApplicationScreenServicesAndroidTest {
     suspend fun awaitRequest(): PendingRequest = requests.receive()
   }
 
+  private class ControlledDetailsSource(
+    private val delegate: SourceBackend = DeterministicSource(),
+  ) : SourceBackend by delegate {
+    private val pendingDetails = Channel<PendingDetails>(Channel.UNLIMITED)
+
+    override suspend fun details(
+      title: SourceTitleKey,
+    ): SourceResult<SourceTitleDetails> {
+      val pending = PendingDetails(title)
+      pendingDetails.send(pending)
+      return pending.completion.await()
+    }
+
+    suspend fun awaitDetails(): PendingDetails = pendingDetails.receive()
+  }
+
+  private class PendingDetails(
+    private val titleKey: SourceTitleKey,
+  ) {
+    val completion = CompletableDeferred<SourceResult<SourceTitleDetails>>()
+
+    fun complete(displayName: String) {
+      completion.complete(
+        SourceResult.Success(
+          SourceTitleDetails(
+            title = SourceTitle(titleKey, displayName),
+            description = null,
+          ),
+        ),
+      )
+    }
+  }
+
   private class PendingRequest(
     private val request: ChapterRefreshRequest,
   ) {
@@ -366,6 +443,38 @@ class ApplicationScreenServicesAndroidTest {
       key = app.hakusan.extensions.SourceChapterKey(TITLE_KEY, key),
       displayName = displayName,
     )
+  }
+}
+
+private class TestDatabaseContext(
+  base: Context,
+) : ContextWrapper(base) {
+  private val databaseDirectory = File(
+    base.cacheDir,
+    "application-screen-services-databases",
+  )
+
+  override fun getApplicationContext(): Context = this
+
+  override fun getDatabasePath(name: String): File =
+    File(databaseDirectory, name)
+
+  override fun deleteDatabase(name: String): Boolean {
+    val database = getDatabasePath(name)
+    val databaseDeleted =
+      !database.exists() || SQLiteDatabase.deleteDatabase(database)
+    val lock = File("${database.path}.lck")
+    val lockDeleted = !lock.exists() || lock.delete()
+    return databaseDeleted && lockDeleted
+  }
+
+  fun prepareDatabase(name: String) {
+    check(databaseDirectory.isDirectory || databaseDirectory.mkdirs()) {
+      "Unable to create the isolated test database directory."
+    }
+    check(deleteDatabase(name)) {
+      "Unable to reset the isolated test database."
+    }
   }
 }
 

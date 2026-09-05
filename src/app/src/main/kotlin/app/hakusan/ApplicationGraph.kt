@@ -18,18 +18,18 @@ internal interface ApplicationGraph {
 
   @Provides
   fun provideBrowseScreenService(
-    services: ApplicationScreenServices,
-  ): BrowseScreenService = services
+    service: ApplicationBrowseScreenService,
+  ): BrowseScreenService = service
 
   @Provides
   fun provideLibraryScreenService(
-    services: ApplicationScreenServices,
-  ): LibraryScreenService = services
+    service: ApplicationLibraryScreenService,
+  ): LibraryScreenService = service
 
   @Provides
   fun provideTitleDetailsScreenService(
-    services: ApplicationScreenServices,
-  ): TitleDetailsScreenService = services
+    service: ApplicationTitleDetailsScreenService,
+  ): TitleDetailsScreenService = service
 
   @DependencyGraph.Factory
   fun interface Factory {

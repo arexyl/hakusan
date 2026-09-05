@@ -18,8 +18,11 @@ interface TitlesStore : AutoCloseable {
 
 /** Opens the one file-backed title store owned by the application process. */
 fun openTitlesStore(context: Context): TitlesStore {
+  val applicationContext = requireNotNull(context.applicationContext) {
+    "A process-owned title store requires an application context."
+  }
   val database = Room.databaseBuilder<TitlesDatabase>(
-    context = context.applicationContext,
+    context = applicationContext,
     name = DATABASE_NAME,
   )
     .setDriver(AndroidSQLiteDriver())
