@@ -6,6 +6,8 @@ import app.hakusan.extensions.ChapterRefreshGate
 import app.hakusan.extensions.ChapterRefreshRequest
 import app.hakusan.extensions.SourceFailure
 import app.hakusan.extensions.SourceResult
+import app.hakusan.extensions.SourceTitleDetails
+import app.hakusan.extensions.SourceTitleKey
 import app.hakusan.sdk.AddToLibraryScreenFailure
 import app.hakusan.sdk.AddToLibraryScreenResult
 import app.hakusan.sdk.ContinueSelectionFailure
@@ -28,6 +30,7 @@ import dev.zacsweers.metro.SingleIn
 import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 
 @Inject
 @SingleIn(AppScope::class)
@@ -47,48 +50,60 @@ internal class TitleDetailsScreenAdapter(
       )
     val backend = registration.backend
     val sourceTitleKey = titleKey.toSourceKey()
-    val details = when (val result = backend.details(sourceTitleKey)) {
-      is SourceResult.Failure -> {
-        val failure = when (result.error) {
-          SourceFailure.Unavailable -> DetailsScreenFailure.DetailsUnavailable
-          else -> DetailsScreenFailure.InvalidTitleObservation
+    val coordinator = acquireCoordinator(titleKey, sourceTitleKey)
+    try {
+      val request = coordinator.issue()
+      val details = when (val result = backend.details(sourceTitleKey)) {
+        is SourceResult.Failure -> {
+          val failure = when (result.error) {
+            SourceFailure.Unavailable ->
+              DetailsScreenFailure.DetailsUnavailable
+
+            else -> DetailsScreenFailure.InvalidTitleObservation
+          }
+          return coordinator.finishBeforeChapters(
+            request = request,
+            result = DetailsScreenResult.Failure(failure),
+          )
         }
-        return DetailsScreenResult.Failure(failure)
+
+        is SourceResult.Success -> result.value
+      }
+      if (details.title.key != sourceTitleKey) {
+        return coordinator.finishBeforeChapters(
+          request = request,
+          result = DetailsScreenResult.Failure(
+            DetailsScreenFailure.InvalidTitleObservation,
+          ),
+        )
+      }
+      if (!coordinator.isCurrent(request)) {
+        return DetailsScreenResult.RejectedNotCurrent
       }
 
-      is SourceResult.Success -> result.value
-    }
-    if (details.title.key != sourceTitleKey) {
-      return DetailsScreenResult.Failure(
-        DetailsScreenFailure.InvalidTitleObservation,
-      )
-    }
-
-    val titleId = titles.reconcileSourceTitle(details.toReconcileTitle())
-    val coordinator = coordinators.computeIfAbsent(titleKey) {
-      TitleRefreshCoordinator(sourceTitleKey)
-    }
-    val request = coordinator.issue()
-    val completion = backend.refreshChapters(request)
-    return when (
-      val result = coordinator.acceptAndRead(
-        completion = completion,
-        titles = titles,
-        titleId = titleId,
-      )
-    ) {
-      is ChapterLoadResult.Failure ->
-        DetailsScreenResult.Failure(result.error)
-
-      ChapterLoadResult.RejectedNotCurrent ->
-        DetailsScreenResult.RejectedNotCurrent
-
-      is ChapterLoadResult.Success -> DetailsScreenResult.Success(
-        result.progress.toDetailsScreen(
-          sourceDisplayName = registration.catalogItem.displayName,
+      val completion = backend.refreshChapters(request)
+      return when (
+        val result = coordinator.acceptAndRead(
+          completion = completion,
           details = details,
-        ),
-      )
+          titles = titles,
+        )
+      ) {
+        is ChapterLoadResult.Failure ->
+          DetailsScreenResult.Failure(result.error)
+
+        ChapterLoadResult.RejectedNotCurrent ->
+          DetailsScreenResult.RejectedNotCurrent
+
+        is ChapterLoadResult.Success -> DetailsScreenResult.Success(
+          result.progress.toDetailsScreen(
+            sourceDisplayName = registration.catalogItem.displayName,
+            details = details,
+          ),
+        )
+      }
+    } finally {
+      releaseCoordinator(titleKey, coordinator)
     }
   }
 
@@ -121,30 +136,104 @@ internal class TitleDetailsScreenAdapter(
       )
     return progress.toContinueState().toSelectionResult()
   }
+
+  private fun acquireCoordinator(
+    titleKey: ScreenTitleKey,
+    sourceTitleKey: SourceTitleKey,
+  ): TitleRefreshCoordinator = checkNotNull(
+    coordinators.compute(titleKey) { _, current ->
+      (current ?: TitleRefreshCoordinator(sourceTitleKey)).also {
+        it.retain()
+      }
+    },
+  )
+
+  private fun releaseCoordinator(
+    titleKey: ScreenTitleKey,
+    coordinator: TitleRefreshCoordinator,
+  ) {
+    coordinators.compute(titleKey) { _, current ->
+      check(current === coordinator) {
+        "A title refresh coordinator must retain its active owner."
+      }
+      if (coordinator.release()) null else coordinator
+    }
+  }
 }
 
 private class TitleRefreshCoordinator(
-  titleKey: app.hakusan.extensions.SourceTitleKey,
+  titleKey: SourceTitleKey,
 ) {
   private val gate = ChapterRefreshGate(titleKey)
+  private val state = Any()
   private val reconciliation = Mutex()
+  private var currentRequest: ChapterRefreshRequest? = null
+  private var activeLoads = 0
 
-  fun issue(): ChapterRefreshRequest = gate.issue()
+  fun retain() {
+    check(activeLoads < Int.MAX_VALUE) {
+      "Too many active loads for one title."
+    }
+    activeLoads += 1
+  }
+
+  /** Returns true when no load still owns this coordinator. */
+  fun release(): Boolean {
+    check(activeLoads > 0) {
+      "A title refresh coordinator was released without an owner."
+    }
+    activeLoads -= 1
+    return activeLoads == 0
+  }
+
+  fun issue(): ChapterRefreshRequest = synchronized(state) {
+    gate.issue().also { currentRequest = it }
+  }
+
+  fun isCurrent(request: ChapterRefreshRequest): Boolean =
+    synchronized(state) {
+      currentRequest == request
+    }
+
+  suspend fun finishBeforeChapters(
+    request: ChapterRefreshRequest,
+    result: DetailsScreenResult,
+  ): DetailsScreenResult = reconciliation.withLock {
+    val accepted = synchronized(state) {
+      if (currentRequest != request) {
+        false
+      } else {
+        currentRequest = null
+        true
+      }
+    }
+    if (accepted) result else DetailsScreenResult.RejectedNotCurrent
+  }
 
   suspend fun acceptAndRead(
     completion: ChapterRefreshCompletion,
+    details: SourceTitleDetails,
     titles: Titles,
-    titleId: TitleId,
-  ): ChapterLoadResult {
-    reconciliation.lock()
-    try {
-      return when (val acceptance = gate.accept(completion)) {
-        ChapterRefreshAcceptance.RejectedNotCurrent ->
-          ChapterLoadResult.RejectedNotCurrent
+  ): ChapterLoadResult = reconciliation.withLock {
+    val acceptance = synchronized(state) {
+      if (currentRequest != completion.request) {
+        ChapterRefreshAcceptance.RejectedNotCurrent
+      } else {
+        gate.accept(completion).also { result ->
+          check(result is ChapterRefreshAcceptance.Accepted) {
+            "The current title load must retain its refresh request."
+          }
+          currentRequest = null
+        }
+      }
+    }
+    when (acceptance) {
+      ChapterRefreshAcceptance.RejectedNotCurrent ->
+        ChapterLoadResult.RejectedNotCurrent
 
-        is ChapterRefreshAcceptance.Accepted -> when (
-          val result = acceptance.result
-        ) {
+      is ChapterRefreshAcceptance.Accepted -> {
+        val titleId = titles.reconcileSourceTitle(details.toReconcileTitle())
+        when (val result = acceptance.result) {
           is SourceResult.Failure -> ChapterLoadResult.Failure(
             when (result.error) {
               SourceFailure.Unavailable ->
@@ -164,8 +253,6 @@ private class TitleRefreshCoordinator(
           )
         }
       }
-    } finally {
-      reconciliation.unlock()
     }
   }
 

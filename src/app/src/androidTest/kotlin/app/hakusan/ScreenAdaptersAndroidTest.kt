@@ -212,9 +212,46 @@ class ScreenAdaptersAndroidTest {
       secondRefresh.complete(listOf(chapter("new", "New")))
       assertTrue(secondLoad.await() is DetailsScreenResult.Success)
       firstRefresh.complete(listOf(chapter("old", "Old")))
-      assertSame(DetailsScreenResult.RejectedNotCurrent, firstLoad.await())
+      assertTrue(firstLoad.await() === DetailsScreenResult.RejectedNotCurrent)
     }
   }
+
+  @Test
+  fun rejectsStaleDetailsBeforePersistence(): Unit =
+    runBlocking {
+      withTimeout(TEST_TIMEOUT_MILLIS) {
+        val source = ControlledDetailsSource()
+        val graph = graph(source)
+        val service = graph.detailsService
+
+        val firstLoad = async(start = CoroutineStart.UNDISPATCHED) {
+          service.loadDetails(TITLE_KEY.toScreenKey())
+        }
+        val firstDetails = source.awaitDetails()
+        val secondLoad = async(start = CoroutineStart.UNDISPATCHED) {
+          service.loadDetails(TITLE_KEY.toScreenKey())
+        }
+        val secondDetails = source.awaitDetails()
+
+        secondDetails.complete("Current title")
+        val current = secondLoad.await().successScreen()
+        assertEquals("Current title", current.displayName)
+        assertSame(
+          AddToLibraryScreenResult.Success,
+          service.addToLibrary(current.id),
+        )
+
+        firstDetails.complete("Stale title")
+        assertSame(DetailsScreenResult.RejectedNotCurrent, firstLoad.await())
+        val library = graph.libraryService.observeLibrary().first {
+          current.id in it.titlesById
+        }
+        assertEquals(
+          "Current title",
+          library.titlesById.getValue(current.id).displayName,
+        )
+      }
+    }
 
   @Test
   fun serializesAcceptedRefreshes(): Unit = runBlocking {
@@ -310,6 +347,39 @@ class ScreenAdaptersAndroidTest {
     }
 
     suspend fun awaitRefresh(): PendingRefresh = refreshes.receive()
+  }
+
+  private class ControlledDetailsSource(
+    private val delegate: SourceBackend = DeterministicSource(),
+  ) : SourceBackend by delegate {
+    private val pendingDetails = Channel<PendingDetails>(Channel.UNLIMITED)
+
+    override suspend fun details(
+      title: SourceTitleKey,
+    ): SourceResult<SourceTitleDetails> {
+      val pending = PendingDetails(title)
+      pendingDetails.send(pending)
+      return pending.completion.await()
+    }
+
+    suspend fun awaitDetails(): PendingDetails = pendingDetails.receive()
+  }
+
+  private class PendingDetails(
+    private val titleKey: SourceTitleKey,
+  ) {
+    val completion = CompletableDeferred<SourceResult<SourceTitleDetails>>()
+
+    fun complete(displayName: String) {
+      completion.complete(
+        SourceResult.Success(
+          SourceTitleDetails(
+            title = SourceTitle(titleKey, displayName),
+            description = null,
+          ),
+        ),
+      )
+    }
   }
 
   private class PendingRefresh(
