@@ -1,19 +1,28 @@
 package app.hakusan.titles.storage
 
+import android.database.sqlite.SQLiteException
+import app.hakusan.titles.CategoryId
+import app.hakusan.titles.LibraryAddFailure
+import app.hakusan.titles.LibraryAddResult
+import app.hakusan.titles.LibraryCategorySelection
 import app.hakusan.titles.ReconcileSourceTitle
 import app.hakusan.titles.SourceTitleAlias
 import app.hakusan.titles.TitleId
 import app.hakusan.titles.Titles
 import androidx.room3.Room
 import androidx.room3.useReaderConnection
+import androidx.room3.useWriterConnection
+import androidx.room3.withWriteTransaction
 import androidx.sqlite.driver.AndroidSQLiteDriver
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import java.util.ArrayDeque
 import java.util.UUID
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -153,6 +162,192 @@ class TitlesDatabaseAndroidTest {
         dao.findTitleByAlias("new", "title"),
       )
     }
+  }
+
+  @Test
+  fun firstAddCommitsDefaultMembership(): Unit =
+    runBlocking {
+      val id = titles.reconcileSourceTitle(
+        title(
+          source = "source",
+          key = "title",
+          displayName = "Initial",
+          description = "Description",
+        ),
+      )
+      val firstResult = titles.addToLibrary(id)
+      val firstSuccess = firstResult as LibraryAddResult.Success
+      val defaultCategory = dao.loadCategories().single()
+
+      assertEquals(
+        setOf(CategoryId(defaultCategory.id)),
+        firstSuccess.membership.categoryIds,
+      )
+      assertEquals("Default", defaultCategory.name)
+      val repeatedResult = titles.addToLibrary(
+        titleId = id,
+        selection = LibraryCategorySelection.Explicit.of(
+          listOf(CategoryId(999)),
+        ),
+      )
+
+      assertEquals(firstResult, repeatedResult)
+      assertEquals(1, queryLong("SELECT COUNT(*) FROM categories"))
+      assertEquals(1, queryLong("SELECT COUNT(*) FROM title_categories"))
+    }
+
+  @Test
+  fun automaticAddUsesTheOnlyExistingCategory(): Unit = runBlocking {
+    val categoryId = CategoryId(
+      dao.insertCategory(CategoryEntity(name = "Want to read")),
+    )
+    val id = titles.reconcileSourceTitle(title("source", "title"))
+
+    val result = titles.addToLibrary(id) as LibraryAddResult.Success
+
+    assertEquals(setOf(categoryId), result.membership.categoryIds)
+    assertEquals(
+      listOf("Want to read"),
+      dao.loadCategories().map(CategoryEntity::name),
+    )
+  }
+
+  @Test
+  fun multipleCategoriesRequireAndValidateExplicitSelection(): Unit =
+    runBlocking {
+      val firstCategoryId = CategoryId(
+        dao.insertCategory(CategoryEntity(name = "Want to read")),
+      )
+      val secondCategoryId = CategoryId(
+        dao.insertCategory(CategoryEntity(name = "Want to read")),
+      )
+      val firstId = titles.reconcileSourceTitle(
+        title("first-source", "title", displayName = "Same name"),
+      )
+
+      val automatic = titles.addToLibrary(firstId)
+        as LibraryAddResult.CategorySelectionRequired
+      assertEquals(
+        setOf(firstCategoryId, secondCategoryId),
+        automatic.categories.mapTo(HashSet()) { it.id },
+      )
+      assertEquals(0, queryLong("SELECT COUNT(*) FROM title_categories"))
+
+      val missing = titles.addToLibrary(
+        titleId = firstId,
+        selection = LibraryCategorySelection.Explicit.of(
+          listOf(firstCategoryId, CategoryId(999)),
+        ),
+      ) as LibraryAddResult.Failure
+      val missingError = missing.error
+        as LibraryAddFailure.CategoriesNotFound
+      assertEquals(setOf(CategoryId(999)), missingError.categoryIds)
+      assertEquals(0, queryLong("SELECT COUNT(*) FROM title_categories"))
+
+      val selection = LibraryCategorySelection.Explicit.of(
+        listOf(firstCategoryId, secondCategoryId),
+      )
+      titles.addToLibrary(firstId, selection)
+      val secondId = titles.reconcileSourceTitle(
+        title("second-source", "title", displayName = "Same name"),
+      )
+      titles.addToLibrary(secondId, selection)
+
+      assertEquals(2, queryLong("SELECT COUNT(*) FROM titles"))
+      assertEquals(4, queryLong("SELECT COUNT(*) FROM title_categories"))
+      assertEquals(0, queryLong("SELECT COUNT(*) FROM read_chapters"))
+      assertEquals(
+        0,
+        queryLong("SELECT COUNT(*) FROM library_resume_positions"),
+      )
+    }
+
+  @Test
+  fun concurrentFirstAddsShareOneDefaultCategory(): Unit = runBlocking {
+    val firstId = titles.reconcileSourceTitle(title("source", "first"))
+    val secondId = titles.reconcileSourceTitle(title("source", "second"))
+
+    val results = coroutineScope {
+      listOf(
+        async { titles.addToLibrary(firstId) },
+        async { titles.addToLibrary(secondId) },
+      ).awaitAll()
+    }
+
+    assertTrue(results.all { it is LibraryAddResult.Success })
+    assertEquals(listOf("Default"), dao.loadCategories().map { it.name })
+    assertEquals(2, queryLong("SELECT COUNT(*) FROM title_categories"))
+  }
+
+  @Test
+  fun failedDefaultAssociationRollsBackTheWholeAdd() {
+    val id = runBlocking {
+      titles.reconcileSourceTitle(title("source", "title"))
+    }
+    runBlocking {
+      database.useWriterConnection { connection ->
+        connection.usePrepared(
+          """
+          CREATE TRIGGER fail_title_category_insert
+          BEFORE INSERT ON title_categories
+          BEGIN
+            SELECT RAISE(ABORT, 'injected title-category failure');
+          END
+          """.trimIndent(),
+        ) { statement ->
+          statement.step()
+        }
+      }
+    }
+
+    assertThrows(SQLiteException::class.java) {
+      runBlocking {
+        titles.addToLibrary(id)
+      }
+    }
+
+    runBlocking {
+      assertEquals(1, queryLong("SELECT COUNT(*) FROM titles"))
+      assertEquals(0, queryLong("SELECT COUNT(*) FROM categories"))
+      assertEquals(0, queryLong("SELECT COUNT(*) FROM title_categories"))
+    }
+  }
+
+  @Test
+  fun unknownTitleDoesNotInitializeTheLibrary(): Unit = runBlocking {
+    val result = titles.addToLibrary(TitleId(FIRST_ID))
+
+    assertEquals(
+      LibraryAddFailure.TitleNotFound,
+      (result as LibraryAddResult.Failure).error,
+    )
+    assertEquals(0, queryLong("SELECT COUNT(*) FROM categories"))
+  }
+
+  @Test
+  fun canceledQueuedAddDoesNotMutateMembership(): Unit = runBlocking {
+    val id = titles.reconcileSourceTitle(title("source", "title"))
+    val writerEntered = CompletableDeferred<Unit>()
+    val releaseWriter = CompletableDeferred<Unit>()
+    val writer = launch {
+      database.withWriteTransaction {
+        writerEntered.complete(Unit)
+        releaseWriter.await()
+      }
+    }
+    writerEntered.await()
+
+    val add = launch(start = CoroutineStart.UNDISPATCHED) {
+      titles.addToLibrary(id)
+    }
+    add.cancel()
+    releaseWriter.complete(Unit)
+    add.join()
+    writer.join()
+
+    assertTrue(add.isCancelled)
+    assertEquals(0, queryLong("SELECT COUNT(*) FROM categories"))
+    assertEquals(0, queryLong("SELECT COUNT(*) FROM title_categories"))
   }
 
   private suspend fun queryLong(sql: String): Long =

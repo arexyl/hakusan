@@ -45,4 +45,27 @@ internal abstract class TitlesDao {
     displayName: String,
     description: String?,
   ): Int
+
+  @Query("SELECT * FROM categories ORDER BY id")
+  abstract suspend fun loadCategories(): List<CategoryEntity>
+
+  @Insert
+  abstract suspend fun insertCategory(category: CategoryEntity): Long
+
+  @Query(
+    """
+    SELECT category_id
+    FROM title_categories
+    WHERE title_storage_id = :titleStorageId
+    ORDER BY category_id
+    """,
+  )
+  abstract suspend fun findTitleCategoryIds(
+    titleStorageId: Long,
+  ): List<Long>
+
+  @Insert
+  abstract suspend fun insertTitleCategories(
+    associations: List<TitleCategoryEntity>,
+  )
 }

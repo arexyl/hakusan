@@ -1,6 +1,14 @@
 package app.hakusan.titles.storage
 
 import app.hakusan.titles.ApplicationUuidFactory
+import app.hakusan.titles.CategoryId
+import app.hakusan.titles.InitialCategoryResolution
+import app.hakusan.titles.LibraryAddFailure
+import app.hakusan.titles.LibraryAddPolicy
+import app.hakusan.titles.LibraryAddResult
+import app.hakusan.titles.LibraryCategory
+import app.hakusan.titles.LibraryCategorySelection
+import app.hakusan.titles.LibraryMembership
 import app.hakusan.titles.ReconcileSourceTitle
 import app.hakusan.titles.TitleId
 import app.hakusan.titles.Titles
@@ -59,7 +67,80 @@ internal class RoomTitles(
     error("Unable to allocate a unique title UUIDv7.")
   }
 
+  override suspend fun addToLibrary(
+    titleId: TitleId,
+    selection: LibraryCategorySelection,
+  ): LibraryAddResult = database.withWriteTransaction {
+    val title = dao.findTitleById(titleId.value)
+      ?: return@withWriteTransaction LibraryAddResult.Failure(
+        LibraryAddFailure.TitleNotFound,
+      )
+
+    val currentCategoryIds = dao.findTitleCategoryIds(title.storageId)
+    if (currentCategoryIds.isNotEmpty()) {
+      return@withWriteTransaction successfulMembership(
+        titleId = titleId,
+        categoryIds = currentCategoryIds.map(::CategoryId),
+      )
+    }
+
+    val resolution = LibraryAddPolicy.resolve(
+      categories = dao.loadCategories().map { it.toLibraryCategory() },
+      selection = selection,
+    )
+    val categoryIds = when (resolution) {
+      InitialCategoryResolution.CreateDefault -> setOf(
+        CategoryId(
+          dao.insertCategory(CategoryEntity(name = DEFAULT_CATEGORY_NAME)),
+        ),
+      )
+
+      is InitialCategoryResolution.Assign -> resolution.categoryIds
+      is InitialCategoryResolution.SelectionRequired -> {
+        val result = LibraryAddResult.CategorySelectionRequired(
+          resolution.categories,
+        )
+        return@withWriteTransaction result
+      }
+
+      is InitialCategoryResolution.CategoriesNotFound -> {
+        return@withWriteTransaction LibraryAddResult.Failure(
+          LibraryAddFailure.CategoriesNotFound.create(
+            resolution.categoryIds,
+          ),
+        )
+      }
+    }
+
+    dao.insertTitleCategories(
+      categoryIds.map { categoryId ->
+        TitleCategoryEntity(
+          titleStorageId = title.storageId,
+          categoryId = categoryId.value,
+        )
+      },
+    )
+    successfulMembership(titleId, categoryIds)
+  }
+
+  private fun successfulMembership(
+    titleId: TitleId,
+    categoryIds: Iterable<CategoryId>,
+  ): LibraryAddResult.Success = LibraryAddResult.Success(
+    LibraryMembership.create(
+      titleId = titleId,
+      categoryIds = categoryIds,
+    ),
+  )
+
+  private fun CategoryEntity.toLibraryCategory(): LibraryCategory =
+    LibraryCategory(
+      id = CategoryId(id),
+      name = name,
+    )
+
   private companion object {
+    const val DEFAULT_CATEGORY_NAME = "Default"
     const val MAX_UUID_GENERATION_ATTEMPTS = 16
   }
 }
