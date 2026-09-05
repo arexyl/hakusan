@@ -128,6 +128,146 @@ class ReadingProgressDatabaseAndroidTest {
     }
 
   @Test
+  fun initialSnapshotAssignsCanonicalIndexesWithoutUpdates(): Unit =
+    runBlocking {
+      val alias = SourceTitleAlias("source", "title")
+      createTitle(alias)
+      executeSql(
+        """
+        CREATE TRIGGER reject_chapter_update
+        BEFORE UPDATE ON chapters
+        BEGIN
+          SELECT RAISE(ABORT, 'initial snapshot updated a chapter');
+        END
+        """.trimIndent(),
+      )
+
+      val snapshot = reconcile(
+        alias,
+        "first" to "First",
+        "second" to "Second",
+      )
+
+      assertEquals(
+        listOf("first", "second"),
+        snapshot.chapters.map { it.alias.sourceChapterKey },
+      )
+      assertCanonicalSnapshotPersisted(snapshot)
+    }
+
+  @Test
+  fun appendedChapterDoesNotRewriteStablePrefix(): Unit = runBlocking {
+    val alias = SourceTitleAlias("source", "title")
+    createTitle(alias)
+    val initial = reconcile(alias, "first" to "First", "second" to "Second")
+    executeSql(
+      """
+      CREATE TRIGGER reject_stable_prefix_update
+      BEFORE UPDATE ON chapters
+      BEGIN
+        SELECT RAISE(ABORT, 'append rewrote a stable chapter');
+      END
+      """.trimIndent(),
+    )
+
+    val appended = reconcile(
+      alias,
+      "first" to "First",
+      "second" to "Second",
+      "third" to "Third",
+    )
+
+    assertEquals(
+      initial.chapters.map(Chapter::id),
+      appended.chapters.take(2).map(Chapter::id),
+    )
+    assertEquals("third", appended.chapters.last().alias.sourceChapterKey)
+    assertCanonicalSnapshotPersisted(appended)
+  }
+
+  @Test
+  fun metadataChangeUpdatesOnlyTheChangedChapter(): Unit = runBlocking {
+    val alias = SourceTitleAlias("source", "title")
+    createTitle(alias)
+    val initial = reconcile(alias, "first" to "First", "second" to "Second")
+    executeSql(
+      """
+      CREATE TRIGGER reject_canonical_index_update
+      BEFORE UPDATE OF canonical_index ON chapters
+      BEGIN
+        SELECT RAISE(ABORT, 'metadata change rewrote canonical order');
+      END
+      """.trimIndent(),
+    )
+    executeSql(
+      """
+      CREATE TRIGGER reject_unrelated_metadata_update
+      BEFORE UPDATE ON chapters
+      WHEN OLD.source_chapter_key != 'second'
+      BEGIN
+        SELECT RAISE(ABORT, 'metadata change rewrote another chapter');
+      END
+      """.trimIndent(),
+    )
+
+    val renamed = reconcile(
+      alias,
+      "first" to "First",
+      "second" to "Second renamed",
+    )
+
+    assertEquals(
+      initial.chapters.map(Chapter::id),
+      renamed.chapters.map(Chapter::id),
+    )
+    assertEquals("Second renamed", renamed.chapters.last().displayName)
+    assertCanonicalSnapshotPersisted(renamed)
+  }
+
+  @Test
+  fun returningTailChapterUpdatesOnlyThatKnownChapter(): Unit = runBlocking {
+    val alias = SourceTitleAlias("source", "title")
+    createTitle(alias)
+    val initial = reconcile(
+      alias,
+      "first" to "First",
+      "second" to "Second",
+      "third" to "Third",
+    )
+    reconcile(alias, "first" to "First", "second" to "Second")
+    executeSql(
+      """
+      CREATE TRIGGER reject_return_insert
+      BEFORE INSERT ON chapters
+      BEGIN
+        SELECT RAISE(ABORT, 'returning chapter was inserted again');
+      END
+      """.trimIndent(),
+    )
+    executeSql(
+      """
+      CREATE TRIGGER reject_stable_return_prefix_update
+      BEFORE UPDATE ON chapters
+      WHEN OLD.source_chapter_key != 'third'
+      BEGIN
+        SELECT RAISE(ABORT, 'return rewrote the stable prefix');
+      END
+      """.trimIndent(),
+    )
+
+    val returned = reconcile(
+      alias,
+      "first" to "First",
+      "second" to "Second",
+      "third" to "Third renamed",
+    )
+
+    assertEquals(initial.chapters.last().id, returned.chapters.last().id)
+    assertEquals("Third renamed", returned.chapters.last().displayName)
+    assertCanonicalSnapshotPersisted(returned)
+  }
+
+  @Test
   fun chapterUuidCollisionRetriesWithoutChangingExistingIdentity(): Unit =
     runBlocking {
       val alias = SourceTitleAlias("source", "title")
@@ -1211,6 +1351,15 @@ class ReadingProgressDatabaseAndroidTest {
 
   private suspend fun progress(titleId: TitleId): TitleReadingProgress =
     checkNotNull(titles.observeReadingProgress(titleId).first())
+
+  private suspend fun assertCanonicalSnapshotPersisted(
+    snapshot: CanonicalChapterSnapshot,
+  ) {
+    assertEquals(
+      snapshot.chapters,
+      progress(snapshot.titleId).canonicalChapters.map { it.chapter },
+    )
+  }
 
   private suspend fun queryLong(sql: String): Long =
     database.useReaderConnection { connection ->

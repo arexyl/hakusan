@@ -54,16 +54,22 @@ internal class RoomReading(
     }
     val current = storedChapters
       .filter { it.canonicalIndex != null }
-      .sortedBy { it.canonicalIndex }
-    check(current.map { it.canonicalIndex } == current.indices.toList()) {
+    check(current.withIndex().all { (index, chapter) ->
+      chapter.canonicalIndex == index
+    }) {
       "Stored canonical chapter indexes must be dense."
     }
 
-    if (current.matches(input.chapters)) {
+    if (current.isAliasPrefixOf(input.chapters)) {
+      val reconciled = reconcilePrefixStable(
+        title = title,
+        chaptersByKey = chaptersByKey,
+        observed = input.chapters,
+      )
       return@withWriteTransaction successfulReconciliation(
         title = title,
         titleAlias = input.titleAlias,
-        chapters = current,
+        chapters = reconciled,
       )
     }
 
@@ -258,11 +264,38 @@ internal class RoomReading(
     completionSuccess(title.id)
   }
 
-  private fun List<ChapterEntity>.matches(
+  private fun List<ChapterEntity>.isAliasPrefixOf(
     observed: List<ReconcileSourceChapter>,
-  ): Boolean = size == observed.size && zip(observed).all { (stored, source) ->
-    stored.sourceChapterKey == source.alias.sourceChapterKey &&
-      stored.displayName == source.displayName
+  ): Boolean = size <= observed.size && indices.all { index ->
+    this[index].sourceChapterKey == observed[index].alias.sourceChapterKey
+  }
+
+  private suspend fun reconcilePrefixStable(
+    title: TitleEntity,
+    chaptersByKey: Map<String, ChapterEntity>,
+    observed: List<ReconcileSourceChapter>,
+  ): List<ChapterEntity> = observed.mapIndexed { canonicalIndex, source ->
+    val stored = chaptersByKey[source.alias.sourceChapterKey]
+      ?: return@mapIndexed insertChapter(
+        title = title,
+        observed = source,
+        canonicalIndex = canonicalIndex,
+      )
+    if (stored.canonicalIndex == canonicalIndex) {
+      updateChapterMetadataIfNeeded(
+        chapter = stored,
+        displayName = source.displayName,
+      )
+    } else {
+      check(stored.canonicalIndex == null) {
+        "A prefix append reused an occupied canonical chapter."
+      }
+      updateChapter(
+        chapter = stored,
+        displayName = source.displayName,
+        canonicalIndex = canonicalIndex,
+      )
+    }
   }
 
   private suspend fun insertChapter(
@@ -277,18 +310,33 @@ internal class RoomReading(
         titleStorageId = title.storageId,
         sourceChapterKey = observed.alias.sourceChapterKey,
         displayName = observed.displayName,
-        canonicalIndex = null,
+        canonicalIndex = canonicalIndex,
       )
       val storageId = readingDao.insertChapterOrIgnore(candidate)
       if (storageId > 0) {
-        return updateChapter(
-          chapter = candidate.copy(storageId = storageId),
-          displayName = observed.displayName,
-          canonicalIndex = canonicalIndex,
-        )
+        return candidate.copy(storageId = storageId)
       }
     }
     error("Unable to allocate a unique chapter UUIDv7.")
+  }
+
+  private suspend fun updateChapterMetadataIfNeeded(
+    chapter: ChapterEntity,
+    displayName: String,
+  ): ChapterEntity {
+    if (chapter.displayName == displayName) {
+      return chapter
+    }
+    check(
+      readingDao.updateChapterMetadata(
+        storageId = chapter.storageId,
+        titleStorageId = chapter.titleStorageId,
+        displayName = displayName,
+      ) == 1,
+    ) {
+      "Canonical chapter disappeared during metadata reconciliation."
+    }
+    return chapter.copy(displayName = displayName)
   }
 
   private suspend fun updateChapter(
@@ -316,16 +364,18 @@ internal class RoomReading(
     title: TitleEntity,
     titleAlias: SourceTitleAlias,
     chapters: Iterable<ChapterEntity>,
-  ): ChapterReconciliationResult.Success =
-    ChapterReconciliationResult.Success(
+  ): ChapterReconciliationResult.Success {
+    val titleId = TitleId(title.id)
+    return ChapterReconciliationResult.Success(
       CanonicalChapterSnapshot.create(
-        titleId = TitleId(title.id),
+        titleId = titleId,
         titleAlias = titleAlias,
         chapters = chapters.map { chapter ->
-          chapter.toChapter(title, titleAlias)
+          chapter.toChapter(titleId, titleAlias)
         },
       ),
     )
+  }
 
   private suspend fun completionSuccess(
     titleId: UUID,
@@ -497,11 +547,11 @@ internal class RoomReading(
   }
 
   private fun ChapterEntity.toChapter(
-    title: TitleEntity,
+    titleId: TitleId,
     titleAlias: SourceTitleAlias,
   ): Chapter = Chapter(
     id = ChapterId(id),
-    titleId = TitleId(title.id),
+    titleId = titleId,
     alias = SourceChapterAlias(titleAlias, sourceChapterKey),
     displayName = displayName,
   )
