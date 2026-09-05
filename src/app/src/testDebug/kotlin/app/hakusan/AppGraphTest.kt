@@ -11,14 +11,23 @@ import org.junit.jupiter.api.Test
 
 class AppGraphTest {
   @Test
-  fun `graph shares one screen service across its three contracts`() {
+  fun `graph scopes each screen responsibility to one graph`() {
     val registry = SourceRegistry.of(listOf(DeterministicSource()))
     val first = createAppGraph(registry, unusedTitles())
     val second = createAppGraph(registry, unusedTitles())
 
-    assertSame(first.browseService, first.libraryService)
-    assertSame(first.browseService, first.detailsService)
+    assertSame(first.browseService, first.browseService)
+    assertSame(first.libraryService, first.libraryService)
+    assertSame(
+      first.detailsService,
+      first.detailsService,
+    )
     assertNotSame(first.browseService, second.browseService)
+    assertNotSame(first.libraryService, second.libraryService)
+    assertNotSame(
+      first.detailsService,
+      second.detailsService,
+    )
     assertEquals(
       "app.hakusan.debug.source",
       first.browseService.catalog().sources.single().id.value,

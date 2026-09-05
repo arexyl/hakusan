@@ -76,11 +76,6 @@ class ScreenAdaptersAndroidTest {
     runBlocking {
       withTimeout(TEST_TIMEOUT_MILLIS) {
         val graph = graph(DeterministicSource())
-        assertSame(graph.browseService, graph.libraryService)
-        assertSame(
-          graph.browseService,
-          graph.detailsService,
-        )
         assertTrue(
           graph.libraryService.observeLibrary().first().shelves.isEmpty(),
         )

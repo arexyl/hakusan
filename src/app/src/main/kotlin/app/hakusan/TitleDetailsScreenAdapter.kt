@@ -6,98 +6,37 @@ import app.hakusan.extensions.ChapterRefreshGate
 import app.hakusan.extensions.ChapterRefreshRequest
 import app.hakusan.extensions.SourceFailure
 import app.hakusan.extensions.SourceResult
-import app.hakusan.extensions.SourceTitleDetails
 import app.hakusan.sdk.AddToLibraryScreenFailure
 import app.hakusan.sdk.AddToLibraryScreenResult
-import app.hakusan.sdk.BrowseScreen
-import app.hakusan.sdk.BrowseScreenFailure
-import app.hakusan.sdk.BrowseScreenResult
-import app.hakusan.sdk.BrowseScreenService
-import app.hakusan.sdk.BrowseTitleItem
-import app.hakusan.sdk.CatalogScreen
 import app.hakusan.sdk.ContinueSelectionFailure
 import app.hakusan.sdk.ContinueSelectionResult
 import app.hakusan.sdk.DetailsScreenFailure
 import app.hakusan.sdk.DetailsScreenResult
-import app.hakusan.sdk.LibraryScreen
-import app.hakusan.sdk.LibraryScreenService
-import app.hakusan.sdk.ScreenSourceId
 import app.hakusan.sdk.ScreenTitleId
 import app.hakusan.sdk.ScreenTitleKey
-import app.hakusan.sdk.TitleDetailsScreen
 import app.hakusan.sdk.TitleDetailsScreenService
 import app.hakusan.titles.ChapterReconciliationFailure
 import app.hakusan.titles.ChapterReconciliationResult
 import app.hakusan.titles.LibraryAddFailure
 import app.hakusan.titles.LibraryAddResult
 import app.hakusan.titles.ReconcileChapterSnapshot
-import app.hakusan.titles.LibraryShelfState
 import app.hakusan.titles.TitleId
 import app.hakusan.titles.TitleReadingProgress
 import app.hakusan.titles.Titles
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import java.util.concurrent.ConcurrentHashMap
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.channelFlow
-import kotlinx.coroutines.flow.collectLatest
-import kotlinx.coroutines.flow.combine
-import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.flowOf
-import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.sync.Mutex
 
 @Inject
 @SingleIn(AppScope::class)
-internal class ApplicationScreenServices(
+internal class TitleDetailsScreenAdapter(
   private val sourceRegistry: SourceRegistry,
   private val titles: Titles,
-) : BrowseScreenService,
-  TitleDetailsScreenService,
-  LibraryScreenService {
+) : TitleDetailsScreenService {
   private val coordinators =
     ConcurrentHashMap<ScreenTitleKey, TitleRefreshCoordinator>()
-
-  override fun catalog(): CatalogScreen = sourceRegistry.catalog
-
-  override suspend fun loadBrowse(
-    sourceId: ScreenSourceId,
-  ): BrowseScreenResult {
-    val registration = sourceRegistry.find(sourceId)
-      ?: return BrowseScreenResult.Failure(
-        BrowseScreenFailure.SourceNotFound,
-      )
-    val backend = registration.backend
-    return when (val result = backend.browse()) {
-      is SourceResult.Failure -> BrowseScreenResult.Failure(
-        when (result.error) {
-          SourceFailure.Unavailable -> BrowseScreenFailure.SourceUnavailable
-          else -> BrowseScreenFailure.InvalidObservation
-        },
-      )
-
-      is SourceResult.Success -> {
-        val observation = result.value
-        if (observation.source != backend.identity) {
-          return BrowseScreenResult.Failure(
-            BrowseScreenFailure.InvalidObservation,
-          )
-        }
-        BrowseScreenResult.Success(
-          BrowseScreen.of(
-            source = registration.catalogItem,
-            titles = observation.titles.map { title ->
-              BrowseTitleItem(
-                key = title.key.toScreenKey(),
-                displayName = title.displayName,
-              )
-            },
-          ),
-        )
-      }
-    }
-  }
 
   override suspend fun loadDetails(
     titleKey: ScreenTitleKey,
@@ -181,31 +120,6 @@ internal class ApplicationScreenServices(
         ContinueSelectionFailure.TitleNotFound,
       )
     return progress.toContinueState().toSelectionResult()
-  }
-
-  override fun observeLibrary(): Flow<LibraryScreen> = channelFlow {
-    titles.observeLibraryShelves().collectLatest { state ->
-      state.observeProgress().collect { screen ->
-        send(screen)
-      }
-    }
-  }.distinctUntilChanged()
-
-  private fun LibraryShelfState.observeProgress(): Flow<LibraryScreen> {
-    val orderedTitles = LibraryOrder.titles(titlesById.values)
-    if (orderedTitles.isEmpty()) {
-      return flowOf(toLibraryScreen(emptyMap()))
-    }
-    val observations = orderedTitles.map { title ->
-      titles.observeReadingProgress(title.id).map { progress ->
-        title.id to checkNotNull(progress) {
-          "A Library title must retain readable title progress."
-        }
-      }
-    }
-    return combine(observations) { values ->
-      toLibraryScreen(values.toMap())
-    }
   }
 }
 

@@ -18,18 +18,18 @@ internal interface AppGraph {
 
   @Provides
   fun bindBrowse(
-    services: ApplicationScreenServices,
-  ): BrowseScreenService = services
+    adapter: BrowseScreenAdapter,
+  ): BrowseScreenService = adapter
 
   @Provides
   fun bindLibrary(
-    services: ApplicationScreenServices,
-  ): LibraryScreenService = services
+    adapter: LibraryScreenAdapter,
+  ): LibraryScreenService = adapter
 
   @Provides
   fun bindTitleDetails(
-    services: ApplicationScreenServices,
-  ): TitleDetailsScreenService = services
+    adapter: TitleDetailsScreenAdapter,
+  ): TitleDetailsScreenService = adapter
 
   @DependencyGraph.Factory
   fun interface Factory {
