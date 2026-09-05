@@ -60,6 +60,7 @@ dependencies {
   implementation(project(":extensions"))
   implementation(project(":reader"))
 
-  testImplementation(libs.junit.jupiter)
+  testImplementation(libs.junit.jupiter.api)
+  testRuntimeOnly(libs.junit.jupiter.engine)
   testRuntimeOnly(libs.junit.platform.launcher)
 }

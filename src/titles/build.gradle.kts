@@ -59,7 +59,8 @@ dependencies {
   ksp(libs.room.compiler)
 
   androidTestImplementation(libs.androidx.test.junit)
-  androidTestImplementation(libs.androidx.test.runner)
-  testImplementation(libs.junit.jupiter)
+  androidTestRuntimeOnly(libs.androidx.test.runner)
+  testImplementation(libs.junit.jupiter.api)
+  testRuntimeOnly(libs.junit.jupiter.engine)
   testRuntimeOnly(libs.junit.platform.launcher)
 }
