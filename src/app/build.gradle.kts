@@ -1,3 +1,4 @@
+import org.gradle.api.tasks.testing.Test
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.dsl.KotlinVersion
 
@@ -44,6 +45,10 @@ kotlin {
   }
 }
 
+tasks.withType<Test>().configureEach {
+  useJUnitPlatform()
+}
+
 dependencyLocking {
   lockAllConfigurations()
 }
@@ -54,4 +59,7 @@ dependencies {
   implementation(project(":titles"))
   implementation(project(":extensions"))
   implementation(project(":reader"))
+
+  testImplementation(libs.junit.jupiter)
+  testRuntimeOnly(libs.junit.platform.launcher)
 }
