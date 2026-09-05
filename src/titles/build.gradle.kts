@@ -21,6 +21,11 @@ android {
 
   defaultConfig {
     minSdk = 33
+    testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+  }
+
+  testOptions {
+    targetSdk = 37
   }
 
   compileOptions {
@@ -48,9 +53,13 @@ dependencyLocking {
 }
 
 dependencies {
+  api(libs.kotlinx.coroutines.core)
+
   implementation(libs.room.runtime)
   ksp(libs.room.compiler)
 
+  androidTestImplementation(libs.androidx.test.junit)
+  androidTestImplementation(libs.androidx.test.runner)
   testImplementation(libs.junit.jupiter)
   testRuntimeOnly(libs.junit.platform.launcher)
 }
