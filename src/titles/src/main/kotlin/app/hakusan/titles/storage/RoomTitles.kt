@@ -2,6 +2,7 @@ package app.hakusan.titles.storage
 
 import app.hakusan.titles.ApplicationUuidFactory
 import app.hakusan.titles.CategoryId
+import app.hakusan.titles.ChapterReconciliationResult
 import app.hakusan.titles.InitialCategoryResolution
 import app.hakusan.titles.LibraryAddFailure
 import app.hakusan.titles.LibraryAddPolicy
@@ -12,6 +13,7 @@ import app.hakusan.titles.LibraryMembership
 import app.hakusan.titles.LibraryShelf
 import app.hakusan.titles.LibraryShelfState
 import app.hakusan.titles.LibraryTitle
+import app.hakusan.titles.ReconcileChapterSnapshot
 import app.hakusan.titles.ReconcileSourceTitle
 import app.hakusan.titles.SourceTitleAlias
 import app.hakusan.titles.TitleId
@@ -29,6 +31,7 @@ internal class RoomTitles(
   private val createUuid: () -> UUID = ApplicationUuidFactory::create,
 ) : Titles {
   private val dao = database.titlesDao()
+  private val reading = RoomReading(database, createUuid)
 
   override suspend fun reconcileSourceTitle(
     input: ReconcileSourceTitle,
@@ -131,6 +134,10 @@ internal class RoomTitles(
     )
     successfulMembership(titleId, categoryIds)
   }
+
+  override suspend fun reconcileChapterSnapshot(
+    input: ReconcileChapterSnapshot,
+  ): ChapterReconciliationResult = reading.reconcileChapterSnapshot(input)
 
   override fun observeLibraryShelves(): Flow<LibraryShelfState> =
     dao.observeLibraryShelfRows()

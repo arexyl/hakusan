@@ -20,6 +20,16 @@ interface Titles {
   ): TitleId
 
   /**
+   * Reconciles one accepted complete source chapter snapshot atomically.
+   * Per title, the caller completes each accept-to-reconcile handoff before
+   * accepting a later snapshot. This subsystem does not arbitrate source
+   * refresh generations.
+   */
+  suspend fun reconcileChapterSnapshot(
+    input: ReconcileChapterSnapshot,
+  ): ChapterReconciliationResult
+
+  /**
    * Adds a known title atomically, including initial category assignment.
    * Repeating the operation for an existing member is a successful no-op.
    */
