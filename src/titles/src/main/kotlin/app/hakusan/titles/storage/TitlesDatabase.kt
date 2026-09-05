@@ -15,4 +15,6 @@ import androidx.room3.RoomDatabase
   version = 1,
   exportSchema = true,
 )
-internal abstract class TitlesDatabase : RoomDatabase()
+internal abstract class TitlesDatabase : RoomDatabase() {
+  abstract fun titlesDao(): TitlesDao
+}
