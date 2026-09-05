@@ -10,7 +10,7 @@ import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertSame
-import org.junit.jupiter.api.Assertions.assertThrows
+import org.junit.jupiter.api.Assertions.assertThrowsExactly
 import org.junit.jupiter.api.Test
 
 class ReaderSessionGateTest {
@@ -121,13 +121,52 @@ class ReaderSessionGateTest {
   }
 
   @Test
+  fun `close waits for accepted work before rejecting its event`() =
+    runBlocking {
+      withTimeout(TEST_TIMEOUT_MILLIS) {
+        val gate = ReaderSessionGate()
+        val session = gate.start()
+        val event = issue(gate, session)
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val work = async(start = CoroutineStart.UNDISPATCHED) {
+          gate.withCurrent(event) {
+            entered.complete(Unit)
+            release.await()
+            "committed"
+          }
+        }
+        entered.await()
+        val close = async(start = CoroutineStart.UNDISPATCHED) {
+          gate.close(session)
+        }
+
+        assertFalse(close.isCompleted)
+        release.complete(Unit)
+        assertEquals(
+          ReaderSessionAcceptance.Accepted("committed"),
+          work.await(),
+        )
+        close.await()
+        var closedBlockInvoked = false
+        assertSame(
+          ReaderSessionAcceptance.RejectedNotCurrent,
+          gate.withCurrent(event) {
+            closedBlockInvoked = true
+          },
+        )
+        assertFalse(closedBlockInvoked)
+      }
+    }
+
+  @Test
   fun `failure keeps an event retryable and releases the lease`() {
     val gate = ReaderSessionGate()
-    val session = runBlocking { gate.start() }
-    val event = runBlocking { issue(gate, session) }
+    val session = runWithTimeout { gate.start() }
+    val event = runWithTimeout { issue(gate, session) }
 
-    assertThrows(IllegalStateException::class.java) {
-      runBlocking {
+    assertThrowsExactly(IllegalStateException::class.java) {
+      runWithTimeout {
         gate.withCurrent(event) {
           error("injected failure")
         }
@@ -135,23 +174,23 @@ class ReaderSessionGateTest {
     }
     assertEquals(
       ReaderSessionAcceptance.Accepted(ReaderEventRecency.CURRENT),
-      runBlocking { gate.withCurrent(event) { it } },
+      runWithTimeout { gate.withCurrent(event) { it } },
     )
     assertEquals(
       ReaderSessionAcceptance.Accepted(ReaderEventRecency.REORDERED),
-      runBlocking { gate.withCurrent(event) { it } },
+      runWithTimeout { gate.withCurrent(event) { it } },
     )
   }
 
   @Test
   fun `failed older event becomes reordered after a newer commit`() {
     val gate = ReaderSessionGate()
-    val session = runBlocking { gate.start() }
-    val older = runBlocking { issue(gate, session) }
-    val newer = runBlocking { issue(gate, session) }
+    val session = runWithTimeout { gate.start() }
+    val older = runWithTimeout { issue(gate, session) }
+    val newer = runWithTimeout { issue(gate, session) }
 
-    assertThrows(IllegalStateException::class.java) {
-      runBlocking {
+    assertThrowsExactly(IllegalStateException::class.java) {
+      runWithTimeout {
         gate.withCurrent(older) {
           error("injected failure")
         }
@@ -159,11 +198,11 @@ class ReaderSessionGateTest {
     }
     assertEquals(
       ReaderSessionAcceptance.Accepted(ReaderEventRecency.CURRENT),
-      runBlocking { gate.withCurrent(newer) { it } },
+      runWithTimeout { gate.withCurrent(newer) { it } },
     )
     assertEquals(
       ReaderSessionAcceptance.Accepted(ReaderEventRecency.REORDERED),
-      runBlocking { gate.withCurrent(older) { it } },
+      runWithTimeout { gate.withCurrent(older) { it } },
     )
   }
 
@@ -207,6 +246,47 @@ class ReaderSessionGateTest {
         assertEquals(
           ReaderSessionAcceptance.Accepted(ReaderEventRecency.CURRENT),
           gate.withCurrent(event) { it },
+        )
+      }
+    }
+
+  @Test
+  fun `cancellation while delivery waits does not invoke its block`() =
+    runBlocking {
+      withTimeout(TEST_TIMEOUT_MILLIS) {
+        val gate = ReaderSessionGate()
+        val session = gate.start()
+        val first = issue(gate, session)
+        val waiting = issue(gate, session)
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        val acceptedWork = async(start = CoroutineStart.UNDISPATCHED) {
+          gate.withCurrent(first) {
+            entered.complete(Unit)
+            release.await()
+            it
+          }
+        }
+        entered.await()
+        var waitingBlockInvoked = false
+        val waitingWork = async(start = CoroutineStart.UNDISPATCHED) {
+          gate.withCurrent(waiting) {
+            waitingBlockInvoked = true
+            it
+          }
+        }
+
+        assertFalse(waitingWork.isCompleted)
+        waitingWork.cancelAndJoin()
+        assertFalse(waitingBlockInvoked)
+        release.complete(Unit)
+        assertEquals(
+          ReaderSessionAcceptance.Accepted(ReaderEventRecency.CURRENT),
+          acceptedWork.await(),
+        )
+        assertEquals(
+          ReaderSessionAcceptance.Accepted(ReaderEventRecency.CURRENT),
+          gate.withCurrent(waiting) { it },
         )
       }
     }
@@ -282,6 +362,12 @@ class ReaderSessionGateTest {
     session: ReaderSession,
   ): ReaderSessionEvent =
     (gate.issue(session) as ReaderSessionAcceptance.Accepted).value
+
+  private fun <Value> runWithTimeout(
+    block: suspend () -> Value,
+  ): Value = runBlocking {
+    withTimeout(TEST_TIMEOUT_MILLIS) { block() }
+  }
 
   private companion object {
     const val TEST_TIMEOUT_MILLIS = 5_000L
