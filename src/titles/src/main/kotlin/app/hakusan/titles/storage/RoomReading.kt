@@ -131,13 +131,17 @@ internal class RoomReading(
         progress = loadReadingProgress(title.id),
       )
     }
-    if (readingDao.isChapterRead(chapter.storageId)) {
+    val facts = readingDao.loadLibraryChapterFacts(
+      titleStorageId = title.storageId,
+      chapterStorageId = chapter.storageId,
+    )
+    if (facts.isChapterRead) {
       return@withWriteTransaction ActualPositionResult.NotPersisted(
         reason = ActualPositionNotPersisted.CHAPTER_ALREADY_READ,
         progress = loadReadingProgress(title.id),
       )
     }
-    if (!readingDao.hasLibraryMembership(title.storageId)) {
+    if (!facts.isLibraryMember) {
       return@withWriteTransaction ActualPositionResult.NotPersisted(
         reason = ActualPositionNotPersisted.TITLE_NOT_IN_LIBRARY,
         progress = loadReadingProgress(title.id),
@@ -160,29 +164,31 @@ internal class RoomReading(
       ?: return@withWriteTransaction completionFailure(
         ReadingProgressFailure.TitleNotFound,
       )
-    val completed = readingDao.findChapterByIdForTitle(
+    val chapters = readingDao.findChaptersByIdsForTitle(
       titleStorageId = title.storageId,
-      chapterId = completion.completedChapterId.value,
+      firstChapterId = completion.completedChapterId.value,
+      secondChapterId = completion.startedPosition.chapterId.value,
     )
-    val started = readingDao.findChapterByIdForTitle(
-      titleStorageId = title.storageId,
-      chapterId = completion.startedPosition.chapterId.value,
-    )
-    val missingIds = buildSet {
-      if (completed == null) {
-        add(completion.completedChapterId)
-      }
-      if (started == null) {
-        add(completion.startedPosition.chapterId)
-      }
+    val completed = chapters.find {
+      it.id == completion.completedChapterId.value
     }
-    if (missingIds.isNotEmpty()) {
+    val started = chapters.find {
+      it.id == completion.startedPosition.chapterId.value
+    }
+    if (completed == null || started == null) {
+      val missingIds = when {
+        completed == null && started == null -> listOf(
+          completion.completedChapterId,
+          completion.startedPosition.chapterId,
+        )
+
+        completed == null -> listOf(completion.completedChapterId)
+        else -> listOf(completion.startedPosition.chapterId)
+      }
       return@withWriteTransaction completionFailure(
         ReadingProgressFailure.ChaptersNotFound.create(missingIds),
       )
     }
-    checkNotNull(completed)
-    checkNotNull(started)
 
     if (!completed.isImmediatelyBefore(started)) {
       return@withWriteTransaction completionFailure(
@@ -195,14 +201,13 @@ internal class RoomReading(
       )
     }
 
+    // Map and validate the stored row before any completion cleanup.
     val previousPosition = readingDao.findLibraryResumePosition(
       title.storageId,
     )
-    if (!readingDao.isChapterRead(completed.storageId)) {
-      readingDao.insertReadChapterOrIgnore(
-        ReadChapterEntity(completed.storageId),
-      )
-    }
+    readingDao.insertReadChapterOrIgnore(
+      ReadChapterEntity(completed.storageId),
+    )
     if (previousPosition?.chapterStorageId == completed.storageId) {
       readingDao.deleteLibraryResumePosition(
         titleStorageId = title.storageId,
@@ -213,9 +218,12 @@ internal class RoomReading(
       return@withWriteTransaction completionSuccess(title.id)
     }
 
+    val startedFacts = readingDao.loadLibraryChapterFacts(
+      titleStorageId = title.storageId,
+      chapterStorageId = started.storageId,
+    )
     val canStoreStartedPosition =
-      readingDao.hasLibraryMembership(title.storageId) &&
-        !readingDao.isChapterRead(started.storageId)
+      startedFacts.isLibraryMember && !startedFacts.isChapterRead
     if (canStoreStartedPosition) {
       readingDao.upsertLibraryResumePosition(
         completion.startedPosition.toEntity(title, started),
@@ -252,11 +260,9 @@ internal class RoomReading(
       )
     }
 
-    if (!readingDao.isChapterRead(chapter.storageId)) {
-      readingDao.insertReadChapterOrIgnore(
-        ReadChapterEntity(chapter.storageId),
-      )
-    }
+    readingDao.insertReadChapterOrIgnore(
+      ReadChapterEntity(chapter.storageId),
+    )
     readingDao.deleteLibraryResumePosition(
       titleStorageId = title.storageId,
       chapterStorageId = chapter.storageId,

@@ -329,6 +329,52 @@ class ReadingProgressDatabaseAndroidTest {
   }
 
   @Test
+  fun batchedChapterLookupAndLibraryFactsMapByIdentity(): Unit = runBlocking {
+    val alias = SourceTitleAlias("source", "title")
+    val titleId = createTitle(alias, addToLibrary = true)
+    val candidates = ArrayDeque(
+      listOf(SECOND_CHAPTER_ID, FIRST_CHAPTER_ID),
+    )
+    val snapshot = reconcile(
+      titles = database.asTitles(candidates::removeFirst),
+      alias = alias,
+      chapters = arrayOf("first" to "First", "second" to "Second"),
+    )
+    assertEquals(ChapterId(SECOND_CHAPTER_ID), snapshot.chapters[0].id)
+    assertEquals(ChapterId(FIRST_CHAPTER_ID), snapshot.chapters[1].id)
+    assertTrue(candidates.isEmpty())
+    val storedTitle = checkNotNull(
+      database.titlesDao().findTitleById(titleId.value),
+    )
+
+    val stored = readingDao.findChaptersByIdsForTitle(
+      titleStorageId = storedTitle.storageId,
+      firstChapterId = snapshot.chapters[0].id.value,
+      secondChapterId = snapshot.chapters[1].id.value,
+    )
+    val storedById = stored.associateBy { ChapterId(it.id) }
+    val first = checkNotNull(storedById[snapshot.chapters[0].id])
+    val second = checkNotNull(storedById[snapshot.chapters[1].id])
+    assertEquals(2, storedById.size)
+    assertEquals(0, first.canonicalIndex)
+    assertEquals(1, second.canonicalIndex)
+
+    readingDao.insertReadChapterOrIgnore(ReadChapterEntity(first.storageId))
+    val firstFacts = readingDao.loadLibraryChapterFacts(
+      titleStorageId = storedTitle.storageId,
+      chapterStorageId = first.storageId,
+    )
+    val secondFacts = readingDao.loadLibraryChapterFacts(
+      titleStorageId = storedTitle.storageId,
+      chapterStorageId = second.storageId,
+    )
+    assertTrue(firstFacts.isLibraryMember)
+    assertTrue(firstFacts.isChapterRead)
+    assertTrue(secondFacts.isLibraryMember)
+    assertFalse(secondFacts.isChapterRead)
+  }
+
+  @Test
   fun actualPositionPersistsReplacesAndSurvivesChapterOmission(): Unit =
     runBlocking {
       val alias = SourceTitleAlias("source", "title")
@@ -475,6 +521,68 @@ class ReadingProgressDatabaseAndroidTest {
           .mapTo(HashSet()) { it.chapter.id },
       )
     }
+
+  @Test
+  fun repeatedCompletionsAttemptIdempotentReadInserts(): Unit = runBlocking {
+    val alias = SourceTitleAlias("source", "title")
+    val titleId = createTitle(alias, addToLibrary = true)
+    val snapshot = reconcile(
+      alias,
+      "first" to "First",
+      "second" to "Second",
+      "final" to "Final",
+    )
+    val firstBoundary = boundary(
+      snapshot.chapters[0],
+      position(titleId, snapshot.chapters[1], unitIndex = 0),
+    )
+    val finalCompletion = FinalChapterCompletion(
+      titleId,
+      snapshot.chapters[2].id,
+    )
+    assertTrue(
+      titles.completeChapterBoundary(firstBoundary) is CompletionResult.Success,
+    )
+    assertTrue(
+      titles.completeFinalChapter(finalCompletion) is CompletionResult.Success,
+    )
+    assertEquals(2, queryLong("SELECT COUNT(*) FROM read_chapters"))
+    val before = progress(titleId)
+    executeSql(
+      """
+      CREATE TABLE read_insert_attempts (
+        chapter_storage_id INTEGER NOT NULL
+      )
+      """.trimIndent(),
+    )
+    executeSql(
+      """
+      CREATE TRIGGER audit_read_insert_attempt
+      BEFORE INSERT ON read_chapters
+      BEGIN
+        INSERT INTO read_insert_attempts VALUES (NEW.chapter_storage_id);
+      END
+      """.trimIndent(),
+    )
+
+    assertTrue(
+      titles.completeChapterBoundary(firstBoundary) is CompletionResult.Success,
+    )
+    assertTrue(
+      titles.completeFinalChapter(finalCompletion) is CompletionResult.Success,
+    )
+
+    assertEquals(2, queryLong("SELECT COUNT(*) FROM read_insert_attempts"))
+    assertEquals(
+      2,
+      queryLong(
+        "SELECT COUNT(DISTINCT chapter_storage_id) " +
+          "FROM read_insert_attempts",
+      ),
+    )
+    assertEquals(2, queryLong("SELECT COUNT(*) FROM read_chapters"))
+    assertEquals(before, progress(titleId))
+  }
 
   @Test
   fun reorderedBoundaryPreservesPositionForAnotherUnreadChapter(): Unit =
@@ -1230,6 +1338,23 @@ class ReadingProgressDatabaseAndroidTest {
       assertEquals(
         setOf(secondChapter.id),
         (missingBoundary.error as ReadingProgressFailure.ChaptersNotFound)
+          .chapterIds,
+      )
+
+      val foreignStarted = titles.completeChapterBoundary(
+        ChapterBoundaryCompletion(
+          completedChapterId = firstChapter.id,
+          startedPosition = position(
+            firstTitleId,
+            secondChapter,
+            unitIndex = 0,
+          ),
+          recency = ProgressEventRecency.CURRENT,
+        ),
+      ) as CompletionResult.Failure
+      assertEquals(
+        setOf(secondChapter.id),
+        (foreignStarted.error as ReadingProgressFailure.ChaptersNotFound)
           .chapterIds,
       )
 
