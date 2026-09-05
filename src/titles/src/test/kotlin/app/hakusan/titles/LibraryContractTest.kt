@@ -103,6 +103,53 @@ class LibraryContractTest {
     )
   }
 
+  @Test
+  fun `shelf state normalizes shared title state and derives counts`() {
+    val title = LibraryTitle(
+      id = TitleId(TITLE_ID),
+      alias = SourceTitleAlias("source", "title"),
+      displayName = "Title",
+      description = "Description",
+    )
+    val firstShelfTitleIds = mutableListOf(title.id)
+    val firstShelf = LibraryShelf.create(
+      category = category(1, "Default"),
+      titleIds = firstShelfTitleIds,
+    )
+    val secondShelf = LibraryShelf.create(
+      category = category(2, "Reading"),
+      titleIds = listOf(title.id),
+    )
+    val mutableTitles = linkedMapOf(title.id to title)
+    val mutableShelves = mutableListOf(firstShelf, secondShelf)
+    val state = LibraryShelfState.create(mutableTitles, mutableShelves)
+
+    mutableTitles.clear()
+    mutableShelves.clear()
+    firstShelfTitleIds.clear()
+
+    assertEquals(mapOf(title.id to title), state.titlesById)
+    assertEquals(setOf(firstShelf, secondShelf), state.shelves)
+    assertEquals(1, state.shelves.single { it == firstShelf }.titleCount)
+    assertThrows(IllegalArgumentException::class.java) {
+      LibraryShelfState.create(
+        titlesById = emptyMap(),
+        shelves = listOf(firstShelf),
+      )
+    }
+    assertThrows(IllegalArgumentException::class.java) {
+      LibraryShelfState.create(
+        titlesById = mapOf(TitleId(OTHER_TITLE_ID) to title),
+        shelves = listOf(
+          LibraryShelf.create(
+            category = category(1, "Default"),
+            titleIds = listOf(TitleId(OTHER_TITLE_ID)),
+          ),
+        ),
+      )
+    }
+  }
+
   private fun category(
     id: Long,
     name: String,
@@ -111,5 +158,7 @@ class LibraryContractTest {
   private companion object {
     val TITLE_ID: UUID =
       UUID.fromString("00000000-0000-7000-8000-000000000001")
+    val OTHER_TITLE_ID: UUID =
+      UUID.fromString("00000000-0000-7000-8000-000000000002")
   }
 }

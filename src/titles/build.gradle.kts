@@ -53,7 +53,7 @@ dependencyLocking {
 }
 
 dependencies {
-  androidTestImplementation(libs.kotlinx.coroutines.core)
+  api(libs.kotlinx.coroutines.core)
 
   implementation(libs.room.runtime)
   ksp(libs.room.compiler)

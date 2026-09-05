@@ -1,5 +1,7 @@
 package app.hakusan.titles
 
+import kotlinx.coroutines.flow.Flow
+
 /**
  * Domain operations and observations owned by the titles subsystem.
  *
@@ -26,4 +28,11 @@ interface Titles {
     selection: LibraryCategorySelection =
       LibraryCategorySelection.Automatic,
   ): LibraryAddResult
+
+  /**
+   * Observes a current snapshot followed by committed relevant changes.
+   * Collection owns the observation lifetime; canceling it stops that
+   * collection without changing stored state.
+   */
+  fun observeLibraryShelves(): Flow<LibraryShelfState>
 }

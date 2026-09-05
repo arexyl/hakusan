@@ -9,11 +9,20 @@ import app.hakusan.titles.LibraryAddResult
 import app.hakusan.titles.LibraryCategory
 import app.hakusan.titles.LibraryCategorySelection
 import app.hakusan.titles.LibraryMembership
+import app.hakusan.titles.LibraryShelf
+import app.hakusan.titles.LibraryShelfState
+import app.hakusan.titles.LibraryTitle
 import app.hakusan.titles.ReconcileSourceTitle
+import app.hakusan.titles.SourceTitleAlias
 import app.hakusan.titles.TitleId
 import app.hakusan.titles.Titles
 import androidx.room3.withWriteTransaction
+import java.util.LinkedHashMap
+import java.util.LinkedHashSet
 import java.util.UUID
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
+import kotlinx.coroutines.flow.map
 
 internal class RoomTitles(
   private val database: TitlesDatabase,
@@ -123,6 +132,75 @@ internal class RoomTitles(
     successfulMembership(titleId, categoryIds)
   }
 
+  override fun observeLibraryShelves(): Flow<LibraryShelfState> =
+    dao.observeLibraryShelfRows()
+      .map(::toShelfState)
+      .distinctUntilChanged()
+
+  private fun toShelfState(
+    rows: List<LibraryShelfRow>,
+  ): LibraryShelfState {
+    val titlesById = LinkedHashMap<TitleId, LibraryTitle>()
+    val shelvesByCategory = LinkedHashMap<CategoryId, ShelfAccumulator>()
+
+    rows.forEach { row ->
+      val category = LibraryCategory(
+        id = CategoryId(row.categoryId),
+        name = row.categoryName,
+      )
+      val shelf = shelvesByCategory.getOrPut(category.id) {
+        ShelfAccumulator(category)
+      }
+      check(shelf.category == category) {
+        "One category identity produced conflicting shelf metadata."
+      }
+
+      row.toLibraryTitle()?.let { title ->
+        val previous = titlesById.putIfAbsent(title.id, title)
+        check(previous == null || previous == title) {
+          "One title identity produced conflicting shelf metadata."
+        }
+        check(shelf.titleIds.add(title.id)) {
+          "One shelf contained a duplicate title identity."
+        }
+      }
+    }
+
+    return LibraryShelfState.create(
+      titlesById = titlesById,
+      shelves = shelvesByCategory.values.map { shelf ->
+        LibraryShelf.create(
+          category = shelf.category,
+          titleIds = shelf.titleIds,
+        )
+      },
+    )
+  }
+
+  private fun LibraryShelfRow.toLibraryTitle(): LibraryTitle? {
+    val storedTitleId = titleId
+    if (storedTitleId == null) {
+      check(
+        sourceIdentity == null &&
+          sourceTitleKey == null &&
+          titleDisplayName == null &&
+          titleDescription == null
+      ) {
+        "An empty shelf row contained partial title metadata."
+      }
+      return null
+    }
+    return LibraryTitle(
+      id = TitleId(storedTitleId),
+      alias = SourceTitleAlias(
+        sourceIdentity = checkNotNull(sourceIdentity),
+        sourceTitleKey = checkNotNull(sourceTitleKey),
+      ),
+      displayName = checkNotNull(titleDisplayName),
+      description = titleDescription,
+    )
+  }
+
   private fun successfulMembership(
     titleId: TitleId,
     categoryIds: Iterable<CategoryId>,
@@ -138,6 +216,11 @@ internal class RoomTitles(
       id = CategoryId(id),
       name = name,
     )
+
+  private class ShelfAccumulator(
+    val category: LibraryCategory,
+    val titleIds: MutableSet<TitleId> = LinkedHashSet(),
+  )
 
   private companion object {
     const val DEFAULT_CATEGORY_NAME = "Default"

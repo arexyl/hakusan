@@ -22,8 +22,10 @@ import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
@@ -165,7 +167,7 @@ class TitlesDatabaseAndroidTest {
   }
 
   @Test
-  fun firstAddCommitsDefaultMembership(): Unit =
+  fun firstAddCommitsDefaultMembershipAndObservableMetadata(): Unit =
     runBlocking {
       val id = titles.reconcileSourceTitle(
         title(
@@ -175,15 +177,30 @@ class TitlesDatabaseAndroidTest {
           description = "Description",
         ),
       )
+      val observedAdd = async(start = CoroutineStart.UNDISPATCHED) {
+        withTimeout(FLOW_TIMEOUT_MILLIS) {
+          titles.observeLibraryShelves().first {
+            id in it.titlesById
+          }
+        }
+      }
+
       val firstResult = titles.addToLibrary(id)
+      val addedState = observedAdd.await()
       val firstSuccess = firstResult as LibraryAddResult.Success
-      val defaultCategory = dao.loadCategories().single()
+      val defaultCategory = addedState.shelves.single().category
 
       assertEquals(
-        setOf(CategoryId(defaultCategory.id)),
+        setOf(defaultCategory.id),
         firstSuccess.membership.categoryIds,
       )
       assertEquals("Default", defaultCategory.name)
+      assertEquals(1, addedState.shelves.single().titleCount)
+      assertEquals(
+        SourceTitleAlias("source", "title"),
+        addedState.titlesById.getValue(id).alias,
+      )
+
       val repeatedResult = titles.addToLibrary(
         titleId = id,
         selection = LibraryCategorySelection.Explicit.of(
@@ -194,6 +211,26 @@ class TitlesDatabaseAndroidTest {
       assertEquals(firstResult, repeatedResult)
       assertEquals(1, queryLong("SELECT COUNT(*) FROM categories"))
       assertEquals(1, queryLong("SELECT COUNT(*) FROM title_categories"))
+
+      val observedUpdate = async(start = CoroutineStart.UNDISPATCHED) {
+        withTimeout(FLOW_TIMEOUT_MILLIS) {
+          titles.observeLibraryShelves().first {
+            it.titlesById[id]?.displayName == "Updated"
+          }
+        }
+      }
+      titles.reconcileSourceTitle(
+        title(
+          source = "source",
+          key = "title",
+          displayName = "Updated",
+          description = null,
+        ),
+      )
+
+      val updatedTitle = observedUpdate.await().titlesById.getValue(id)
+      assertEquals("Updated", updatedTitle.displayName)
+      assertEquals(null, updatedTitle.description)
     }
 
   @Test
@@ -253,6 +290,11 @@ class TitlesDatabaseAndroidTest {
       )
       titles.addToLibrary(secondId, selection)
 
+      val state = titles.observeLibraryShelves().first()
+      assertEquals(2, state.titlesById.size)
+      assertEquals(2, state.shelves.size)
+      assertTrue(state.shelves.all { it.titleCount == 2 })
+      assertTrue(state.shelves.all { it.titleIds == setOf(firstId, secondId) })
       assertEquals(2, queryLong("SELECT COUNT(*) FROM titles"))
       assertEquals(4, queryLong("SELECT COUNT(*) FROM title_categories"))
       assertEquals(0, queryLong("SELECT COUNT(*) FROM read_chapters"))
@@ -277,6 +319,8 @@ class TitlesDatabaseAndroidTest {
     assertTrue(results.all { it is LibraryAddResult.Success })
     assertEquals(listOf("Default"), dao.loadCategories().map { it.name })
     assertEquals(2, queryLong("SELECT COUNT(*) FROM title_categories"))
+    assertEquals(2, titles.observeLibraryShelves().first()
+      .shelves.single().titleCount)
   }
 
   @Test
@@ -310,6 +354,9 @@ class TitlesDatabaseAndroidTest {
       assertEquals(1, queryLong("SELECT COUNT(*) FROM titles"))
       assertEquals(0, queryLong("SELECT COUNT(*) FROM categories"))
       assertEquals(0, queryLong("SELECT COUNT(*) FROM title_categories"))
+      val state = titles.observeLibraryShelves().first()
+      assertTrue(state.titlesById.isEmpty())
+      assertTrue(state.shelves.isEmpty())
     }
   }
 
@@ -376,6 +423,7 @@ class TitlesDatabaseAndroidTest {
   )
 
   private companion object {
+    const val FLOW_TIMEOUT_MILLIS = 5_000L
     const val UUID_ATTEMPT_COUNT = 16
     val FIRST_ID: UUID =
       UUID.fromString("00000000-0000-7000-8000-000000000001")

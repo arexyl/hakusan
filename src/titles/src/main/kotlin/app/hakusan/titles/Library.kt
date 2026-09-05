@@ -116,3 +116,64 @@ sealed interface LibraryAddFailure {
     }
   }
 }
+
+/** One category shelf referencing shared title state by identity. */
+@ConsistentCopyVisibility
+data class LibraryShelf private constructor(
+  val category: LibraryCategory,
+  /** Semantically unordered; presentation sorting belongs to its consumer. */
+  val titleIds: Set<TitleId>,
+) {
+  val titleCount: Int
+    get() = titleIds.size
+
+  internal companion object {
+    fun create(
+      category: LibraryCategory,
+      titleIds: Iterable<TitleId>,
+    ): LibraryShelf = LibraryShelf(
+      category = category,
+      titleIds = titleIds.toOwnedSet(),
+    )
+  }
+}
+
+/**
+ * A coherent snapshot of all stored categories and their Library members.
+ *
+ * The maps and sets are semantically unordered. Each Library title occurs once
+ * in [titlesById], while any number of shelves may reference its identity.
+ * Empty stored categories remain present in [shelves].
+ */
+@ConsistentCopyVisibility
+data class LibraryShelfState private constructor(
+  val titlesById: Map<TitleId, LibraryTitle>,
+  val shelves: Set<LibraryShelf>,
+) {
+  init {
+    require(titlesById.all { (id, title) -> id == title.id }) {
+      "Each title map key must match its title identity."
+    }
+
+    val categoryIds = shelves.mapTo(HashSet()) { it.category.id }
+    require(categoryIds.size == shelves.size) {
+      "Each category must have exactly one shelf."
+    }
+
+    val referencedTitleIds = shelves
+      .flatMapTo(HashSet()) { it.titleIds }
+    require(referencedTitleIds == titlesById.keys) {
+      "Shelf membership and shared title state must agree."
+    }
+  }
+
+  internal companion object {
+    fun create(
+      titlesById: Map<TitleId, LibraryTitle>,
+      shelves: Iterable<LibraryShelf>,
+    ): LibraryShelfState = LibraryShelfState(
+      titlesById = titlesById.toOwnedMap(),
+      shelves = shelves.toOwnedSet(),
+    )
+  }
+}
