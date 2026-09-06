@@ -69,6 +69,7 @@ dependencies {
   implementation(project(":reader"))
   implementation(libs.activity.compose)
   implementation(libs.kotlinx.coroutines.core)
+  implementation(libs.lifecycle.viewmodel)
 
   androidTestImplementation(platform(libs.compose.bom))
   androidTestImplementation(libs.androidx.test.junit)

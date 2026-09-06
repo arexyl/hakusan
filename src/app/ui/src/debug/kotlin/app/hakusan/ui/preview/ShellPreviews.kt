@@ -1,6 +1,18 @@
 package app.hakusan.ui.preview
 
+import app.hakusan.sdk.AddToLibraryScreenResult
+import app.hakusan.sdk.BrowseScreenResult
+import app.hakusan.sdk.BrowseScreenService
+import app.hakusan.sdk.CatalogScreen
+import app.hakusan.sdk.CatalogSourceItem
+import app.hakusan.sdk.ContinueSelectionResult
+import app.hakusan.sdk.DetailsScreenResult
+import app.hakusan.sdk.ScreenSourceId
+import app.hakusan.sdk.ScreenTitleId
+import app.hakusan.sdk.ScreenTitleKey
+import app.hakusan.sdk.TitleDetailsScreenService
 import app.hakusan.ui.AppShell
+import app.hakusan.ui.BrowsingViewModel
 import app.hakusan.ui.HakusanTheme
 import app.hakusan.ui.PrimaryDestination
 import app.hakusan.ui.rememberNavigationState
@@ -29,7 +41,46 @@ private fun PreviewShell(destination: PrimaryDestination) {
   HakusanTheme(dynamicColor = false) {
     AppShell(
       navigationState = rememberNavigationState(destination),
+      browsingModel = { previewBrowsingModel },
       onExit = {},
     )
   }
+}
+
+private val previewBrowsingModel = BrowsingViewModel(
+  browseService = PreviewBrowseService,
+  detailsService = PreviewDetailsService,
+)
+
+private object PreviewBrowseService : BrowseScreenService {
+  override fun catalog(): CatalogScreen = CatalogScreen.of(
+    listOf(
+      CatalogSourceItem(
+        id = ScreenSourceId("app.hakusan.preview.source"),
+        displayName = "Preview source",
+      ),
+    ),
+  )
+
+  override suspend fun loadBrowse(
+    sourceId: ScreenSourceId,
+  ): BrowseScreenResult = error("The root preview does not load a source.")
+}
+
+private object PreviewDetailsService : TitleDetailsScreenService {
+  override suspend fun loadDetails(
+    titleKey: ScreenTitleKey,
+  ): DetailsScreenResult = error("The root preview does not load a title.")
+
+  override suspend fun addToLibrary(
+    titleId: ScreenTitleId,
+  ): AddToLibraryScreenResult = error(
+    "This preview does not modify Library membership.",
+  )
+
+  override suspend fun selectContinue(
+    titleId: ScreenTitleId,
+  ): ContinueSelectionResult = error(
+    "This preview does not select Continue.",
+  )
 }
