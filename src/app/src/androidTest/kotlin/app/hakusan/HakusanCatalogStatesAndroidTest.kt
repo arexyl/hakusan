@@ -19,16 +19,18 @@ import app.hakusan.sdk.ScreenTitleKey
 import app.hakusan.sdk.TitleDetailsScreen
 import app.hakusan.sdk.TitleDetailsScreenService
 import app.hakusan.ui.CatalogPresentationModel
-import androidx.compose.ui.test.hasScrollAction
+import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasProgressBarRangeInfo
+import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollToIndex
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.lifecycle.ViewModelProvider
-import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import kotlinx.coroutines.channels.Channel
@@ -87,7 +89,11 @@ class HakusanCatalogStatesAndroidTest {
     details.complete(DetailsScreenResult.Success(EMPTY_DETAILS))
     compose.onNodeWithText("Details without chapters.").assertExists()
     compose.onNodeWithText("No chapters available").assertExists()
-    compose.onNodeWithText("Continue").assertDoesNotExist()
+    compose.onNodeWithText("Like").assertExists()
+    compose.onNodeWithText("Continue").assertIsNotEnabled()
+    compose.onNodeWithText(
+      "No chapter is available for Continue.",
+    ).assertExists()
   }
 
   @Test
@@ -228,7 +234,7 @@ class HakusanCatalogStatesAndroidTest {
 
     compose.activityRule.scenario.recreate()
 
-    compose.onNodeWithText(TITLE.displayName).assertExists()
+    waitForText(TITLE.displayName)
     compose.onNodeWithText("Loading titles").assertDoesNotExist()
     assertEquals(1, browse.requests.size)
   }
@@ -292,6 +298,12 @@ class HakusanCatalogStatesAndroidTest {
     }
   }
 
+  private fun waitForText(text: String) {
+    compose.waitUntil(timeoutMillis = TEST_TIMEOUT_MILLIS) {
+      compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()
+    }
+  }
+
   private class ControlledBrowseScreenService(
     private val catalog: CatalogScreen,
   ) : BrowseScreenService {
@@ -338,13 +350,13 @@ class HakusanCatalogStatesAndroidTest {
     override suspend fun addToLibrary(
       titleId: ScreenTitleId,
     ): AddToLibraryScreenResult = error(
-      "C4 must not modify Library membership.",
+      "This controlled Catalog test does not modify Library membership.",
     )
 
     override suspend fun selectContinue(
       titleId: ScreenTitleId,
     ): ContinueSelectionResult = error(
-      "C4 must not select Continue.",
+      "This controlled Catalog test does not select Continue.",
     )
 
     fun complete(result: DetailsScreenResult) {

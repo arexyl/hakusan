@@ -91,6 +91,20 @@ internal class HakusanNavigationState(
     }
   }
 
+  fun openLibraryTitle(titleKey: ScreenTitleKey) {
+    if (
+      selectedDestination == PrimaryDestination.LIBRARY &&
+      libraryBackStack.lastOrNull() == LibraryRoute
+    ) {
+      libraryBackStack.add(
+        TitleDetailsRoute(
+          sourceId = titleKey.sourceId.value,
+          sourceTitleKey = titleKey.sourceTitleKey,
+        ),
+      )
+    }
+  }
+
   fun openCatalogTitle(titleKey: ScreenTitleKey) {
     val browseRoute = catalogBackStack.lastOrNull() as? SourceBrowseRoute
       ?: return
@@ -115,15 +129,19 @@ internal class HakusanNavigationState(
     return backStack.removeAt(backStack.lastIndex)
   }
 
-  fun popCatalog(expectedRoute: NavKey): NavKey? {
+  fun pop(
+    destination: PrimaryDestination,
+    expectedRoute: NavKey,
+  ): NavKey? {
+    val backStack = backStack(destination)
     if (
-      selectedDestination != PrimaryDestination.CATALOG ||
-      catalogBackStack.size <= 1 ||
-      catalogBackStack.lastOrNull() != expectedRoute
+      selectedDestination != destination ||
+      backStack.size <= 1 ||
+      backStack.lastOrNull() != expectedRoute
     ) {
       return null
     }
-    return catalogBackStack.removeAt(catalogBackStack.lastIndex)
+    return backStack.removeAt(backStack.lastIndex)
   }
 }
 

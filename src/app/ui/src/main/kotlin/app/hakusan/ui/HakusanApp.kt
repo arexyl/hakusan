@@ -9,6 +9,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.only
@@ -26,6 +27,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -37,10 +39,7 @@ import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
-import androidx.compose.ui.semantics.heading
-import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.runtime.NavKey
@@ -50,6 +49,7 @@ import androidx.navigation3.ui.NavDisplay
 @Composable
 fun HakusanApp(
   catalogPresentationModel: () -> CatalogPresentationModel,
+  libraryPresentationModel: () -> LibraryPresentationModel,
   onExit: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
@@ -57,6 +57,7 @@ fun HakusanApp(
     HakusanShell(
       navigationState = rememberHakusanNavigationState(),
       catalogPresentationModel = catalogPresentationModel,
+      libraryPresentationModel = libraryPresentationModel,
       onExit = onExit,
       modifier = modifier,
     )
@@ -67,31 +68,44 @@ fun HakusanApp(
 internal fun HakusanShell(
   navigationState: HakusanNavigationState,
   catalogPresentationModel: () -> CatalogPresentationModel,
+  libraryPresentationModel: () -> LibraryPresentationModel,
   onExit: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  val libraryLabel = stringResource(R.string.destination_library)
   val librarySaveableStateDecorator =
     rememberSaveableStateHolderNavEntryDecorator<NavKey>()
   val catalogSaveableStateDecorator =
     rememberSaveableStateHolderNavEntryDecorator<NavKey>()
   var browsingIslandHeightPx by remember { mutableIntStateOf(0) }
-  val browsingContentBottomPadding = with(LocalDensity.current) {
+  val browsingIslandHeight = with(LocalDensity.current) {
     browsingIslandHeightPx.toDp()
   }
+  val safeBottomPadding = WindowInsets.safeDrawing
+    .only(WindowInsetsSides.Bottom)
+    .asPaddingValues()
+    .calculateBottomPadding()
+  val browsingContentBottomPadding =
+    safeBottomPadding +
+      FloatingIslandEdgeSpacing +
+      browsingIslandHeight
+  val browsingContentBottomPaddingState = rememberUpdatedState(
+    browsingContentBottomPadding,
+  )
   val navigateBack = {
+    val destination = navigationState.selectedDestination
     val removedRoute = navigationState.pop()
     if (removedRoute == null) {
       onExit()
     } else {
-      catalogPresentationModel().discard(removedRoute)
+      catalogPresentationModel().discard(destination, removedRoute)
     }
   }
-  val navigateCatalogBack: (NavKey) -> Unit = { expectedRoute ->
-    navigationState.popCatalog(expectedRoute)?.let { removedRoute ->
-      catalogPresentationModel().discard(removedRoute)
+  val navigateRouteBack: (PrimaryDestination, NavKey) -> Unit =
+    { destination, expectedRoute ->
+      navigationState.pop(destination, expectedRoute)?.let { removedRoute ->
+        catalogPresentationModel().discard(destination, removedRoute)
+      }
     }
-  }
   BackHandler(
     enabled = navigationState.currentBackStack.size <= 1,
     onBack = onExit,
@@ -126,9 +140,11 @@ internal fun HakusanShell(
         entryProvider = { route ->
           when (route) {
             LibraryRoute -> NavEntry(route) {
-              DestinationLanding(
-                label = libraryLabel,
-                contentBottomPadding = browsingContentBottomPadding,
+              LibraryDestination(
+                libraryPresentationModel = libraryPresentationModel,
+                onTitleSelected = navigationState::openLibraryTitle,
+                contentBottomPadding =
+                  browsingContentBottomPaddingState.value,
               )
             }
 
@@ -136,7 +152,8 @@ internal fun HakusanShell(
               CatalogDestination(
                 catalogPresentationModel = catalogPresentationModel,
                 onSourceSelected = navigationState::openCatalogSource,
-                contentBottomPadding = browsingContentBottomPadding,
+                contentBottomPadding =
+                  browsingContentBottomPaddingState.value,
               )
             }
 
@@ -145,16 +162,21 @@ internal fun HakusanShell(
                 route = route,
                 catalogPresentationModel = catalogPresentationModel,
                 onTitleSelected = navigationState::openCatalogTitle,
-                onBack = { navigateCatalogBack(route) },
-                contentBottomPadding = browsingContentBottomPadding,
+                onBack = {
+                  navigateRouteBack(PrimaryDestination.CATALOG, route)
+                },
+                contentBottomPadding =
+                  browsingContentBottomPaddingState.value,
               )
             }
 
             is TitleDetailsRoute -> NavEntry(route) {
               TitleDetailsDestination(
+                destination = destination,
                 route = route,
                 catalogPresentationModel = catalogPresentationModel,
-                onBack = { navigateCatalogBack(route) },
+                libraryPresentationModel = libraryPresentationModel,
+                onBack = { navigateRouteBack(destination, route) },
               )
             }
 
@@ -168,51 +190,17 @@ internal fun HakusanShell(
       BrowsingIsland(
         selectedDestination = navigationState.selectedDestination,
         onDestinationSelected = navigationState::select,
+        onHeightChanged = { height ->
+          browsingIslandHeightPx = height
+        },
         modifier = Modifier
           .align(Alignment.BottomCenter)
-          .onSizeChanged { size ->
-            browsingIslandHeightPx = size.height
-          }
           .windowInsetsPadding(
             WindowInsets.safeDrawing.only(
               WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
             ),
           )
-          .padding(16.dp),
-      )
-    }
-  }
-}
-
-@Composable
-private fun DestinationLanding(
-  label: String,
-  contentBottomPadding: Dp,
-) {
-  Surface(
-    modifier = Modifier.fillMaxSize(),
-    color = MaterialTheme.colorScheme.background,
-    contentColor = MaterialTheme.colorScheme.onBackground,
-  ) {
-    Box(
-      modifier = Modifier
-        .fillMaxSize()
-        .windowInsetsPadding(
-          WindowInsets.safeDrawing.only(
-            WindowInsetsSides.Horizontal + WindowInsetsSides.Top,
-          ),
-        )
-        .padding(horizontal = 24.dp, vertical = 32.dp)
-        .padding(bottom = contentBottomPadding),
-      contentAlignment = Alignment.TopStart,
-    ) {
-      Text(
-        text = label,
-        modifier = Modifier.semantics {
-          heading()
-          paneTitle = label
-        },
-        style = MaterialTheme.typography.headlineLarge,
+          .padding(FloatingIslandEdgeSpacing),
       )
     }
   }
@@ -222,24 +210,32 @@ private fun DestinationLanding(
 private fun BrowsingIsland(
   selectedDestination: PrimaryDestination,
   onDestinationSelected: (PrimaryDestination) -> Unit,
+  onHeightChanged: (Int) -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  HorizontalFloatingToolbar(
-    expanded = true,
-    modifier = modifier.selectableGroup(),
+  Box(
+    modifier = modifier,
+    contentAlignment = Alignment.Center,
   ) {
-    DestinationItem(
-      selected = selectedDestination == PrimaryDestination.LIBRARY,
-      label = stringResource(R.string.destination_library),
-      icon = R.drawable.ic_library,
-      onClick = { onDestinationSelected(PrimaryDestination.LIBRARY) },
-    )
-    DestinationItem(
-      selected = selectedDestination == PrimaryDestination.CATALOG,
-      label = stringResource(R.string.destination_catalog),
-      icon = R.drawable.ic_catalog,
-      onClick = { onDestinationSelected(PrimaryDestination.CATALOG) },
-    )
+    HorizontalFloatingToolbar(
+      expanded = true,
+      modifier = Modifier
+        .selectableGroup()
+        .onSizeChanged { size -> onHeightChanged(size.height) },
+    ) {
+      DestinationItem(
+        selected = selectedDestination == PrimaryDestination.LIBRARY,
+        label = stringResource(R.string.destination_library),
+        icon = R.drawable.ic_library,
+        onClick = { onDestinationSelected(PrimaryDestination.LIBRARY) },
+      )
+      DestinationItem(
+        selected = selectedDestination == PrimaryDestination.CATALOG,
+        label = stringResource(R.string.destination_catalog),
+        icon = R.drawable.ic_catalog,
+        onClick = { onDestinationSelected(PrimaryDestination.CATALOG) },
+      )
+    }
   }
 }
 

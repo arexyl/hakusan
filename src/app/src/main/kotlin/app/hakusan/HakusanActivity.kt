@@ -3,6 +3,7 @@ package app.hakusan
 import android.os.Bundle
 import app.hakusan.ui.CatalogPresentationModel
 import app.hakusan.ui.HakusanApp
+import app.hakusan.ui.LibraryPresentationModel
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -15,6 +16,7 @@ class HakusanActivity : ComponentActivity() {
     setContent {
       HakusanApp(
         catalogPresentationModel = { catalogPresentationModel },
+        libraryPresentationModel = { libraryPresentationModel },
         onExit = ::finish,
       )
     }
@@ -37,5 +39,21 @@ class HakusanActivity : ComponentActivity() {
         },
       ),
     )[CatalogPresentationModel::class.java]
+  }
+
+  private val libraryPresentationModel: LibraryPresentationModel by lazy(
+    LazyThreadSafetyMode.NONE,
+  ) {
+    ViewModelProvider(
+      owner = this,
+      factory = LibraryPresentationModel.factory(
+        libraryScreenService = {
+          applicationGraph.libraryScreenService
+        },
+        titleDetailsScreenService = {
+          applicationGraph.titleDetailsScreenService
+        },
+      ),
+    )[LibraryPresentationModel::class.java]
   }
 }
