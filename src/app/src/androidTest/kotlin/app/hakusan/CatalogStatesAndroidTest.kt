@@ -88,8 +88,8 @@ class CatalogStatesAndroidTest {
     details.complete(DetailsScreenResult.Success(EMPTY_DETAILS))
     compose.onNodeWithText("Details without chapters.").assertExists()
     compose.onNodeWithText("No chapters available").assertExists()
+    compose.onNodeWithText("Like").assertExists()
     compose.onNodeWithText("Continue").assertDoesNotExist()
-    compose.onNodeWithText("Like").assertDoesNotExist()
   }
 
   @Test

@@ -50,6 +50,9 @@ class HakusanActivity : ComponentActivity() {
         libraryService = {
           graph.libraryService
         },
+        detailsService = {
+          graph.detailsService
+        },
       ),
     )[LibraryViewModel::class.java]
   }

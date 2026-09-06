@@ -60,6 +60,7 @@ private val previewBrowsingModel = BrowsingViewModel(
 
 private val previewLibraryModel = LibraryViewModel(
   libraryService = PreviewLibraryService,
+  detailsService = PreviewDetailsService,
 )
 
 private object PreviewLibraryService : LibraryScreenService {

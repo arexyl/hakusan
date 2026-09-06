@@ -131,6 +131,98 @@ class LibraryStatesAndroidTest {
   }
 
   @Test
+  fun likeWaitsForCommittedLibraryFlow() {
+    val library = ControlledLibraryService()
+    val details = ControlledDetailsService()
+    installHost(library, details)
+    library.emit(EMPTY_LIBRARY)
+    openCatalogDetails(details, DETAILS_A_READY)
+
+    compose.onNodeWithText("Like").performClick()
+    awaitCount(details.addRequests, 1)
+    assertEquals(listOf(TITLE_A_ID), details.addRequests)
+    compose.onNodeWithText("Like").assertIsNotEnabled()
+    compose.onNodeWithText("Adding to Library").assertExists()
+
+    details.completeAdd(AddToLibraryScreenResult.Success)
+    compose.onNodeWithText("Added to Library.").assertExists()
+    compose.onNodeWithText("Like")
+      .assertIsSelected()
+      .assertHasNoClickAction()
+
+    compose.onNodeWithText("Back").performClick()
+    compose.onNodeWithContentDescription("Library").performClick()
+    compose.onNodeWithText("Your Library is empty").assertExists()
+    compose.onNodeWithText("First title").assertDoesNotExist()
+
+    library.emit(DEFAULT_LIBRARY)
+    compose.onNodeWithText("Default").assertExists()
+    compose.onNodeWithText("1 title").assertExists()
+    compose.onNodeWithText("First title").assertExists()
+  }
+
+  @Test
+  fun pendingLikeCompletesAfterDetailsBack() {
+    val library = ControlledLibraryService()
+    val details = ControlledDetailsService()
+    installHost(library, details)
+    library.emit(EMPTY_LIBRARY)
+    openCatalogDetails(details, DETAILS_A_READY)
+
+    compose.onNodeWithText("Like").performClick()
+    awaitCount(details.addRequests, 1)
+    compose.onNodeWithText("Back").performClick()
+
+    details.completeAdd(AddToLibraryScreenResult.Success)
+    compose.onNodeWithText(TITLE_A.displayName).performClick()
+    awaitCount(details.detailsRequests, 2)
+    details.completeDetails(DetailsScreenResult.Success(DETAILS_A_READY))
+
+    compose.onNodeWithText("Added to Library.").assertExists()
+    compose.onNodeWithContentDescription("Like")
+      .assertIsSelected()
+      .assertHasNoClickAction()
+    assertEquals(listOf(TITLE_A_ID), details.addRequests)
+  }
+
+  @Test
+  fun likeOutcomesStayDistinctAndRetryable() {
+    val library = ControlledLibraryService()
+    val details = ControlledDetailsService()
+    installHost(library, details)
+    library.emit(EMPTY_LIBRARY)
+    openCatalogDetails(details, DETAILS_A_READY)
+
+    compose.onNodeWithText("Like").performClick()
+    awaitCount(details.addRequests, 1)
+    details.completeAdd(
+      AddToLibraryScreenResult.CategorySelectionRequired,
+    )
+    compose.onNodeWithText(
+      "This title needs a category choice. " +
+        "Category selection is unavailable.",
+    ).assertExists()
+    compose.onNodeWithText("Like")
+      .assertIsEnabled()
+      .assertHasClickAction()
+
+    compose.onNodeWithText("Like").performClick()
+    awaitCount(details.addRequests, 2)
+    details.completeAdd(
+      AddToLibraryScreenResult.Failure(
+        AddToLibraryScreenFailure.TitleNotFound,
+      ),
+    )
+    compose.onNodeWithText(
+      "Hakusan could not find this title. Tap Like to try again.",
+    ).assertExists()
+    compose.onNodeWithText("Like")
+      .assertIsEnabled()
+      .assertHasClickAction()
+    assertEquals(listOf(TITLE_A_ID, TITLE_A_ID), details.addRequests)
+  }
+
+  @Test
   fun lastShelfStaysReachableBehindIsland() {
     val library = ControlledLibraryService()
     installHost(library, ControlledDetailsService())
@@ -196,6 +288,7 @@ class LibraryStatesAndroidTest {
         owner = activity,
         factory = LibraryViewModel.factory(
           libraryService = { library },
+          detailsService = { details },
         ),
       ).get(
         "library-states-library-$modelId",

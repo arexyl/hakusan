@@ -4,6 +4,7 @@ import app.hakusan.sdk.DetailsChapterItem
 import app.hakusan.sdk.DetailsScreenFailure
 import app.hakusan.sdk.TitleDetailsScreen
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -17,20 +18,32 @@ import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.Button
+import androidx.compose.material3.HorizontalFloatingToolbar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.liveRegion
+import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.unit.Dp
@@ -41,33 +54,77 @@ internal fun TitleDetailsDestination(
   destination: PrimaryDestination,
   route: TitleDetailsRoute,
   browsingModel: () -> BrowsingViewModel,
+  libraryModel: () -> LibraryViewModel,
   onBack: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  val model = remember { browsingModel() }
+  val browsing = remember { browsingModel() }
+  val library = remember { libraryModel() }
   val ownerKey = remember(destination, route) {
     DetailsOwnerKey(destination, route)
   }
-  val owner = remember(ownerKey, model) {
-    model.details(ownerKey)
+  val owner = remember(ownerKey, browsing) {
+    browsing.details(ownerKey)
   }
   val state = owner.state
-  LaunchedEffect(model, ownerKey) {
-    model.ensureDetails(ownerKey)
+  LaunchedEffect(browsing, ownerKey) {
+    browsing.ensureDetails(ownerKey)
   }
 
-  val contentBottomPadding = WindowInsets.safeDrawing
+  val safeBottom = WindowInsets.safeDrawing
     .only(WindowInsetsSides.Bottom)
     .asPaddingValues()
     .calculateBottomPadding()
+  var islandHeightPx by remember(ownerKey) {
+    mutableIntStateOf(0)
+  }
+  val islandHeight = with(LocalDensity.current) {
+    islandHeightPx.toDp()
+  }
+  val contentBottomPadding = if (state is ScreenLoadState.Loaded) {
+    safeBottom + FloatingIslandEdgeSpacing + islandHeight
+  } else {
+    safeBottom
+  }
+  Box(modifier = modifier.fillMaxSize()) {
+    TitleDetailsContent(
+      state = state,
+      onRetry = { browsing.retryDetails(ownerKey) },
+      onBack = onBack,
+      contentBottomPadding = contentBottomPadding,
+    )
 
-  TitleDetailsContent(
-    state = state,
-    onRetry = { model.retryDetails(ownerKey) },
-    onBack = onBack,
-    contentBottomPadding = contentBottomPadding,
-    modifier = modifier,
-  )
+    if (state is ScreenLoadState.Loaded) {
+      val screen = state.content
+      if (screen.isInLibrary) {
+        SideEffect {
+          library.confirmMembership(screen.id)
+        }
+      }
+      TitleActionsIsland(
+        modifier = Modifier
+          .align(Alignment.BottomCenter)
+          .windowInsetsPadding(
+            WindowInsets.safeDrawing.only(
+              WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
+            ),
+          )
+          .padding(FloatingIslandEdgeSpacing),
+      ) {
+        TitleActions(
+          isInLibrary = library.isInLibrary(
+            titleId = screen.id,
+            snapshotMembership = screen.isInLibrary,
+          ),
+          addState = library.addState(screen.id),
+          onLike = { library.addToLibrary(screen.id) },
+          modifier = Modifier.onSizeChanged { size ->
+            islandHeightPx = size.height
+          },
+        )
+      }
+    }
+  }
 }
 
 @Composable
@@ -167,6 +224,119 @@ private fun DetailsBody(
 }
 
 @Composable
+private fun ActionMessage(message: String) {
+  Text(
+    text = message,
+    modifier = Modifier.semantics {
+      liveRegion = LiveRegionMode.Polite
+    },
+    color = MaterialTheme.colorScheme.onSurfaceVariant,
+    style = MaterialTheme.typography.bodyMedium,
+  )
+}
+
+@Composable
+private fun TitleActionsIsland(
+  modifier: Modifier = Modifier,
+  content: @Composable () -> Unit,
+) {
+  Box(
+    modifier = modifier,
+    contentAlignment = Alignment.Center,
+  ) {
+    content()
+  }
+}
+
+@Composable
+private fun TitleActions(
+  isInLibrary: Boolean,
+  addState: LibraryAddState,
+  onLike: () -> Unit,
+  modifier: Modifier = Modifier,
+) {
+  val addMessage = addState.message()
+  Column(
+    modifier = modifier,
+    horizontalAlignment = Alignment.CenterHorizontally,
+    verticalArrangement = Arrangement.spacedBy(8.dp),
+  ) {
+    if (addMessage != null) {
+      Surface(
+        shape = MaterialTheme.shapes.large,
+        color = MaterialTheme.colorScheme.surfaceContainerHigh,
+        contentColor = MaterialTheme.colorScheme.onSurface,
+      ) {
+        Column(
+          modifier = Modifier.padding(horizontal = 16.dp, vertical = 12.dp),
+          horizontalAlignment = Alignment.CenterHorizontally,
+          verticalArrangement = Arrangement.spacedBy(8.dp),
+        ) {
+          addMessage?.let { message ->
+            ActionMessage(message)
+          }
+        }
+      }
+    }
+    HorizontalFloatingToolbar(expanded = true) {
+      LikeAction(
+        isInLibrary = isInLibrary,
+        addState = addState,
+        onClick = onLike,
+      )
+    }
+  }
+}
+
+@Composable
+private fun LikeAction(
+  isInLibrary: Boolean,
+  addState: LibraryAddState,
+  onClick: () -> Unit,
+) {
+  val label = stringResource(R.string.like)
+  if (isInLibrary) {
+    val membershipState = stringResource(R.string.library_membership_selected)
+    Surface(
+      modifier = Modifier
+        .heightIn(min = 48.dp)
+        .semantics(mergeDescendants = true) {
+          contentDescription = label
+          selected = true
+          stateDescription = membershipState
+        },
+      shape = MaterialTheme.shapes.extraLarge,
+      color = MaterialTheme.colorScheme.primaryContainer,
+      contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+    ) {
+      Box(
+        modifier = Modifier.padding(horizontal = 24.dp),
+        contentAlignment = Alignment.Center,
+      ) {
+        Text(label)
+      }
+    }
+    return
+  }
+
+  val adding = addState == LibraryAddState.Adding
+  val addDescription = stringResource(R.string.add_to_library)
+  val addStateDescription = addState.message()
+  Button(
+    onClick = onClick,
+    enabled = !adding,
+    modifier = Modifier
+      .heightIn(min = 48.dp)
+      .semantics {
+        contentDescription = addDescription
+        addStateDescription?.let { stateDescription = it }
+      },
+  ) {
+    Text(label)
+  }
+}
+
+@Composable
 private fun EmptyChapterContent() {
   Column(
     modifier = Modifier
@@ -230,6 +400,20 @@ private fun ChapterRow(chapter: DetailsChapterItem) {
       }
     }
   }
+}
+
+@Composable
+private fun LibraryAddState.message(): String? = when (this) {
+  LibraryAddState.Idle -> null
+  LibraryAddState.Adding -> stringResource(R.string.library_add_adding)
+  LibraryAddState.Committed ->
+    stringResource(R.string.library_add_committed)
+
+  LibraryAddState.CategorySelectionRequired ->
+    stringResource(R.string.library_add_category_required)
+
+  LibraryAddState.TitleNotFound ->
+    stringResource(R.string.library_add_title_not_found)
 }
 
 @Composable

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
+  <string name="add_to_library">Add to Library</string>
   <string name="browse_empty_body">This source did not return any titles.</string>
   <string name="browse_empty_title">No titles available</string>
   <string name="browse_failure_invalid_observation">The source returned title data Hakusan could not use.</string>
@@ -26,16 +27,14 @@
   <string name="details_title_fallback">Title details</string>
   <string name="destination_catalog">Catalog</string>
   <string name="destination_library">Library</string>
-  <string name="navigate_back">Back</string>
-  <string name="load_superseded_body">Retry to load this content in the current window.</string>
-  <string name="load_superseded_title">This content is loading elsewhere</string>
-  <string name="retry">Retry</string>
-  <string name="source_fallback">Source</string>
-  <string name="source_name_fallback">Unnamed source</string>
-  <string name="title_name_fallback">Unnamed title</string>
+  <string name="library_add_adding">Adding to Library</string>
+  <string name="library_add_category_required">This title needs a category choice. Category selection is unavailable.</string>
+  <string name="library_add_committed">Added to Library.</string>
+  <string name="library_add_title_not_found">Hakusan could not find this title. Tap Like to try again.</string>
   <string name="library_empty_body">Like a title to add it to your Library.</string>
   <string name="library_empty_title">Your Library is empty</string>
   <string name="library_loading">Loading Library</string>
+  <string name="library_membership_selected">In Library</string>
   <plurals name="library_read_progress">
     <item quantity="one">%1$d of %2$d chapter read</item>
     <item quantity="other">%1$d of %2$d chapters read</item>
@@ -49,4 +48,12 @@
     <item quantity="one">%1$d title</item>
     <item quantity="other">%1$d titles</item>
   </plurals>
+  <string name="like">Like</string>
+  <string name="navigate_back">Back</string>
+  <string name="load_superseded_body">Retry to load this content in the current window.</string>
+  <string name="load_superseded_title">This content is loading elsewhere</string>
+  <string name="retry">Retry</string>
+  <string name="source_fallback">Source</string>
+  <string name="source_name_fallback">Unnamed source</string>
+  <string name="title_name_fallback">Unnamed title</string>
 </resources>

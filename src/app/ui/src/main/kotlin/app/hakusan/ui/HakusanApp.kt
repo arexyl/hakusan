@@ -172,6 +172,7 @@ internal fun AppShell(
                 destination = destination,
                 route = route,
                 browsingModel = browsingModel,
+                libraryModel = libraryModel,
                 onBack = { navigateRouteBack(destination, route) },
               )
             }
