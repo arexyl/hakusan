@@ -7,6 +7,8 @@ import app.hakusan.sdk.CatalogScreen
 import app.hakusan.sdk.CatalogSourceItem
 import app.hakusan.sdk.ContinueSelectionResult
 import app.hakusan.sdk.DetailsScreenResult
+import app.hakusan.sdk.LibraryScreen
+import app.hakusan.sdk.LibraryScreenService
 import app.hakusan.sdk.ScreenSourceId
 import app.hakusan.sdk.ScreenTitleId
 import app.hakusan.sdk.ScreenTitleKey
@@ -14,6 +16,7 @@ import app.hakusan.sdk.TitleDetailsScreenService
 import app.hakusan.ui.AppShell
 import app.hakusan.ui.BrowsingViewModel
 import app.hakusan.ui.HakusanTheme
+import app.hakusan.ui.LibraryViewModel
 import app.hakusan.ui.PrimaryDestination
 import app.hakusan.ui.rememberNavigationState
 import androidx.compose.runtime.Composable
@@ -21,6 +24,8 @@ import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.tooling.preview.PreviewFontScale
 import androidx.compose.ui.tooling.preview.PreviewLightDark
 import androidx.compose.ui.tooling.preview.PreviewScreenSizes
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOf
 
 @PreviewLightDark
 @PreviewScreenSizes
@@ -42,6 +47,7 @@ private fun PreviewShell(destination: PrimaryDestination) {
     AppShell(
       navigationState = rememberNavigationState(destination),
       browsingModel = { previewBrowsingModel },
+      libraryModel = { previewLibraryModel },
       onExit = {},
     )
   }
@@ -51,6 +57,16 @@ private val previewBrowsingModel = BrowsingViewModel(
   browseService = PreviewBrowseService,
   detailsService = PreviewDetailsService,
 )
+
+private val previewLibraryModel = LibraryViewModel(
+  libraryService = PreviewLibraryService,
+)
+
+private object PreviewLibraryService : LibraryScreenService {
+  override fun observeLibrary(): Flow<LibraryScreen> = flowOf(
+    LibraryScreen.of(emptyMap(), emptyList()),
+  )
+}
 
 private object PreviewBrowseService : BrowseScreenService {
   override fun catalog(): CatalogScreen = CatalogScreen.of(
@@ -75,12 +91,12 @@ private object PreviewDetailsService : TitleDetailsScreenService {
   override suspend fun addToLibrary(
     titleId: ScreenTitleId,
   ): AddToLibraryScreenResult = error(
-    "This preview does not modify Library membership.",
+    "The root preview does not modify Library membership.",
   )
 
   override suspend fun selectContinue(
     titleId: ScreenTitleId,
   ): ContinueSelectionResult = error(
-    "This preview does not select Continue.",
+    "The root preview does not select Continue.",
   )
 }

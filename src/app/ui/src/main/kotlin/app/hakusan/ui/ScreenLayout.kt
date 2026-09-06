@@ -37,6 +37,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
+internal val FloatingIslandEdgeSpacing = 16.dp
+
 @Composable
 internal fun ScreenFrame(
   title: String,

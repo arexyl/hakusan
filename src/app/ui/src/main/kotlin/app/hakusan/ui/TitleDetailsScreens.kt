@@ -38,18 +38,22 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 internal fun TitleDetailsDestination(
+  destination: PrimaryDestination,
   route: TitleDetailsRoute,
   browsingModel: () -> BrowsingViewModel,
   onBack: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   val model = remember { browsingModel() }
-  val owner = remember(route, model) {
-    model.details(route)
+  val ownerKey = remember(destination, route) {
+    DetailsOwnerKey(destination, route)
+  }
+  val owner = remember(ownerKey, model) {
+    model.details(ownerKey)
   }
   val state = owner.state
-  LaunchedEffect(model, route) {
-    model.ensureDetails(route)
+  LaunchedEffect(model, ownerKey) {
+    model.ensureDetails(ownerKey)
   }
 
   val contentBottomPadding = WindowInsets.safeDrawing
@@ -59,7 +63,7 @@ internal fun TitleDetailsDestination(
 
   TitleDetailsContent(
     state = state,
-    onRetry = { model.retryDetails(route) },
+    onRetry = { model.retryDetails(ownerKey) },
     onBack = onBack,
     contentBottomPadding = contentBottomPadding,
     modifier = modifier,

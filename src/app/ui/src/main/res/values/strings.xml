@@ -33,4 +33,20 @@
   <string name="source_fallback">Source</string>
   <string name="source_name_fallback">Unnamed source</string>
   <string name="title_name_fallback">Unnamed title</string>
+  <string name="library_empty_body">Like a title to add it to your Library.</string>
+  <string name="library_empty_title">Your Library is empty</string>
+  <string name="library_loading">Loading Library</string>
+  <plurals name="library_read_progress">
+    <item quantity="one">%1$d of %2$d chapter read</item>
+    <item quantity="other">%1$d of %2$d chapters read</item>
+  </plurals>
+  <string name="library_resume_available">Saved position available</string>
+  <string name="library_resume_none">No saved position</string>
+  <string name="library_resume_temporarily_unavailable">Saved position temporarily unavailable</string>
+  <string name="library_shelf_empty">No titles in this shelf.</string>
+  <string name="library_shelf_name_fallback">Unnamed shelf</string>
+  <plurals name="library_title_count">
+    <item quantity="one">%1$d title</item>
+    <item quantity="other">%1$d titles</item>
+  </plurals>
 </resources>

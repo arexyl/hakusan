@@ -1,12 +1,43 @@
 package app.hakusan.ui
 
+import app.hakusan.sdk.AddToLibraryScreenResult
+import app.hakusan.sdk.BrowseScreenResult
+import app.hakusan.sdk.BrowseScreenService
+import app.hakusan.sdk.CatalogScreen
+import app.hakusan.sdk.ContinueSelectionResult
+import app.hakusan.sdk.DetailsScreenResult
+import app.hakusan.sdk.ScreenSourceId
+import app.hakusan.sdk.ScreenTitleId
+import app.hakusan.sdk.ScreenTitleKey
+import app.hakusan.sdk.TitleDetailsScreenService
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
+import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
 class ScreenLoadStateTest {
+  @Test
+  fun `discarding details in one destination keeps the other owner`() {
+    val model = BrowsingViewModel(
+      browseService = EmptyBrowseService,
+      detailsService = UnusedDetailsService,
+    )
+    val route = TitleDetailsRoute("source", "title")
+    val libraryKey = DetailsOwnerKey(PrimaryDestination.LIBRARY, route)
+    val catalogKey = DetailsOwnerKey(PrimaryDestination.CATALOG, route)
+    val libraryOwner = model.details(libraryKey)
+    val catalogOwner = model.details(catalogKey)
+
+    assertNotSame(libraryOwner, catalogOwner)
+
+    model.discard(PrimaryDestination.LIBRARY, route)
+
+    assertNotSame(libraryOwner, model.details(libraryKey))
+    assertSame(catalogOwner, model.details(catalogKey))
+  }
+
   @Test
   fun `retry invalidates an older completion`() {
     val owner = ScreenLoadOwner<String, String>()
@@ -45,5 +76,28 @@ class ScreenLoadStateTest {
     owner.retry()
 
     assertSame(ScreenLoadState.Loading, owner.state)
+  }
+
+  private object EmptyBrowseService : BrowseScreenService {
+    override fun catalog(): CatalogScreen = CatalogScreen.of(emptyList())
+
+    override suspend fun loadBrowse(
+      sourceId: ScreenSourceId,
+    ): BrowseScreenResult = error("The owner test does not load browse data.")
+  }
+
+  private object UnusedDetailsService :
+    TitleDetailsScreenService {
+    override suspend fun loadDetails(
+      titleKey: ScreenTitleKey,
+    ): DetailsScreenResult = error("The owner test does not load details.")
+
+    override suspend fun addToLibrary(
+      titleId: ScreenTitleId,
+    ): AddToLibraryScreenResult = error("The owner test does not add.")
+
+    override suspend fun selectContinue(
+      titleId: ScreenTitleId,
+    ): ContinueSelectionResult = error("The owner test does not continue.")
   }
 }
