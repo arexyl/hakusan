@@ -19,7 +19,7 @@ internal class LibraryScreenAdapter(
   private val titles: Titles,
 ) : LibraryScreenService {
   override fun observeLibrary(): Flow<LibraryScreen> =
-    titles.observeLibrarySummary()
+    titles.observeLibrary()
       .map { state -> state.toLibraryScreen() }
 
   override suspend fun addToLibrary(

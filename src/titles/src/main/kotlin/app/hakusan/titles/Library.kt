@@ -144,49 +144,6 @@ data class LibraryShelf private constructor(
   }
 }
 
-/**
- * A coherent snapshot of all stored categories and their Library members.
- *
- * The maps and sets are semantically unordered. Each Library title occurs once
- * in [titlesById], while any number of shelves may reference its identity.
- * Empty stored categories remain present in [shelves].
- */
-@ConsistentCopyVisibility
-data class LibraryShelfState private constructor(
-  val titlesById: Map<TitleId, LibraryTitle>,
-  val shelves: Set<LibraryShelf>,
-) {
-  init {
-    require(titlesById.all { (id, title) -> id == title.id }) {
-      "Each title map key must match its title identity."
-    }
-
-    val categoryIds = HashSet<CategoryId>(shelves.size)
-    val referencedTitleIds = HashSet<TitleId>(titlesById.size)
-    shelves.forEach { shelf ->
-      categoryIds += shelf.category.id
-      referencedTitleIds.addAll(shelf.titleIds)
-    }
-    require(categoryIds.size == shelves.size) {
-      "Each category must have exactly one shelf."
-    }
-
-    require(referencedTitleIds == titlesById.keys) {
-      "Shelf membership and shared title state must agree."
-    }
-  }
-
-  internal companion object {
-    fun create(
-      titlesById: Map<TitleId, LibraryTitle>,
-      shelves: Iterable<LibraryShelf>,
-    ): LibraryShelfState = LibraryShelfState(
-      titlesById = titlesById.toOwnedMap(),
-      shelves = shelves.toOwnedSet(),
-    )
-  }
-}
-
 /** Availability of the one retained Library resume position. */
 enum class LibraryResumeAvailability {
   NONE,
@@ -217,29 +174,43 @@ data class LibraryTitleProgressSummary(
 }
 
 /**
- * One coherent Library shelf and progress observation.
+ * One coherent snapshot of all stored categories and their Library titles.
  *
- * Progress contains exactly the titles referenced by [shelfState]. Ordering
- * remains a presentation concern.
+ * The maps and sets are semantically unordered. Each title and its compact
+ * progress occur once in [titlesById], while any number of shelves may refer to
+ * its identity. Empty stored categories remain present in [shelves].
  */
 @ConsistentCopyVisibility
-data class LibrarySummaryState private constructor(
-  val shelfState: LibraryShelfState,
-  val progressByTitleId: Map<TitleId, LibraryTitleProgressSummary>,
+data class LibraryState private constructor(
+  val titlesById: Map<TitleId, LibraryTitle>,
+  val shelves: Set<LibraryShelf>,
 ) {
   init {
-    require(progressByTitleId.keys == shelfState.titlesById.keys) {
-      "Library shelf and progress identities must agree."
+    require(titlesById.all { (id, title) -> id == title.id }) {
+      "Each title map key must match its title identity."
+    }
+
+    val categoryIds = HashSet<CategoryId>(shelves.size)
+    val referencedTitleIds = HashSet<TitleId>(titlesById.size)
+    shelves.forEach { shelf ->
+      categoryIds += shelf.category.id
+      referencedTitleIds.addAll(shelf.titleIds)
+    }
+    require(categoryIds.size == shelves.size) {
+      "Each category must have exactly one shelf."
+    }
+    require(referencedTitleIds == titlesById.keys) {
+      "Shelf membership and shared title state must agree."
     }
   }
 
   internal companion object {
     fun create(
-      shelfState: LibraryShelfState,
-      progressByTitleId: Map<TitleId, LibraryTitleProgressSummary>,
-    ): LibrarySummaryState = LibrarySummaryState(
-      shelfState = shelfState,
-      progressByTitleId = progressByTitleId.toOwnedMap(),
+      titlesById: Map<TitleId, LibraryTitle>,
+      shelves: Iterable<LibraryShelf>,
+    ): LibraryState = LibraryState(
+      titlesById = titlesById.toOwnedMap(),
+      shelves = shelves.toOwnedSet(),
     )
   }
 }

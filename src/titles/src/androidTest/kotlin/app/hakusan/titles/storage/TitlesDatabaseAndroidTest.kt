@@ -182,7 +182,7 @@ class TitlesDatabaseAndroidTest {
       )
       val observedAdd = async(start = CoroutineStart.UNDISPATCHED) {
         withTimeout(TEST_TIMEOUT_MILLIS) {
-          titles.observeLibraryShelves().first {
+          titles.observeLibrary().first {
             id in it.titlesById
           }
         }
@@ -220,7 +220,7 @@ class TitlesDatabaseAndroidTest {
 
       val observedUpdate = async(start = CoroutineStart.UNDISPATCHED) {
         withTimeout(TEST_TIMEOUT_MILLIS) {
-          titles.observeLibraryShelves().first {
+          titles.observeLibrary().first {
             it.titlesById[id]?.displayName == "Updated"
           }
         }
@@ -264,7 +264,7 @@ class TitlesDatabaseAndroidTest {
       val secondCategoryId = CategoryId(
         dao.insertCategory(CategoryEntity(name = "Want to read")),
       )
-      val emptyState = titles.observeLibraryShelves().first()
+      val emptyState = titles.observeLibrary().first()
       assertTrue(emptyState.titlesById.isEmpty())
       assertEquals(
         setOf(firstCategoryId, secondCategoryId),
@@ -303,7 +303,7 @@ class TitlesDatabaseAndroidTest {
       )
       titles.addToLibrary(secondId, selection)
 
-      val state = titles.observeLibraryShelves().first()
+      val state = titles.observeLibrary().first()
       assertEquals(2, state.titlesById.size)
       assertEquals(2, state.shelves.size)
       assertTrue(state.shelves.all { it.titleCount == 2 })
@@ -333,7 +333,7 @@ class TitlesDatabaseAndroidTest {
       assertTrue(results.all { it is LibraryAddResult.Success })
       assertEquals(listOf("Default"), dao.loadCategories().map { it.name })
       assertEquals(2, queryLong("SELECT COUNT(*) FROM title_categories"))
-      assertEquals(2, titles.observeLibraryShelves().first()
+      assertEquals(2, titles.observeLibrary().first()
         .shelves.single().titleCount)
     }
   }
@@ -369,7 +369,7 @@ class TitlesDatabaseAndroidTest {
       assertEquals(1, queryLong("SELECT COUNT(*) FROM titles"))
       assertEquals(0, queryLong("SELECT COUNT(*) FROM categories"))
       assertEquals(0, queryLong("SELECT COUNT(*) FROM title_categories"))
-      val state = titles.observeLibraryShelves().first()
+      val state = titles.observeLibrary().first()
       assertTrue(state.titlesById.isEmpty())
       assertTrue(state.shelves.isEmpty())
     }

@@ -71,71 +71,25 @@ internal abstract class TitlesDao {
     associations: List<TitleCategoryEntity>,
   )
 
-  @Query(
-    """
-    SELECT categories.id AS category_id,
-           categories.name AS category_name,
-           titles.id AS title_id,
-           titles.source_identity AS source_identity,
-           titles.source_title_key AS source_title_key,
-           titles.display_name AS title_display_name,
-           titles.description AS title_description
-    FROM categories
-    LEFT JOIN title_categories
-      ON title_categories.category_id = categories.id
-    LEFT JOIN titles
-      ON titles.storage_id = title_categories.title_storage_id
-    ORDER BY categories.id, title_categories.title_storage_id
-    """,
-  )
-  abstract fun observeLibraryShelfRows(): Flow<List<LibraryShelfRow>>
-
-  @Query(LIBRARY_SUMMARY_QUERY)
-  abstract fun observeLibrarySummaryRows(): Flow<List<LibrarySummaryRow>>
+  @Query(LIBRARY_QUERY)
+  abstract fun observeLibraryRows(): Flow<List<LibraryRow>>
 }
 
-internal interface LibraryShelfProjection {
-  val categoryId: Long
-  val categoryName: String
-  val titleId: UUID?
-  val sourceIdentity: String?
-  val sourceTitleKey: String?
-  val titleDisplayName: String?
-  val titleDescription: String?
-}
-
-internal data class LibraryShelfRow(
+internal data class LibraryRow(
   @ColumnInfo(name = "category_id")
-  override val categoryId: Long,
+  val categoryId: Long,
   @ColumnInfo(name = "category_name")
-  override val categoryName: String,
+  val categoryName: String,
   @ColumnInfo(name = "title_id")
-  override val titleId: UUID?,
+  val titleId: UUID?,
   @ColumnInfo(name = "source_identity")
-  override val sourceIdentity: String?,
+  val sourceIdentity: String?,
   @ColumnInfo(name = "source_title_key")
-  override val sourceTitleKey: String?,
+  val sourceTitleKey: String?,
   @ColumnInfo(name = "title_display_name")
-  override val titleDisplayName: String?,
+  val titleDisplayName: String?,
   @ColumnInfo(name = "title_description")
-  override val titleDescription: String?,
-) : LibraryShelfProjection
-
-internal data class LibrarySummaryRow(
-  @ColumnInfo(name = "category_id")
-  override val categoryId: Long,
-  @ColumnInfo(name = "category_name")
-  override val categoryName: String,
-  @ColumnInfo(name = "title_id")
-  override val titleId: UUID?,
-  @ColumnInfo(name = "source_identity")
-  override val sourceIdentity: String?,
-  @ColumnInfo(name = "source_title_key")
-  override val sourceTitleKey: String?,
-  @ColumnInfo(name = "title_display_name")
-  override val titleDisplayName: String?,
-  @ColumnInfo(name = "title_description")
-  override val titleDescription: String?,
+  val titleDescription: String?,
   @ColumnInfo(name = "chapter_count")
   val chapterCount: Long,
   @ColumnInfo(name = "read_chapter_count")
@@ -146,9 +100,9 @@ internal data class LibrarySummaryRow(
   val resumeIsAvailable: Boolean,
   @ColumnInfo(name = "resume_is_read")
   val resumeIsRead: Boolean,
-) : LibraryShelfProjection
+)
 
-private const val LIBRARY_SUMMARY_QUERY = """
+private const val LIBRARY_QUERY = """
   WITH canonical_progress AS (
     SELECT chapters.title_storage_id AS title_storage_id,
            COUNT(chapters.storage_id) AS chapter_count,

@@ -47,7 +47,7 @@ class TitlesStoreAndroidTest {
     assertTrue(context.getDatabasePath(DATABASE_NAME).isFile)
 
     openTitlesStore(context).use { reopened ->
-      val library = reopened.titles.observeLibraryShelves().first()
+      val library = reopened.titles.observeLibrary().first()
       val title = library.titlesById.getValue(expectedId)
 
       assertEquals("Title", title.displayName)

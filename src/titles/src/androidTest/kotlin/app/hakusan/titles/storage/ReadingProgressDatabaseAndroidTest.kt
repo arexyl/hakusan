@@ -1233,7 +1233,7 @@ class ReadingProgressDatabaseAndroidTest {
     }
 
   @Test
-  fun librarySummaryTracksCountsAndResumeAvailability(): Unit = runBlocking {
+  fun libraryStateTracksCountsAndResumeAvailability(): Unit = runBlocking {
     val alias = SourceTitleAlias("source", "summary-title")
     val titleId = createTitle(alias, addToLibrary = true)
     val snapshot = reconcile(
@@ -1243,9 +1243,10 @@ class ReadingProgressDatabaseAndroidTest {
       "final" to "Final",
     )
 
-    val initial = titles.observeLibrarySummary().first()
-      .progressByTitleId
+    val initial = titles.observeLibrary().first()
+      .titlesById
       .getValue(titleId)
+      .progress
     assertEquals(3, initial.chapterCount)
     assertEquals(0, initial.readChapterCount)
     assertEquals(LibraryResumeAvailability.NONE, initial.resumeAvailability)
@@ -1253,16 +1254,19 @@ class ReadingProgressDatabaseAndroidTest {
     val availableInitial = CompletableDeferred<Unit>()
     val availableUpdate = async(start = CoroutineStart.UNDISPATCHED) {
       withTimeout(TEST_TIMEOUT_MILLIS) {
-        titles.observeLibrarySummary().first { summary ->
+        titles.observeLibrary().first { library ->
           availableInitial.complete(Unit)
-          summary.progressByTitleId[titleId]?.resumeAvailability ==
+          library.titlesById[titleId]?.progress?.resumeAvailability ==
             LibraryResumeAvailability.AVAILABLE
         }
       }
     }
     availableInitial.await()
     record(position(titleId, snapshot.chapters[1], unitIndex = 4))
-    val available = availableUpdate.await().progressByTitleId.getValue(titleId)
+    val available = availableUpdate.await()
+      .titlesById
+      .getValue(titleId)
+      .progress
     assertEquals(
       LibraryResumeAvailability.AVAILABLE,
       available.resumeAvailability,
@@ -1271,9 +1275,9 @@ class ReadingProgressDatabaseAndroidTest {
     val unavailableInitial = CompletableDeferred<Unit>()
     val unavailableUpdate = async(start = CoroutineStart.UNDISPATCHED) {
       withTimeout(TEST_TIMEOUT_MILLIS) {
-        titles.observeLibrarySummary().first { summary ->
+        titles.observeLibrary().first { library ->
           unavailableInitial.complete(Unit)
-          val progress = summary.progressByTitleId[titleId]
+          val progress = library.titlesById[titleId]?.progress
           progress?.readChapterCount == 1 &&
             progress.resumeAvailability ==
             LibraryResumeAvailability.TEMPORARILY_UNAVAILABLE
@@ -1290,8 +1294,9 @@ class ReadingProgressDatabaseAndroidTest {
       FinalChapterCompletion(titleId, current.chapters.last().id),
     )
     val unavailable = unavailableUpdate.await()
-      .progressByTitleId
+      .titlesById
       .getValue(titleId)
+      .progress
     assertEquals(2, unavailable.chapterCount)
     assertEquals(1, unavailable.readChapterCount)
     assertEquals(

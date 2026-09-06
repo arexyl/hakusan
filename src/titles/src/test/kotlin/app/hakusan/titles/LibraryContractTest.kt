@@ -112,12 +112,18 @@ class LibraryContractTest {
   }
 
   @Test
-  fun `shelf state normalizes shared title state and derives counts`() {
+  fun `Library state normalizes shared title state and derives counts`() {
+    val progress = LibraryTitleProgressSummary(
+      chapterCount = 3,
+      readChapterCount = 1,
+      resumeAvailability = LibraryResumeAvailability.AVAILABLE,
+    )
     val title = LibraryTitle(
       id = TitleId(TITLE_ID),
       alias = SourceTitleAlias("source", "title"),
       displayName = "Title",
       description = "Description",
+      progress = progress,
     )
     val firstShelfTitleIds = mutableListOf(title.id)
     val firstShelf = LibraryShelf.create(
@@ -130,23 +136,24 @@ class LibraryContractTest {
     )
     val mutableTitles = linkedMapOf(title.id to title)
     val mutableShelves = mutableListOf(firstShelf, secondShelf)
-    val state = LibraryShelfState.create(mutableTitles, mutableShelves)
+    val state = LibraryState.create(mutableTitles, mutableShelves)
 
     mutableTitles.clear()
     mutableShelves.clear()
     firstShelfTitleIds.clear()
 
     assertEquals(mapOf(title.id to title), state.titlesById)
+    assertEquals(progress, state.titlesById.getValue(title.id).progress)
     assertEquals(setOf(firstShelf, secondShelf), state.shelves)
     assertEquals(1, state.shelves.single { it == firstShelf }.titleCount)
     assertThrows(IllegalArgumentException::class.java) {
-      LibraryShelfState.create(
+      LibraryState.create(
         titlesById = emptyMap(),
         shelves = listOf(firstShelf),
       )
     }
     assertThrows(IllegalArgumentException::class.java) {
-      LibraryShelfState.create(
+      LibraryState.create(
         titlesById = mapOf(TitleId(OTHER_TITLE_ID) to title),
         shelves = listOf(
           LibraryShelf.create(
@@ -157,7 +164,7 @@ class LibraryContractTest {
       )
     }
     assertThrows(IllegalArgumentException::class.java) {
-      LibraryShelfState.create(
+      LibraryState.create(
         titlesById = mapOf(title.id to title),
         shelves = listOf(
           firstShelf,
@@ -171,36 +178,13 @@ class LibraryContractTest {
   }
 
   @Test
-  fun `Library summary owns progress and requires exact title coverage`() {
-    val title = LibraryTitle(
-      id = TitleId(TITLE_ID),
-      alias = SourceTitleAlias("source", "title"),
-      displayName = "Title",
-      description = null,
-    )
-    val shelfState = LibraryShelfState.create(
-      titlesById = mapOf(title.id to title),
-      shelves = listOf(
-        LibraryShelf.create(
-          category = category(1, "Default"),
-          titleIds = listOf(title.id),
-        ),
-      ),
-    )
+  fun `Library progress validates counts and resume availability`() {
     val progress = LibraryTitleProgressSummary(
       chapterCount = 3,
       readChapterCount = 1,
       resumeAvailability = LibraryResumeAvailability.AVAILABLE,
     )
-    val mutableProgress = linkedMapOf(title.id to progress)
-    val summary = LibrarySummaryState.create(shelfState, mutableProgress)
-
-    mutableProgress.clear()
-
-    assertEquals(mapOf(title.id to progress), summary.progressByTitleId)
-    assertThrows(IllegalArgumentException::class.java) {
-      LibrarySummaryState.create(shelfState, emptyMap())
-    }
+    assertEquals(1, progress.readChapterCount)
     assertThrows(IllegalArgumentException::class.java) {
       LibraryTitleProgressSummary(
         chapterCount = 1,

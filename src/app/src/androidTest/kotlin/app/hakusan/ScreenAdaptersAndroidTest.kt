@@ -27,16 +27,29 @@ import app.hakusan.sdk.ContinueSelectionResult
 import app.hakusan.sdk.ContinueState
 import app.hakusan.sdk.DetailsScreenFailure
 import app.hakusan.sdk.DetailsScreenResult
+import app.hakusan.sdk.LibraryResumeState
+import app.hakusan.sdk.LibraryTitleProgress
 import app.hakusan.sdk.ScreenReadingStart
 import app.hakusan.sdk.ScreenSourceId
 import app.hakusan.sdk.ScreenTitleId
+import app.hakusan.titles.ActualPositionResult
+import app.hakusan.titles.ActualPositionUpdate
 import app.hakusan.titles.CategoryId
+import app.hakusan.titles.ChapterBoundaryCompletion
 import app.hakusan.titles.ChapterReconciliationResult
+import app.hakusan.titles.CompletionResult
 import app.hakusan.titles.ExplicitLibraryAddResult
+import app.hakusan.titles.LibraryAddResult
 import app.hakusan.titles.LibraryCategorySelection
+import app.hakusan.titles.ProgressEventRecency
+import app.hakusan.titles.ReadingContentUnitKind
+import app.hakusan.titles.ReadingPosition
 import app.hakusan.titles.ReconcileChapterSnapshot
+import app.hakusan.titles.ReconcileSourceChapter
 import app.hakusan.titles.ReconcileSourceTitle
+import app.hakusan.titles.SourceChapterAlias
 import app.hakusan.titles.SourceTitleAlias
+import app.hakusan.titles.TitleId
 import app.hakusan.titles.Titles
 import app.hakusan.titles.TitlesStore
 import app.hakusan.titles.openTitlesStore
@@ -144,6 +157,112 @@ class ScreenAdaptersAndroidTest {
         assertEquals(details.chapters.first().id, selected.target.chapterId)
       }
     }
+
+  @Test
+  fun libraryScreenOrdersTitlesAndKeepsProgressJoined(): Unit = runBlocking {
+    withTimeout(TEST_TIMEOUT_MILLIS) {
+      val graph = graph(DeterministicSource())
+      val zuluAlias = SourceTitleAlias("mapping.source", "zulu")
+      val zuluId = store.titles.reconcileSourceTitle(
+        ReconcileSourceTitle(
+          alias = zuluAlias,
+          displayName = "Zulu title",
+          description = "Created first",
+        ),
+      )
+      val zuluSnapshot = store.titles.reconcileChapterSnapshot(
+        ReconcileChapterSnapshot.of(
+          titleAlias = zuluAlias,
+          chapters = listOf(
+            ReconcileSourceChapter(
+              alias = SourceChapterAlias(zuluAlias, "first"),
+              displayName = "Zulu first",
+            ),
+            ReconcileSourceChapter(
+              alias = SourceChapterAlias(zuluAlias, "second"),
+              displayName = "Zulu second",
+            ),
+          ),
+        ),
+      ) as ChapterReconciliationResult.Success
+      assertTrue(
+        store.titles.addToLibrary(zuluId) is LibraryAddResult.Success,
+      )
+      assertTrue(
+        store.titles.completeChapterBoundary(
+          ChapterBoundaryCompletion(
+            completedChapterId = zuluSnapshot.snapshot.chapters[0].id,
+            startedPosition = ReadingPosition(
+              titleId = zuluId,
+              chapterId = zuluSnapshot.snapshot.chapters[1].id,
+              unitKind = ReadingContentUnitKind.PAGE,
+              unitIndex = 4,
+            ),
+            recency = ProgressEventRecency.CURRENT,
+          ),
+        ) is CompletionResult.Success,
+      )
+
+      val alphaAlias = SourceTitleAlias("mapping.source", "alpha")
+      val alphaId = store.titles.reconcileSourceTitle(
+        ReconcileSourceTitle(
+          alias = alphaAlias,
+          displayName = "Alpha title",
+          description = "Created second",
+        ),
+      )
+      assertTrue(
+        store.titles.reconcileChapterSnapshot(
+          ReconcileChapterSnapshot.of(
+            titleAlias = alphaAlias,
+            chapters = listOf(
+              ReconcileSourceChapter(
+                alias = SourceChapterAlias(alphaAlias, "only"),
+                displayName = "Alpha only",
+              ),
+            ),
+          ),
+        ) is ChapterReconciliationResult.Success,
+      )
+      assertTrue(
+        store.titles.addToLibrary(alphaId) is LibraryAddResult.Success,
+      )
+
+      val screen = graph.libraryService.observeLibrary().first {
+        it.titlesById.size == 2
+      }
+      val alphaScreenId = ScreenTitleId(alphaId.value)
+      val zuluScreenId = ScreenTitleId(zuluId.value)
+      assertEquals(
+        listOf(alphaScreenId, zuluScreenId),
+        screen.shelves.single().titleIds,
+      )
+      assertEquals(
+        LibraryTitleProgress(
+          chapterCount = 1,
+          readChapterCount = 0,
+          resumeState = LibraryResumeState.NONE,
+        ),
+        screen.titlesById.getValue(alphaScreenId).progress,
+      )
+      assertEquals(
+        LibraryTitleProgress(
+          chapterCount = 2,
+          readChapterCount = 1,
+          resumeState = LibraryResumeState.AVAILABLE,
+        ),
+        screen.titlesById.getValue(zuluScreenId).progress,
+      )
+      assertEquals(
+        "Alpha title",
+        screen.titlesById.getValue(alphaScreenId).displayName,
+      )
+      assertEquals(
+        "Zulu title",
+        screen.titlesById.getValue(zuluScreenId).displayName,
+      )
+    }
+  }
 
   @Test
   fun libraryAddAdapterMapsEveryAutomaticOutcome(): Unit = runBlocking {

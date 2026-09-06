@@ -20,8 +20,7 @@ import app.hakusan.titles.LibraryCategorySelection
 import app.hakusan.titles.LibraryMembership
 import app.hakusan.titles.LibraryResumeAvailability
 import app.hakusan.titles.LibraryShelf
-import app.hakusan.titles.LibraryShelfState
-import app.hakusan.titles.LibrarySummaryState
+import app.hakusan.titles.LibraryState
 import app.hakusan.titles.LibraryTitle
 import app.hakusan.titles.LibraryTitleProgressSummary
 import app.hakusan.titles.ReconcileChapterSnapshot
@@ -197,14 +196,9 @@ internal class RoomTitles(
     input: ReconcileChapterSnapshot,
   ): ChapterReconciliationResult = reading.reconcileChapterSnapshot(input)
 
-  override fun observeLibraryShelves(): Flow<LibraryShelfState> =
-    dao.observeLibraryShelfRows()
-      .map { rows -> toShelfState(rows) }
-      .distinctUntilChanged()
-
-  override fun observeLibrarySummary(): Flow<LibrarySummaryState> =
-    dao.observeLibrarySummaryRows()
-      .map(::toLibrarySummary)
+  override fun observeLibrary(): Flow<LibraryState> =
+    dao.observeLibraryRows()
+      .map(::toLibraryState)
       .distinctUntilChanged()
 
   override fun observeReadingProgress(
@@ -223,9 +217,9 @@ internal class RoomTitles(
     completion: FinalChapterCompletion,
   ): CompletionResult = reading.completeFinalChapter(completion)
 
-  private fun toShelfState(
-    rows: List<LibraryShelfProjection>,
-  ): LibraryShelfState {
+  private fun toLibraryState(
+    rows: List<LibraryRow>,
+  ): LibraryState {
     val titlesById = LinkedHashMap<TitleId, LibraryTitle>()
     val shelvesByCategoryId = LinkedHashMap<Long, ShelfAccumulator>()
 
@@ -244,37 +238,28 @@ internal class RoomTitles(
 
       val storedTitleId = row.titleId
       if (storedTitleId == null) {
-        check(
-          row.sourceIdentity == null &&
-            row.sourceTitleKey == null &&
-            row.titleDisplayName == null &&
-            row.titleDescription == null
-        ) {
-          "An empty shelf row contained partial title metadata."
-        }
+        row.validateEmptyShelfRow()
         return@forEach
       }
 
       val titleId = TitleId(storedTitleId)
       val existing = titlesById[titleId]
-      val title = when {
-        existing == null -> row.toLibraryTitle(titleId).also { created ->
-          titlesById[titleId] = created
-        }
-
-        existing.hasSameMetadataAs(row) -> existing
-        else -> {
-          // Preserve field validation on corrupted projection rows.
-          row.toLibraryTitle(titleId)
+      val title = if (existing == null) {
+        row.toLibraryTitle(titleId).also { titlesById[titleId] = it }
+      } else {
+        if (!existing.hasSameMetadataAs(row)) {
+          row.validateTitleMetadata()
           error("One title identity produced conflicting shelf metadata.")
         }
+        row.validateSameProgressAs(existing.progress)
+        existing
       }
       check(shelf.titleIds.add(title.id)) {
         "One shelf contained a duplicate title identity."
       }
     }
 
-    return LibraryShelfState.create(
+    return LibraryState.create(
       titlesById = titlesById,
       shelves = shelvesByCategoryId.values.map { shelf ->
         LibraryShelf.create(
@@ -285,81 +270,98 @@ internal class RoomTitles(
     )
   }
 
-  private fun toLibrarySummary(
-    rows: List<LibrarySummaryRow>,
-  ): LibrarySummaryState {
-    val shelfState = toShelfState(rows)
-    val progressByTitleId =
-      LinkedHashMap<TitleId, LibraryTitleProgressSummary>()
-    rows.forEach { row ->
-      val storedTitleId = row.titleId
-      if (storedTitleId == null) {
-        check(
-          row.chapterCount == 0L &&
-            row.readChapterCount == 0L &&
-            !row.hasResume &&
-            !row.resumeIsAvailable &&
-            !row.resumeIsRead,
-        ) {
-          "An empty shelf row contained reading progress."
-        }
-        return@forEach
-      }
-
-      val titleId = TitleId(storedTitleId)
-      val progress = row.toProgress()
-      val existing = progressByTitleId[titleId]
-      if (existing == null) {
-        progressByTitleId[titleId] = progress
-      } else {
-        check(existing == progress) {
-          "One title identity produced conflicting Library progress."
-        }
-      }
+  private fun LibraryRow.validateEmptyShelfRow() {
+    check(
+      sourceIdentity == null &&
+        sourceTitleKey == null &&
+        titleDisplayName == null &&
+        titleDescription == null
+    ) {
+      "An empty shelf row contained partial title metadata."
     }
-    return LibrarySummaryState.create(
-      shelfState = shelfState,
-      progressByTitleId = progressByTitleId,
+    check(
+      chapterCount == 0L &&
+        readChapterCount == 0L &&
+        !hasResume &&
+        !resumeIsAvailable &&
+        !resumeIsRead,
+    ) {
+      "An empty shelf row contained reading progress."
+    }
+  }
+
+  private fun LibraryRow.validateTitleMetadata() {
+    checkNotNull(sourceIdentity)
+    checkNotNull(sourceTitleKey)
+    checkNotNull(titleDisplayName)
+  }
+
+  private fun LibraryRow.toLibraryTitle(
+    titleId: TitleId,
+  ): LibraryTitle {
+    return LibraryTitle(
+      id = titleId,
+      alias = SourceTitleAlias(
+        sourceIdentity = checkNotNull(sourceIdentity),
+        sourceTitleKey = checkNotNull(sourceTitleKey),
+      ),
+      displayName = checkNotNull(titleDisplayName),
+      description = titleDescription,
+      progress = toProgress(),
     )
   }
 
-  private fun LibraryShelfProjection.toLibraryTitle(
-    titleId: TitleId,
-  ): LibraryTitle = LibraryTitle(
-    id = titleId,
-    alias = SourceTitleAlias(
-      sourceIdentity = checkNotNull(sourceIdentity),
-      sourceTitleKey = checkNotNull(sourceTitleKey),
-    ),
-    displayName = checkNotNull(titleDisplayName),
-    description = titleDescription,
-  )
-
   private fun LibraryTitle.hasSameMetadataAs(
-    row: LibraryShelfProjection,
+    row: LibraryRow,
   ): Boolean =
     alias.sourceIdentity == row.sourceIdentity &&
       alias.sourceTitleKey == row.sourceTitleKey &&
       displayName == row.titleDisplayName &&
       description == row.titleDescription
 
-  private fun LibrarySummaryRow.toProgress(): LibraryTitleProgressSummary {
+  private fun LibraryRow.validateSameProgressAs(
+    progress: LibraryTitleProgressSummary,
+  ) {
+    val observedChapterCount = chapterCount.toLibraryCount("chapter")
+    val observedReadChapterCount =
+      readChapterCount.toLibraryCount("read chapter")
+    validateResumeProjection()
+    check(
+      observedChapterCount == progress.chapterCount &&
+        observedReadChapterCount == progress.readChapterCount &&
+        resumeAvailability() == progress.resumeAvailability
+    ) {
+      "One title identity produced conflicting Library progress."
+    }
+  }
+
+  private fun LibraryRow.toProgress(): LibraryTitleProgressSummary {
+    val observedChapterCount = chapterCount.toLibraryCount("chapter")
+    val observedReadChapterCount =
+      readChapterCount.toLibraryCount("read chapter")
+    validateResumeProjection()
+    return LibraryTitleProgressSummary(
+      chapterCount = observedChapterCount,
+      readChapterCount = observedReadChapterCount,
+      resumeAvailability = resumeAvailability(),
+    )
+  }
+
+  private fun LibraryRow.validateResumeProjection() {
     check(hasResume || (!resumeIsAvailable && !resumeIsRead)) {
       "Library resume facts require a retained position."
     }
     check(!resumeIsRead) {
       "A read chapter must not retain a Library resume position."
     }
-    return LibraryTitleProgressSummary(
-      chapterCount = chapterCount.toLibraryCount("chapter"),
-      readChapterCount = readChapterCount.toLibraryCount("read chapter"),
-      resumeAvailability = when {
-        !hasResume -> LibraryResumeAvailability.NONE
-        resumeIsAvailable -> LibraryResumeAvailability.AVAILABLE
-        else -> LibraryResumeAvailability.TEMPORARILY_UNAVAILABLE
-      },
-    )
   }
+
+  private fun LibraryRow.resumeAvailability():
+    LibraryResumeAvailability = when {
+      !hasResume -> LibraryResumeAvailability.NONE
+      resumeIsAvailable -> LibraryResumeAvailability.AVAILABLE
+      else -> LibraryResumeAvailability.TEMPORARILY_UNAVAILABLE
+    }
 
   private fun Long.toLibraryCount(name: String): Int {
     check(this in 0L..Int.MAX_VALUE.toLong()) {

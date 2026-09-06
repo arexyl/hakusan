@@ -27,8 +27,7 @@ import app.hakusan.sdk.ScreenTitleKey
 import app.hakusan.sdk.TitleDetailsScreen
 import app.hakusan.titles.LibraryResumeAvailability
 import app.hakusan.titles.LibraryShelf
-import app.hakusan.titles.LibraryShelfState
-import app.hakusan.titles.LibrarySummaryState
+import app.hakusan.titles.LibraryState
 import app.hakusan.titles.LibraryTitle
 import app.hakusan.titles.ReconcileChapterSnapshot
 import app.hakusan.titles.ReconcileSourceChapter
@@ -77,16 +76,16 @@ internal fun SourceTitleDetails.toReconcileTitle(): ReconcileSourceTitle =
   )
 
 internal fun ChapterSnapshot.toReconcileSnapshot(): ReconcileChapterSnapshot {
-  val screenTitleAlias = SourceTitleAlias(
+  val titleAlias = SourceTitleAlias(
     sourceIdentity = title.source.value,
     sourceTitleKey = title.key,
   )
   return ReconcileChapterSnapshot.of(
-    titleAlias = screenTitleAlias,
+    titleAlias = titleAlias,
     chapters = chapters.map { chapter ->
       ReconcileSourceChapter(
         alias = SourceChapterAlias(
-          titleAlias = screenTitleAlias,
+          titleAlias = titleAlias,
           sourceChapterKey = chapter.key.key,
         ),
         displayName = chapter.displayName,
@@ -105,17 +104,22 @@ internal fun TitleReadingProgress.toDetailsScreen(
   ) {
     "Source details and stored reading progress must identify one title."
   }
+  val screenTitleId = ScreenTitleId(titleId.value)
+  val screenTitleKey = titleAlias.toScreenKey()
   return TitleDetailsScreen.of(
-    id = ScreenTitleId(titleId.value),
-    key = titleAlias.toScreenKey(),
+    id = screenTitleId,
+    key = screenTitleKey,
     sourceDisplayName = sourceDisplayName,
     displayName = details.title.displayName,
     description = details.description,
     chapters = canonicalChapters.map { state ->
       DetailsChapterItem(
         id = ScreenChapterId(state.chapter.id.value),
-        titleId = ScreenTitleId(state.chapter.titleId.value),
-        key = state.chapter.alias.toScreenKey(),
+        titleId = screenTitleId,
+        key = ScreenChapterKey(
+          titleKey = screenTitleKey,
+          sourceChapterKey = state.chapter.alias.sourceChapterKey,
+        ),
         displayName = state.chapter.displayName,
         isRead = state.isRead,
       )
@@ -175,13 +179,13 @@ internal fun ContinueState.toSelectionResult(): ContinueSelectionResult =
       ContinueSelectionResult.Unavailable(reason)
   }
 
-internal fun LibrarySummaryState.toLibraryScreen(): LibraryScreen {
-  val screenOrder = LibraryOrder.create(shelfState)
+internal fun LibraryState.toLibraryScreen(): LibraryScreen {
+  val screenOrder = LibraryOrder.create(this)
   val screenTitles = LinkedHashMap<ScreenTitleId, LibraryTitleItem>(
-    screenOrder.titles.size,
+    titlesById.size,
   )
-  screenOrder.titles.forEach { title ->
-    val progress = progressByTitleId.getValue(title.id)
+  titlesById.values.forEach { title ->
+    val progress = title.progress
     val screenId = ScreenTitleId(title.id.value)
     screenTitles[screenId] = LibraryTitleItem(
       id = screenId,
@@ -216,7 +220,6 @@ internal fun LibrarySummaryState.toLibraryScreen(): LibraryScreen {
  * Values with identical presentation metadata compare as equivalent.
  */
 private class LibraryOrder private constructor(
-  val titles: List<LibraryTitle>,
   val shelves: List<OrderedShelf>,
 ) {
   companion object {
@@ -226,8 +229,7 @@ private class LibraryOrder private constructor(
           compareValues(first.description, second.description)
         }
 
-    fun create(state: LibraryShelfState): LibraryOrder {
-      val titles = state.titlesById.values.sortedWith(titleComparator)
+    fun create(state: LibraryState): LibraryOrder {
       val shelves = state.shelves
         .map { shelf ->
           OrderedShelf(
@@ -247,7 +249,7 @@ private class LibraryOrder private constructor(
             compareTitles(first.titles, second.titles)
           }
         }
-      return LibraryOrder(titles, shelves)
+      return LibraryOrder(shelves)
     }
 
     private fun compareTitles(
