@@ -4,6 +4,7 @@ import app.hakusan.debug.source.DeterministicSource
 import app.hakusan.extensions.ChapterRefreshCompletion
 import app.hakusan.extensions.ChapterRefreshRequest
 import app.hakusan.extensions.SourceBackend
+import app.hakusan.extensions.SourceDetailsFailure
 import app.hakusan.extensions.SourceFailure
 import app.hakusan.extensions.SourceIdentity
 import app.hakusan.extensions.SourceResult
@@ -70,7 +71,7 @@ class TitleDetailsScreenAdapterTest {
 
     override suspend fun details(
       title: SourceTitleKey,
-    ): SourceResult<SourceTitleDetails> {
+    ): SourceResult<SourceTitleDetails, SourceDetailsFailure> {
       require(title.source == identity)
       return PendingDetails(title).also { pendingDetails.send(it) }.result
         .await()
@@ -89,7 +90,9 @@ class TitleDetailsScreenAdapterTest {
   private class PendingDetails(
     private val titleKey: SourceTitleKey,
   ) {
-    val result = CompletableDeferred<SourceResult<SourceTitleDetails>>()
+    val result = CompletableDeferred<
+      SourceResult<SourceTitleDetails, SourceDetailsFailure>
+    >()
 
     fun succeed(displayName: String) {
       result.complete(
@@ -102,7 +105,7 @@ class TitleDetailsScreenAdapterTest {
       )
     }
 
-    fun fail(failure: SourceFailure) {
+    fun fail(failure: SourceDetailsFailure) {
       result.complete(SourceResult.Failure(failure))
     }
   }

@@ -1,12 +1,25 @@
 package app.hakusan.extensions
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.fail
 import org.junit.jupiter.api.Test
 
 class SourceObservationTest {
   private val source = SourceIdentity("source")
+
+  @Test
+  fun `unavailability belongs to every source operation failure set`() {
+    val browse: SourceBrowseFailure = SourceFailure.Unavailable
+    val details: SourceDetailsFailure = SourceFailure.Unavailable
+    val refresh: ChapterRefreshFailure = SourceFailure.Unavailable
+    val content: SourceContentFailure = SourceFailure.Unavailable
+
+    assertSame(browse, details)
+    assertSame(details, refresh)
+    assertSame(refresh, content)
+  }
 
   @Test
   fun `browse results preserve owner order and equal display names`() {
@@ -166,12 +179,13 @@ class SourceObservationTest {
   }
 }
 
-private fun <Value> SourceResult<Value>.successValue(): Value = when (this) {
+private fun <Value> SourceResult<Value, *>.successValue(): Value = when (this) {
   is SourceResult.Success -> value
   is SourceResult.Failure -> fail("Expected success, got $error")
 }
 
-private fun SourceResult<*>.failureValue(): SourceFailure = when (this) {
-  is SourceResult.Success -> fail("Expected failure, got $value")
-  is SourceResult.Failure -> error
-}
+private fun <Error : SourceFailure> SourceResult<*, Error>.failureValue():
+  Error = when (this) {
+    is SourceResult.Success -> fail("Expected failure, got $value")
+    is SourceResult.Failure -> error
+  }

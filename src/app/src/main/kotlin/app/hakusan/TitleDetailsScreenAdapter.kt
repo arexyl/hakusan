@@ -58,8 +58,6 @@ internal class TitleDetailsScreenAdapter(
           val failure = when (result.error) {
             SourceFailure.Unavailable ->
               DetailsScreenFailure.DetailsUnavailable
-
-            else -> DetailsScreenFailure.InvalidTitleObservation
           }
           return coordinator.finishBeforeChapters(
             request = request,
@@ -241,8 +239,6 @@ private class TitleRefreshCoordinator(
 
               is SourceFailure.InvalidChapterSnapshot ->
                 DetailsScreenFailure.InvalidChapterSnapshot
-
-              else -> DetailsScreenFailure.InvalidChapterSnapshot
             },
           )
 

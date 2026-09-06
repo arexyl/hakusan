@@ -15,7 +15,7 @@ interface SourceBackend {
   val displayName: String
 
   /** Returns a browse observation owned by [identity] on success. */
-  suspend fun browse(): SourceResult<SourceBrowseResult>
+  suspend fun browse(): SourceResult<SourceBrowseResult, SourceBrowseFailure>
 
   /**
    * Returns details for the exact [title] on success.
@@ -24,7 +24,7 @@ interface SourceBackend {
    */
   suspend fun details(
     title: SourceTitleKey,
-  ): SourceResult<SourceTitleDetails>
+  ): SourceResult<SourceTitleDetails, SourceDetailsFailure>
 
   /**
    * Returns a completion correlated with the exact [request].
@@ -45,5 +45,5 @@ interface SourceBackend {
    */
   suspend fun content(
     chapter: SourceChapterKey,
-  ): SourceResult<SourceChapterContent>
+  ): SourceResult<SourceChapterContent, SourceContentFailure>
 }

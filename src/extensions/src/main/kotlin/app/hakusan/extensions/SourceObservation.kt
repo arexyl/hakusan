@@ -30,7 +30,7 @@ data class SourceBrowseResult private constructor(
     fun create(
       source: SourceIdentity,
       titles: Iterable<SourceTitle>,
-    ): SourceResult<SourceBrowseResult> {
+    ): SourceResult<SourceBrowseResult, SourceBrowseFailure> {
       val ownedTitles = titles.toOwnedSnapshot()
       if (ownedTitles.any { it.key.source != source }) {
         return invalidBrowse(BrowseResultRejection.FOREIGN_SOURCE)
@@ -51,9 +51,10 @@ data class SourceBrowseResult private constructor(
 
     private fun invalidBrowse(
       reason: BrowseResultRejection,
-    ): SourceResult.Failure = SourceResult.Failure(
-      SourceFailure.InvalidBrowseResult(reason),
-    )
+    ): SourceResult.Failure<SourceFailure.InvalidBrowseResult> =
+      SourceResult.Failure(
+        SourceFailure.InvalidBrowseResult(reason),
+      )
   }
 }
 
@@ -96,7 +97,7 @@ data class SourceChapterContent private constructor(
     fun create(
       chapter: SourceChapterKey,
       units: Iterable<SourceContentUnit>,
-    ): SourceResult<SourceChapterContent> {
+    ): SourceResult<SourceChapterContent, SourceContentFailure> {
       val ownedUnits = units.toOwnedSnapshot()
       if (ownedUnits.isEmpty()) {
         return invalidContent(ChapterContentRejection.EMPTY_CONTENT)
@@ -115,9 +116,10 @@ data class SourceChapterContent private constructor(
 
     private fun invalidContent(
       reason: ChapterContentRejection,
-    ): SourceResult.Failure = SourceResult.Failure(
-      SourceFailure.InvalidChapterContent(reason),
-    )
+    ): SourceResult.Failure<SourceFailure.InvalidChapterContent> =
+      SourceResult.Failure(
+        SourceFailure.InvalidChapterContent(reason),
+      )
   }
 }
 

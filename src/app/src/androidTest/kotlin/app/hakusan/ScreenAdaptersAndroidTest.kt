@@ -9,9 +9,11 @@ import app.hakusan.extensions.ChapterRefreshCompletion
 import app.hakusan.extensions.ChapterRefreshRequest
 import app.hakusan.extensions.ChapterSequenceStatus
 import app.hakusan.extensions.SourceBackend
+import app.hakusan.extensions.SourceBrowseFailure
 import app.hakusan.extensions.SourceBrowseResult
 import app.hakusan.extensions.SourceChapter
 import app.hakusan.extensions.SourceChapterKey
+import app.hakusan.extensions.SourceDetailsFailure
 import app.hakusan.extensions.SourceIdentity
 import app.hakusan.extensions.SourceResult
 import app.hakusan.extensions.SourceTitle
@@ -310,7 +312,8 @@ class ScreenAdaptersAndroidTest {
   private class ForeignBrowseSource(
     private val delegate: SourceBackend = DeterministicSource(),
   ) : SourceBackend by delegate {
-    override suspend fun browse(): SourceResult<SourceBrowseResult> =
+    override suspend fun browse():
+      SourceResult<SourceBrowseResult, SourceBrowseFailure> =
       SourceBrowseResult.create(
         source = SourceIdentity("foreign"),
         titles = emptyList(),
@@ -322,7 +325,8 @@ class ScreenAdaptersAndroidTest {
   ) : SourceBackend by delegate {
     override suspend fun details(
       title: SourceTitleKey,
-    ): SourceResult<SourceTitleDetails> = SourceResult.Success(
+    ): SourceResult<SourceTitleDetails, SourceDetailsFailure> =
+      SourceResult.Success(
       SourceTitleDetails(
         title = SourceTitle(
           key = SourceTitleKey(identity, "foreign"),
@@ -368,7 +372,7 @@ class ScreenAdaptersAndroidTest {
 
     override suspend fun details(
       title: SourceTitleKey,
-    ): SourceResult<SourceTitleDetails> {
+    ): SourceResult<SourceTitleDetails, SourceDetailsFailure> {
       val pending = PendingDetails(title)
       pendingDetails.send(pending)
       return pending.completion.await()
@@ -380,7 +384,9 @@ class ScreenAdaptersAndroidTest {
   private class PendingDetails(
     private val titleKey: SourceTitleKey,
   ) {
-    val completion = CompletableDeferred<SourceResult<SourceTitleDetails>>()
+    val completion = CompletableDeferred<
+      SourceResult<SourceTitleDetails, SourceDetailsFailure>
+    >()
 
     fun complete(displayName: String) {
       completion.complete(

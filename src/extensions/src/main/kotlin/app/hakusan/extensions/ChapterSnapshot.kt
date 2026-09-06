@@ -27,7 +27,7 @@ data class ChapterSnapshot private constructor(
       title: SourceTitleKey,
       status: ChapterSequenceStatus,
       chapters: Iterable<SourceChapter>,
-    ): SourceResult<ChapterSnapshot> {
+    ): SourceResult<ChapterSnapshot, ChapterRefreshFailure> {
       when (status) {
         ChapterSequenceStatus.AMBIGUOUS -> {
           return invalidSnapshot(
@@ -68,9 +68,10 @@ data class ChapterSnapshot private constructor(
 
     private fun invalidSnapshot(
       reason: ChapterSnapshotRejection,
-    ): SourceResult.Failure = SourceResult.Failure(
-      SourceFailure.InvalidChapterSnapshot(reason),
-    )
+    ): SourceResult.Failure<SourceFailure.InvalidChapterSnapshot> =
+      SourceResult.Failure(
+        SourceFailure.InvalidChapterSnapshot(reason),
+      )
   }
 }
 
@@ -134,7 +135,7 @@ class ChapterRefreshGate(
 @ConsistentCopyVisibility
 data class ChapterRefreshCompletion private constructor(
   val request: ChapterRefreshRequest,
-  val result: SourceResult<ChapterSnapshot>,
+  val result: SourceResult<ChapterSnapshot, ChapterRefreshFailure>,
 ) {
   companion object {
     fun completed(
@@ -168,7 +169,7 @@ data class ChapterRefreshCompletion private constructor(
  */
 sealed interface ChapterRefreshAcceptance {
   data class Accepted(
-    val result: SourceResult<ChapterSnapshot>,
+    val result: SourceResult<ChapterSnapshot, ChapterRefreshFailure>,
   ) : ChapterRefreshAcceptance
 
   data object RejectedNotCurrent : ChapterRefreshAcceptance
