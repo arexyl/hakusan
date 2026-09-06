@@ -29,7 +29,7 @@ class HakusanActivityAndroidTest {
   }
 
   @Test
-  fun switchesDestinationAndRetainsItAcrossActivityRecreation() {
+  fun destinationSurvivesActivityRecreation() {
     compose.onNodeWithContentDescription("Catalog").performClick()
     compose.waitForIdle()
     compose.onNodeWithContentDescription("Catalog").assertIsSelected()
@@ -43,11 +43,11 @@ class HakusanActivityAndroidTest {
   }
 
   @Test
-  fun opensCanonicalChaptersAndNavigatesBackThroughCatalog() {
+  fun catalogDetailsBackReturnsToBrowse() {
     openDetails()
 
     compose.onNodeWithText(
-      "Deterministic content for Hakusan checkpoint verification.",
+      "Deterministic debug content with canonical chapter ordering.",
     ).assertExists()
     compose.onNodeWithContentDescription("Catalog").assertDoesNotExist()
     compose.onNodeWithContentDescription("Library").assertDoesNotExist()
@@ -79,13 +79,13 @@ class HakusanActivityAndroidTest {
   }
 
   @Test
-  fun retainsNestedDetailsRouteAcrossActivityRecreation() {
+  fun detailsRouteSurvivesActivityRecreation() {
     openDetails()
 
     compose.activityRule.scenario.recreate()
 
     compose.onNodeWithText(
-      "Deterministic content for Hakusan checkpoint verification.",
+      "Deterministic debug content with canonical chapter ordering.",
     ).assertExists()
     waitForContentDescription("Chapter 10")
     compose.activityRule.scenario.onActivity { activity ->
@@ -97,17 +97,17 @@ class HakusanActivityAndroidTest {
   }
 
   @Test
-  fun BackAtDestinationRootFinishesActivity() {
-    lateinit var activityUnderTest: HakusanActivity
+  fun backAtDestinationRootFinishesActivity() {
+    lateinit var launchedActivity: HakusanActivity
     compose.activityRule.scenario.onActivity { activity ->
-      activityUnderTest = activity
+      launchedActivity = activity
       activity.onBackPressedDispatcher.onBackPressed()
     }
     compose.waitUntil(timeoutMillis = 5_000L) {
-      activityUnderTest.isFinishing
+      launchedActivity.isFinishing
     }
 
-    assertTrue(activityUnderTest.isFinishing)
+    assertTrue(launchedActivity.isFinishing)
   }
 
   private fun openDetails() {

@@ -13,8 +13,8 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 
 @Inject
-@SingleIn(ApplicationScope::class)
-internal class ApplicationBrowseScreenService(
+@SingleIn(AppScope::class)
+internal class BrowseScreenAdapter(
   private val sourceRegistry: SourceRegistry,
 ) : BrowseScreenService {
   override fun catalog(): CatalogScreen = sourceRegistry.catalog

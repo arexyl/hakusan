@@ -55,7 +55,7 @@ internal enum class PrimaryDestination {
   CATALOG,
 }
 
-internal class HakusanNavigationState(
+internal class NavigationState(
   selectedDestination: MutableState<PrimaryDestination>,
   private val libraryBackStack: NavBackStack<NavKey>,
   private val catalogBackStack: NavBackStack<NavKey>,
@@ -146,9 +146,9 @@ internal class HakusanNavigationState(
 }
 
 @Composable
-internal fun rememberHakusanNavigationState(
+internal fun rememberNavigationState(
   initialDestination: PrimaryDestination = PrimaryDestination.LIBRARY,
-): HakusanNavigationState {
+): NavigationState {
   val selectedDestination = rememberSaveable(
     initialDestination,
     stateSaver = PrimaryDestinationSaver,
@@ -162,7 +162,7 @@ internal fun rememberHakusanNavigationState(
     libraryBackStack,
     catalogBackStack,
   ) {
-    HakusanNavigationState(
+    NavigationState(
       selectedDestination = selectedDestination,
       libraryBackStack = libraryBackStack,
       catalogBackStack = catalogBackStack,

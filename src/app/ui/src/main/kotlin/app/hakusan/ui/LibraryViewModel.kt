@@ -20,9 +20,9 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.launch
 
-class LibraryPresentationModel(
-  private val libraryScreenService: LibraryScreenService,
-  private val titleDetailsScreenService: TitleDetailsScreenService,
+class LibraryViewModel(
+  private val libraryService: LibraryScreenService,
+  private val detailsService: TitleDetailsScreenService,
 ) : ViewModel() {
   internal var libraryState: LibraryLoadState by mutableStateOf(
     LibraryLoadState.Loading,
@@ -32,12 +32,12 @@ class LibraryPresentationModel(
   private val addOwners = mutableStateMapOf<ScreenTitleId, LibraryAddOwner>()
   private val addJobs = mutableMapOf<ScreenTitleId, Job>()
 
-  // Membership is monotonic while the screen contract has no removal path.
+  // Retain positive membership confirmations for this model's lifetime.
   private val confirmedMemberships = mutableSetOf<ScreenTitleId>()
 
   init {
     viewModelScope.launch {
-      libraryScreenService.observeLibrary().collect { screen ->
+      libraryService.observeLibrary().collect { screen ->
         confirmedMemberships.addAll(screen.titlesById.keys)
         libraryState = LibraryLoadState.Loaded(screen)
       }
@@ -52,7 +52,7 @@ class LibraryPresentationModel(
     snapshotMembership: Boolean,
   ): Boolean =
     snapshotMembership ||
-      titleId in currentLibraryTitleIds() ||
+      titleId in currentTitleIds() ||
       addState(titleId) == LibraryAddState.Committed ||
       titleId in confirmedMemberships
 
@@ -70,7 +70,7 @@ class LibraryPresentationModel(
     job = viewModelScope.launch(start = CoroutineStart.LAZY) {
       try {
         when (
-          val result = titleDetailsScreenService.addToLibrary(titleId)
+          val result = detailsService.addToLibrary(titleId)
         ) {
           AddToLibraryScreenResult.Success -> {
             confirmedMemberships.add(titleId)
@@ -95,7 +95,7 @@ class LibraryPresentationModel(
   private fun addOwner(titleId: ScreenTitleId): LibraryAddOwner =
     addOwners.getOrPut(titleId, ::LibraryAddOwner)
 
-  private fun currentLibraryTitleIds(): Set<ScreenTitleId> =
+  private fun currentTitleIds(): Set<ScreenTitleId> =
     when (val state = libraryState) {
       LibraryLoadState.Loading -> emptySet()
       is LibraryLoadState.Loaded -> state.screen.titlesById.keys
@@ -103,13 +103,13 @@ class LibraryPresentationModel(
 
   companion object {
     fun factory(
-      libraryScreenService: () -> LibraryScreenService,
-      titleDetailsScreenService: () -> TitleDetailsScreenService,
+      libraryService: () -> LibraryScreenService,
+      detailsService: () -> TitleDetailsScreenService,
     ): ViewModelProvider.Factory = viewModelFactory {
       initializer {
-        LibraryPresentationModel(
-          libraryScreenService = libraryScreenService(),
-          titleDetailsScreenService = titleDetailsScreenService(),
+        LibraryViewModel(
+          libraryService = libraryService(),
+          detailsService = detailsService(),
         )
       }
     }

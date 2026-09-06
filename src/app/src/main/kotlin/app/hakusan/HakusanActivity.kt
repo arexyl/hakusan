@@ -1,9 +1,9 @@
 package app.hakusan
 
 import android.os.Bundle
-import app.hakusan.ui.CatalogPresentationModel
+import app.hakusan.ui.BrowsingViewModel
 import app.hakusan.ui.HakusanApp
-import app.hakusan.ui.LibraryPresentationModel
+import app.hakusan.ui.LibraryViewModel
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -15,45 +15,45 @@ class HakusanActivity : ComponentActivity() {
     enableEdgeToEdge()
     setContent {
       HakusanApp(
-        catalogPresentationModel = { catalogPresentationModel },
-        libraryPresentationModel = { libraryPresentationModel },
+        browsingModel = { browsingModel },
+        libraryModel = { libraryModel },
         onExit = ::finish,
       )
     }
   }
 
-  private val applicationGraph: ApplicationGraph
-    get() = (application as HakusanApplication).applicationGraph
+  private val graph: AppGraph
+    get() = (application as HakusanApplication).graph
 
-  private val catalogPresentationModel: CatalogPresentationModel by lazy(
+  private val browsingModel: BrowsingViewModel by lazy(
     LazyThreadSafetyMode.NONE,
   ) {
     ViewModelProvider(
       owner = this,
-      factory = CatalogPresentationModel.factory(
-        browseScreenService = {
-          applicationGraph.browseScreenService
+      factory = BrowsingViewModel.factory(
+        browseService = {
+          graph.browseService
         },
-        titleDetailsScreenService = {
-          applicationGraph.titleDetailsScreenService
+        detailsService = {
+          graph.detailsService
         },
       ),
-    )[CatalogPresentationModel::class.java]
+    )[BrowsingViewModel::class.java]
   }
 
-  private val libraryPresentationModel: LibraryPresentationModel by lazy(
+  private val libraryModel: LibraryViewModel by lazy(
     LazyThreadSafetyMode.NONE,
   ) {
     ViewModelProvider(
       owner = this,
-      factory = LibraryPresentationModel.factory(
-        libraryScreenService = {
-          applicationGraph.libraryScreenService
+      factory = LibraryViewModel.factory(
+        libraryService = {
+          graph.libraryService
         },
-        titleDetailsScreenService = {
-          applicationGraph.titleDetailsScreenService
+        detailsService = {
+          graph.detailsService
         },
       ),
-    )[LibraryPresentationModel::class.java]
+    )[LibraryViewModel::class.java]
   }
 }

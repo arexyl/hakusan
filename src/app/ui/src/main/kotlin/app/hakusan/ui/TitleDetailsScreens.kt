@@ -56,47 +56,47 @@ import androidx.compose.ui.unit.dp
 internal fun TitleDetailsDestination(
   destination: PrimaryDestination,
   route: TitleDetailsRoute,
-  catalogPresentationModel: () -> CatalogPresentationModel,
-  libraryPresentationModel: () -> LibraryPresentationModel,
+  browsingModel: () -> BrowsingViewModel,
+  libraryModel: () -> LibraryViewModel,
   onBack: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  val catalogModel = remember { catalogPresentationModel() }
-  val libraryModel = remember { libraryPresentationModel() }
+  val browsing = remember { browsingModel() }
+  val library = remember { libraryModel() }
   val ownerKey = remember(destination, route) {
     DetailsOwnerKey(destination, route)
   }
-  val owner = remember(ownerKey, catalogModel) {
-    catalogModel.details(ownerKey)
+  val owner = remember(ownerKey, browsing) {
+    browsing.details(ownerKey)
   }
-  val continueOwner = remember(ownerKey, catalogModel) {
-    catalogModel.continueAction(ownerKey)
+  val continueOwner = remember(ownerKey, browsing) {
+    browsing.continueAction(ownerKey)
   }
   val state = owner.state
   val continueActionState = continueOwner.state
-  LaunchedEffect(catalogModel, ownerKey) {
-    catalogModel.ensureDetails(ownerKey)
+  LaunchedEffect(browsing, ownerKey) {
+    browsing.ensureDetails(ownerKey)
   }
 
-  val safeBottomPadding = WindowInsets.safeDrawing
+  val safeBottom = WindowInsets.safeDrawing
     .only(WindowInsetsSides.Bottom)
     .asPaddingValues()
     .calculateBottomPadding()
-  var titleIslandHeightPx by remember(ownerKey) {
+  var islandHeightPx by remember(ownerKey) {
     mutableIntStateOf(0)
   }
-  val titleIslandHeight = with(LocalDensity.current) {
-    titleIslandHeightPx.toDp()
+  val islandHeight = with(LocalDensity.current) {
+    islandHeightPx.toDp()
   }
   val contentBottomPadding = if (state is ScreenLoadState.Loaded) {
-    safeBottomPadding + FloatingIslandEdgeSpacing + titleIslandHeight
+    safeBottom + FloatingIslandEdgeSpacing + islandHeight
   } else {
-    safeBottomPadding
+    safeBottom
   }
   Box(modifier = modifier.fillMaxSize()) {
     TitleDetailsContent(
       state = state,
-      onRetry = { catalogModel.retryDetails(ownerKey) },
+      onRetry = { browsing.retryDetails(ownerKey) },
       onBack = onBack,
       contentBottomPadding = contentBottomPadding,
     )
@@ -105,7 +105,7 @@ internal fun TitleDetailsDestination(
       val screen = state.content
       if (screen.isInLibrary) {
         SideEffect {
-          libraryModel.confirmMembership(screen.id)
+          library.confirmMembership(screen.id)
         }
       }
       TitleActionsIsland(
@@ -120,17 +120,17 @@ internal fun TitleDetailsDestination(
       ) {
         TitleActions(
           screen = screen,
-          isInLibrary = libraryModel.isInLibrary(
+          isInLibrary = library.isInLibrary(
             titleId = screen.id,
             snapshotMembership = screen.isInLibrary,
           ),
-          addState = libraryModel.addState(screen.id),
+          addState = library.addState(screen.id),
           continueActionState = continueActionState,
-          onLike = { libraryModel.addToLibrary(screen.id) },
-          onContinue = { catalogModel.selectContinue(ownerKey) },
-          onRetryDetails = { catalogModel.retryDetails(ownerKey) },
+          onLike = { library.addToLibrary(screen.id) },
+          onContinue = { browsing.selectContinue(ownerKey) },
+          onRetryDetails = { browsing.retryDetails(ownerKey) },
           modifier = Modifier.onSizeChanged { size ->
-            titleIslandHeightPx = size.height
+            islandHeightPx = size.height
           },
         )
       }

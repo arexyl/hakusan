@@ -176,11 +176,11 @@ internal fun ContinueState.toSelectionResult(): ContinueSelectionResult =
   }
 
 internal fun LibrarySummaryState.toLibraryScreen(): LibraryScreen {
-  val order = CheckpointLibraryOrder.create(shelfState)
+  val screenOrder = LibraryOrder.create(shelfState)
   val screenTitles = LinkedHashMap<ScreenTitleId, LibraryTitleItem>(
-    order.titles.size,
+    screenOrder.titles.size,
   )
-  order.titles.forEach { title ->
+  screenOrder.titles.forEach { title ->
     val progress = progressByTitleId.getValue(title.id)
     val screenId = ScreenTitleId(title.id.value)
     screenTitles[screenId] = LibraryTitleItem(
@@ -200,7 +200,7 @@ internal fun LibrarySummaryState.toLibraryScreen(): LibraryScreen {
       ),
     )
   }
-  val screenShelves = order.shelves.map { orderedShelf ->
+  val screenShelves = screenOrder.shelves.map { orderedShelf ->
     val shelf = orderedShelf.shelf
     LibraryShelfItem.of(
       id = ScreenShelfId(shelf.category.id.value),
@@ -212,12 +212,12 @@ internal fun LibrarySummaryState.toLibraryScreen(): LibraryScreen {
 }
 
 /**
- * Temporary Checkpoint 1 ordering based only on visible title metadata.
- * Durable user-selected shelf order remains owned by the later settings slice.
+ * Orders Library content by visible category and title metadata.
+ * Values with identical presentation metadata compare as equivalent.
  */
-private class CheckpointLibraryOrder private constructor(
+private class LibraryOrder private constructor(
   val titles: List<LibraryTitle>,
-  val shelves: List<OrderedLibraryShelf>,
+  val shelves: List<OrderedShelf>,
 ) {
   companion object {
     private val titleComparator =
@@ -226,11 +226,11 @@ private class CheckpointLibraryOrder private constructor(
           compareValues(first.description, second.description)
         }
 
-    fun create(state: LibraryShelfState): CheckpointLibraryOrder {
+    fun create(state: LibraryShelfState): LibraryOrder {
       val titles = state.titlesById.values.sortedWith(titleComparator)
       val shelves = state.shelves
         .map { shelf ->
-          OrderedLibraryShelf(
+          OrderedShelf(
             shelf = shelf,
             titles = shelf.titleIds
               .map { state.titlesById.getValue(it) }
@@ -244,13 +244,13 @@ private class CheckpointLibraryOrder private constructor(
           if (nameOrder != 0) {
             nameOrder
           } else {
-            compareTitleLists(first.titles, second.titles)
+            compareTitles(first.titles, second.titles)
           }
         }
-      return CheckpointLibraryOrder(titles, shelves)
+      return LibraryOrder(titles, shelves)
     }
 
-    private fun compareTitleLists(
+    private fun compareTitles(
       first: List<LibraryTitle>,
       second: List<LibraryTitle>,
     ): Int {
@@ -265,7 +265,7 @@ private class CheckpointLibraryOrder private constructor(
   }
 }
 
-private data class OrderedLibraryShelf(
+private data class OrderedShelf(
   val shelf: LibraryShelf,
   val titles: List<LibraryTitle>,
 )

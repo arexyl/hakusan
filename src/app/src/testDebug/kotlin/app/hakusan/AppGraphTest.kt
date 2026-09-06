@@ -9,28 +9,28 @@ import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Test
 
-class ApplicationGraphTest {
+class AppGraphTest {
   @Test
   fun `graph scopes each screen responsibility to one graph`() {
     val registry = SourceRegistry.of(listOf(DeterministicSource()))
-    val first = createApplicationGraph(registry, unusedTitles())
-    val second = createApplicationGraph(registry, unusedTitles())
+    val first = createAppGraph(registry, unusedTitles())
+    val second = createAppGraph(registry, unusedTitles())
 
-    assertSame(first.browseScreenService, first.browseScreenService)
-    assertSame(first.libraryScreenService, first.libraryScreenService)
+    assertSame(first.browseService, first.browseService)
+    assertSame(first.libraryService, first.libraryService)
     assertSame(
-      first.titleDetailsScreenService,
-      first.titleDetailsScreenService,
+      first.detailsService,
+      first.detailsService,
     )
-    assertNotSame(first.browseScreenService, second.browseScreenService)
-    assertNotSame(first.libraryScreenService, second.libraryScreenService)
+    assertNotSame(first.browseService, second.browseService)
+    assertNotSame(first.libraryService, second.libraryService)
     assertNotSame(
-      first.titleDetailsScreenService,
-      second.titleDetailsScreenService,
+      first.detailsService,
+      second.detailsService,
     )
     assertEquals(
       "app.hakusan.debug.source",
-      first.browseScreenService.catalog().sources.single().id.value,
+      first.browseService.catalog().sources.single().id.value,
     )
   }
 

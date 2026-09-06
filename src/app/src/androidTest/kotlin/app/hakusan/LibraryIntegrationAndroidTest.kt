@@ -5,16 +5,16 @@ import android.content.ContextWrapper
 import android.database.sqlite.SQLiteDatabase
 import app.hakusan.titles.TitlesStore
 import app.hakusan.titles.openTitlesStore
-import app.hakusan.ui.CatalogPresentationModel
+import app.hakusan.ui.BrowsingViewModel
 import app.hakusan.ui.HakusanApp
-import app.hakusan.ui.LibraryPresentationModel
+import app.hakusan.ui.LibraryViewModel
 import androidx.activity.compose.setContent
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHasNoClickAction
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
-import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onAllNodesWithContentDescription
+import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -30,18 +30,18 @@ import org.junit.rules.TestRule
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
-class HakusanLibraryJourneyAndroidTest {
-  private val database = IsolatedTitlesStoreRule()
+class LibraryIntegrationAndroidTest {
+  private val storeRule = IsolatedTitlesStoreRule()
   private val compose = createAndroidComposeRule<HakusanActivity>()
 
   @get:Rule
-  val rules: TestRule = RuleChain
-    .outerRule(database)
+  val ruleChain: TestRule = RuleChain
+    .outerRule(storeRule)
     .around(compose)
 
   @Test
-  fun LikeBuildsTheDefaultShelfAndLibraryDetailsReturnToIt() {
-    installIsolatedApplicationGraph()
+  fun likePersistsShelfThroughDetails() {
+    installGraph()
 
     waitForText("Your Library is empty")
     compose.onNodeWithContentDescription("Catalog").performClick()
@@ -82,35 +82,35 @@ class HakusanLibraryJourneyAndroidTest {
     compose.onNodeWithText("0 of 3 chapters read").assertExists()
   }
 
-  private fun installIsolatedApplicationGraph() {
-    val graph = createApplicationGraph(
-      sourceRegistry = SourceRegistry.of(applicationSourceBackends()),
-      titles = database.store.titles,
+  private fun installGraph() {
+    val graph = createAppGraph(
+      sourceRegistry = SourceRegistry.of(sourceBackends()),
+      titles = storeRule.store.titles,
     )
     compose.activityRule.scenario.onActivity { activity ->
-      val catalogModel = ViewModelProvider(
+      val browsingModel = ViewModelProvider(
         owner = activity,
-        factory = CatalogPresentationModel.factory(
-          browseScreenService = { graph.browseScreenService },
-          titleDetailsScreenService = {
-            graph.titleDetailsScreenService
+        factory = BrowsingViewModel.factory(
+          browseService = { graph.browseService },
+          detailsService = {
+            graph.detailsService
           },
         ),
-      )[CATALOG_MODEL_KEY, CatalogPresentationModel::class.java]
+      )[BROWSING_MODEL_KEY, BrowsingViewModel::class.java]
       val libraryModel = ViewModelProvider(
         owner = activity,
-        factory = LibraryPresentationModel.factory(
-          libraryScreenService = { graph.libraryScreenService },
-          titleDetailsScreenService = {
-            graph.titleDetailsScreenService
+        factory = LibraryViewModel.factory(
+          libraryService = { graph.libraryService },
+          detailsService = {
+            graph.detailsService
           },
         ),
-      )[LIBRARY_MODEL_KEY, LibraryPresentationModel::class.java]
+      )[LIBRARY_MODEL_KEY, LibraryViewModel::class.java]
 
       activity.setContent {
         HakusanApp(
-          catalogPresentationModel = { catalogModel },
-          libraryPresentationModel = { libraryModel },
+          browsingModel = { browsingModel },
+          libraryModel = { libraryModel },
           onExit = activity::finish,
         )
       }
@@ -136,41 +136,41 @@ class HakusanLibraryJourneyAndroidTest {
     lateinit var store: TitlesStore
       private set
 
-    private lateinit var context: JourneyDatabaseContext
+    private lateinit var databaseContext: IsolatedDatabaseContext
 
     override fun before() {
-      val targetContext = InstrumentationRegistry.getInstrumentation()
+      val appContext = InstrumentationRegistry.getInstrumentation()
         .targetContext
         .applicationContext
-      context = JourneyDatabaseContext(targetContext)
+      databaseContext = IsolatedDatabaseContext(appContext)
       check(
-        context.getDatabasePath(DATABASE_NAME) !=
-          targetContext.getDatabasePath(DATABASE_NAME),
+        databaseContext.getDatabasePath(DATABASE_NAME) !=
+          appContext.getDatabasePath(DATABASE_NAME),
       ) {
-        "The Library journey must not own the application database."
+        "The isolated test store must not own the application database."
       }
-      context.prepareDatabase(DATABASE_NAME)
-      store = openTitlesStore(context)
+      databaseContext.prepareDatabase(DATABASE_NAME)
+      store = openTitlesStore(databaseContext)
     }
 
     override fun after() {
       if (::store.isInitialized) {
         store.close()
       }
-      if (::context.isInitialized) {
-        check(context.deleteDatabase(DATABASE_NAME)) {
-          "Unable to delete the isolated Library journey database."
+      if (::databaseContext.isInitialized) {
+        check(databaseContext.deleteDatabase(DATABASE_NAME)) {
+          "Unable to delete the isolated test database."
         }
       }
     }
   }
 
-  private class JourneyDatabaseContext(
+  private class IsolatedDatabaseContext(
     base: Context,
   ) : ContextWrapper(base) {
     private val databaseDirectory = File(
       base.cacheDir,
-      "hakusan-library-journey-databases",
+      "library-integration-databases",
     )
 
     override fun getApplicationContext(): Context = this
@@ -179,27 +179,27 @@ class HakusanLibraryJourneyAndroidTest {
       File(databaseDirectory, name)
 
     override fun deleteDatabase(name: String): Boolean {
-      val database = getDatabasePath(name)
+      val databaseFile = getDatabasePath(name)
       val databaseDeleted =
-        !database.exists() || SQLiteDatabase.deleteDatabase(database)
-      val lock = File("${database.path}.lck")
+        !databaseFile.exists() || SQLiteDatabase.deleteDatabase(databaseFile)
+      val lock = File("${databaseFile.path}.lck")
       val lockDeleted = !lock.exists() || lock.delete()
       return databaseDeleted && lockDeleted
     }
 
     fun prepareDatabase(name: String) {
       check(databaseDirectory.isDirectory || databaseDirectory.mkdirs()) {
-        "Unable to create the isolated Library journey database directory."
+        "Unable to create the isolated test database directory."
       }
       check(deleteDatabase(name)) {
-        "Unable to reset the isolated Library journey database."
+        "Unable to reset the isolated test database."
       }
     }
   }
 
   private companion object {
-    const val CATALOG_MODEL_KEY = "library-journey-catalog"
-    const val LIBRARY_MODEL_KEY = "library-journey-library"
+    const val BROWSING_MODEL_KEY = "library-integration-browsing"
+    const val LIBRARY_MODEL_KEY = "library-integration-library"
     const val DATABASE_NAME = "hakusan.db"
     const val UI_TIMEOUT_MILLIS = 30_000L
   }

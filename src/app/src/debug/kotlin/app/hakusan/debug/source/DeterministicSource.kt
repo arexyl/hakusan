@@ -40,7 +40,8 @@ internal class DeterministicSource(
   )
   private val titleDetails = SourceTitleDetails(
     title = title,
-    description = "Deterministic content for Hakusan checkpoint verification.",
+    description =
+      "Deterministic debug content with canonical chapter ordering.",
   )
 
   private val opening = SourceChapter(

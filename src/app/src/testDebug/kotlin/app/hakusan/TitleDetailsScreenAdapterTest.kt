@@ -25,16 +25,16 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Test
 
-class ApplicationTitleDetailsScreenServiceTest {
+class TitleDetailsScreenAdapterTest {
   @Test
   fun `older details completion is rejected before persistence`() =
     runBlocking {
       withTimeout(TEST_TIMEOUT_MILLIS) {
         val source = ControlledDetailsSource()
-        val service = createApplicationGraph(
+        val service = createAppGraph(
           sourceRegistry = SourceRegistry.of(listOf(source)),
           titles = unusedTitles(),
-        ).titleDetailsScreenService
+        ).detailsService
 
         val firstLoad = async(start = CoroutineStart.UNDISPATCHED) {
           service.loadDetails(TITLE_KEY.toScreenKey())

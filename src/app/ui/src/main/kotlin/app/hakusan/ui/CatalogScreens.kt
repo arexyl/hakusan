@@ -28,12 +28,12 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 internal fun CatalogDestination(
-  catalogPresentationModel: () -> CatalogPresentationModel,
+  browsingModel: () -> BrowsingViewModel,
   onSourceSelected: (ScreenSourceId) -> Unit,
   contentBottomPadding: Dp,
   modifier: Modifier = Modifier,
 ) {
-  val model = remember { catalogPresentationModel() }
+  val model = remember { browsingModel() }
   CatalogContent(
     catalog = model.catalog,
     onSourceSelected = onSourceSelected,
@@ -45,13 +45,13 @@ internal fun CatalogDestination(
 @Composable
 internal fun SourceBrowseDestination(
   route: SourceBrowseRoute,
-  catalogPresentationModel: () -> CatalogPresentationModel,
+  browsingModel: () -> BrowsingViewModel,
   onTitleSelected: (ScreenTitleKey) -> Unit,
   onBack: () -> Unit,
   contentBottomPadding: Dp,
   modifier: Modifier = Modifier,
 ) {
-  val model = remember { catalogPresentationModel() }
+  val model = remember { browsingModel() }
   val owner = remember(route, model) {
     model.browse(route)
   }

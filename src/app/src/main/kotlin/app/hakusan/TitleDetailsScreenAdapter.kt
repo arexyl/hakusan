@@ -21,6 +21,7 @@ import app.hakusan.titles.ChapterReconciliationFailure
 import app.hakusan.titles.ChapterReconciliationResult
 import app.hakusan.titles.LibraryAddFailure
 import app.hakusan.titles.LibraryAddResult
+import app.hakusan.titles.ReconcileChapterSnapshot
 import app.hakusan.titles.TitleId
 import app.hakusan.titles.TitleReadingProgress
 import app.hakusan.titles.Titles
@@ -32,12 +33,12 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 @Inject
-@SingleIn(ApplicationScope::class)
-internal class ApplicationTitleDetailsScreenService(
+@SingleIn(AppScope::class)
+internal class TitleDetailsScreenAdapter(
   private val sourceRegistry: SourceRegistry,
   private val titles: Titles,
 ) : TitleDetailsScreenService {
-  private val refreshByTitle =
+  private val coordinators =
     ConcurrentHashMap<ScreenTitleKey, TitleRefreshCoordinator>()
 
   override suspend fun loadDetails(
@@ -88,13 +89,13 @@ internal class ApplicationTitleDetailsScreenService(
           titles = titles,
         )
       ) {
-        is CoordinatedChapterLoad.Failure ->
+        is ChapterLoadResult.Failure ->
           DetailsScreenResult.Failure(result.error)
 
-        CoordinatedChapterLoad.RejectedNotCurrent ->
+        ChapterLoadResult.RejectedNotCurrent ->
           DetailsScreenResult.RejectedNotCurrent
 
-        is CoordinatedChapterLoad.Success -> DetailsScreenResult.Success(
+        is ChapterLoadResult.Success -> DetailsScreenResult.Success(
           result.progress.toDetailsScreen(
             sourceDisplayName = registration.catalogItem.displayName,
             details = details,
@@ -140,7 +141,7 @@ internal class ApplicationTitleDetailsScreenService(
     titleKey: ScreenTitleKey,
     sourceTitleKey: SourceTitleKey,
   ): TitleRefreshCoordinator = checkNotNull(
-    refreshByTitle.compute(titleKey) { _, current ->
+    coordinators.compute(titleKey) { _, current ->
       (current ?: TitleRefreshCoordinator(sourceTitleKey)).also {
         it.retain()
       }
@@ -151,7 +152,7 @@ internal class ApplicationTitleDetailsScreenService(
     titleKey: ScreenTitleKey,
     coordinator: TitleRefreshCoordinator,
   ) {
-    refreshByTitle.compute(titleKey) { _, current ->
+    coordinators.compute(titleKey) { _, current ->
       check(current === coordinator) {
         "A title refresh coordinator must retain its active owner."
       }
@@ -213,7 +214,7 @@ private class TitleRefreshCoordinator(
     completion: ChapterRefreshCompletion,
     details: SourceTitleDetails,
     titles: Titles,
-  ): CoordinatedChapterLoad = reconciliation.withLock {
+  ): ChapterLoadResult = reconciliation.withLock {
     val acceptance = synchronized(state) {
       if (currentRequest != completion.request) {
         ChapterRefreshAcceptance.RejectedNotCurrent
@@ -228,12 +229,12 @@ private class TitleRefreshCoordinator(
     }
     when (acceptance) {
       ChapterRefreshAcceptance.RejectedNotCurrent ->
-        CoordinatedChapterLoad.RejectedNotCurrent
+        ChapterLoadResult.RejectedNotCurrent
 
       is ChapterRefreshAcceptance.Accepted -> {
         val titleId = titles.reconcileSourceTitle(details.toReconcileTitle())
         when (val result = acceptance.result) {
-          is SourceResult.Failure -> CoordinatedChapterLoad.Failure(
+          is SourceResult.Failure -> ChapterLoadResult.Failure(
             when (result.error) {
               SourceFailure.Unavailable ->
                 DetailsScreenFailure.ChaptersUnavailable
@@ -258,35 +259,35 @@ private class TitleRefreshCoordinator(
   private suspend fun reconcileAndRead(
     titles: Titles,
     titleId: TitleId,
-    snapshot: app.hakusan.titles.ReconcileChapterSnapshot,
-  ): CoordinatedChapterLoad = when (
+    snapshot: ReconcileChapterSnapshot,
+  ): ChapterLoadResult = when (
     val result = titles.reconcileChapterSnapshot(snapshot)
   ) {
     is ChapterReconciliationResult.Failure -> when (result.error) {
       ChapterReconciliationFailure.TitleNotFound ->
-        CoordinatedChapterLoad.Failure(
+        ChapterLoadResult.Failure(
           DetailsScreenFailure.LocalTitleNotFound,
         )
     }
 
     is ChapterReconciliationResult.Success -> {
       val progress = titles.observeReadingProgress(titleId).first()
-        ?: return CoordinatedChapterLoad.Failure(
+        ?: return ChapterLoadResult.Failure(
           DetailsScreenFailure.LocalTitleNotFound,
         )
-      CoordinatedChapterLoad.Success(progress)
+      ChapterLoadResult.Success(progress)
     }
   }
 }
 
-private sealed interface CoordinatedChapterLoad {
+private sealed interface ChapterLoadResult {
   data class Success(
     val progress: TitleReadingProgress,
-  ) : CoordinatedChapterLoad
+  ) : ChapterLoadResult
 
   data class Failure(
     val error: DetailsScreenFailure,
-  ) : CoordinatedChapterLoad
+  ) : ChapterLoadResult
 
-  data object RejectedNotCurrent : CoordinatedChapterLoad
+  data object RejectedNotCurrent : ChapterLoadResult
 }

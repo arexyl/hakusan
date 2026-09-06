@@ -48,16 +48,16 @@ import androidx.navigation3.ui.NavDisplay
 
 @Composable
 fun HakusanApp(
-  catalogPresentationModel: () -> CatalogPresentationModel,
-  libraryPresentationModel: () -> LibraryPresentationModel,
+  browsingModel: () -> BrowsingViewModel,
+  libraryModel: () -> LibraryViewModel,
   onExit: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   HakusanTheme {
-    HakusanShell(
-      navigationState = rememberHakusanNavigationState(),
-      catalogPresentationModel = catalogPresentationModel,
-      libraryPresentationModel = libraryPresentationModel,
+    AppShell(
+      navigationState = rememberNavigationState(),
+      browsingModel = browsingModel,
+      libraryModel = libraryModel,
       onExit = onExit,
       modifier = modifier,
     )
@@ -65,31 +65,31 @@ fun HakusanApp(
 }
 
 @Composable
-internal fun HakusanShell(
-  navigationState: HakusanNavigationState,
-  catalogPresentationModel: () -> CatalogPresentationModel,
-  libraryPresentationModel: () -> LibraryPresentationModel,
+internal fun AppShell(
+  navigationState: NavigationState,
+  browsingModel: () -> BrowsingViewModel,
+  libraryModel: () -> LibraryViewModel,
   onExit: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  val librarySaveableStateDecorator =
+  val libraryStateDecorator =
     rememberSaveableStateHolderNavEntryDecorator<NavKey>()
-  val catalogSaveableStateDecorator =
+  val catalogStateDecorator =
     rememberSaveableStateHolderNavEntryDecorator<NavKey>()
-  var browsingIslandHeightPx by remember { mutableIntStateOf(0) }
-  val browsingIslandHeight = with(LocalDensity.current) {
-    browsingIslandHeightPx.toDp()
+  var islandHeightPx by remember { mutableIntStateOf(0) }
+  val islandHeight = with(LocalDensity.current) {
+    islandHeightPx.toDp()
   }
-  val safeBottomPadding = WindowInsets.safeDrawing
+  val safeBottom = WindowInsets.safeDrawing
     .only(WindowInsetsSides.Bottom)
     .asPaddingValues()
     .calculateBottomPadding()
-  val browsingContentBottomPadding =
-    safeBottomPadding +
+  val contentBottomPadding =
+    safeBottom +
       FloatingIslandEdgeSpacing +
-      browsingIslandHeight
-  val browsingContentBottomPaddingState = rememberUpdatedState(
-    browsingContentBottomPadding,
+      islandHeight
+  val contentBottomPaddingState = rememberUpdatedState(
+    contentBottomPadding,
   )
   val navigateBack = {
     val destination = navigationState.selectedDestination
@@ -97,13 +97,13 @@ internal fun HakusanShell(
     if (removedRoute == null) {
       onExit()
     } else {
-      catalogPresentationModel().discard(destination, removedRoute)
+      browsingModel().discard(destination, removedRoute)
     }
   }
   val navigateRouteBack: (PrimaryDestination, NavKey) -> Unit =
     { destination, expectedRoute ->
       navigationState.pop(destination, expectedRoute)?.let { removedRoute ->
-        catalogPresentationModel().discard(destination, removedRoute)
+        browsingModel().discard(destination, removedRoute)
       }
     }
   BackHandler(
@@ -124,16 +124,16 @@ internal fun HakusanShell(
         onBack = navigateBack,
         entryDecorators = remember(
           destination,
-          librarySaveableStateDecorator,
-          catalogSaveableStateDecorator,
+          libraryStateDecorator,
+          catalogStateDecorator,
         ) {
           listOf(
             when (destination) {
               PrimaryDestination.LIBRARY ->
-                librarySaveableStateDecorator
+                libraryStateDecorator
 
               PrimaryDestination.CATALOG ->
-                catalogSaveableStateDecorator
+                catalogStateDecorator
             },
           )
         },
@@ -141,32 +141,29 @@ internal fun HakusanShell(
           when (route) {
             LibraryRoute -> NavEntry(route) {
               LibraryDestination(
-                libraryPresentationModel = libraryPresentationModel,
+                libraryModel = libraryModel,
                 onTitleSelected = navigationState::openLibraryTitle,
-                contentBottomPadding =
-                  browsingContentBottomPaddingState.value,
+                contentBottomPadding = contentBottomPaddingState.value,
               )
             }
 
             CatalogRoute -> NavEntry(route) {
               CatalogDestination(
-                catalogPresentationModel = catalogPresentationModel,
+                browsingModel = browsingModel,
                 onSourceSelected = navigationState::openCatalogSource,
-                contentBottomPadding =
-                  browsingContentBottomPaddingState.value,
+                contentBottomPadding = contentBottomPaddingState.value,
               )
             }
 
             is SourceBrowseRoute -> NavEntry(route) {
               SourceBrowseDestination(
                 route = route,
-                catalogPresentationModel = catalogPresentationModel,
+                browsingModel = browsingModel,
                 onTitleSelected = navigationState::openCatalogTitle,
                 onBack = {
                   navigateRouteBack(PrimaryDestination.CATALOG, route)
                 },
-                contentBottomPadding =
-                  browsingContentBottomPaddingState.value,
+                contentBottomPadding = contentBottomPaddingState.value,
               )
             }
 
@@ -174,13 +171,13 @@ internal fun HakusanShell(
               TitleDetailsDestination(
                 destination = destination,
                 route = route,
-                catalogPresentationModel = catalogPresentationModel,
-                libraryPresentationModel = libraryPresentationModel,
+                browsingModel = browsingModel,
+                libraryModel = libraryModel,
                 onBack = { navigateRouteBack(destination, route) },
               )
             }
 
-            else -> error("Unknown Hakusan route: $route")
+            else -> error("Unknown navigation route: $route")
           }
         },
       )
@@ -191,7 +188,7 @@ internal fun HakusanShell(
         selectedDestination = navigationState.selectedDestination,
         onDestinationSelected = navigationState::select,
         onHeightChanged = { height ->
-          browsingIslandHeightPx = height
+          islandHeightPx = height
         },
         modifier = Modifier
           .align(Alignment.BottomCenter)

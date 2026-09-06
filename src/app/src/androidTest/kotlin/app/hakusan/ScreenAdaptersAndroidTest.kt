@@ -11,6 +11,7 @@ import app.hakusan.extensions.ChapterSequenceStatus
 import app.hakusan.extensions.SourceBackend
 import app.hakusan.extensions.SourceBrowseResult
 import app.hakusan.extensions.SourceChapter
+import app.hakusan.extensions.SourceChapterKey
 import app.hakusan.extensions.SourceIdentity
 import app.hakusan.extensions.SourceResult
 import app.hakusan.extensions.SourceTitle
@@ -52,24 +53,24 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
-class ApplicationScreenServicesAndroidTest {
+class ScreenAdaptersAndroidTest {
   private lateinit var store: TitlesStore
-  private lateinit var context: TestDatabaseContext
+  private lateinit var databaseContext: IsolatedDatabaseContext
 
   @Before
   fun openStore() {
-    val targetContext = InstrumentationRegistry.getInstrumentation()
+    val appContext = InstrumentationRegistry.getInstrumentation()
       .targetContext
       .applicationContext
-    context = TestDatabaseContext(targetContext)
+    databaseContext = IsolatedDatabaseContext(appContext)
     check(
-      context.getDatabasePath(DATABASE_NAME) !=
-        targetContext.getDatabasePath(DATABASE_NAME),
+      databaseContext.getDatabasePath(DATABASE_NAME) !=
+        appContext.getDatabasePath(DATABASE_NAME),
     ) {
-      "Application composition tests must not own the target database."
+      "Screen adapter tests must not own the target database."
     }
-    context.prepareDatabase(DATABASE_NAME)
-    store = openTitlesStore(context)
+    databaseContext.prepareDatabase(DATABASE_NAME)
+    store = openTitlesStore(databaseContext)
   }
 
   @After
@@ -77,26 +78,26 @@ class ApplicationScreenServicesAndroidTest {
     if (::store.isInitialized) {
       store.close()
     }
-    if (::context.isInitialized) {
-      context.deleteDatabase(DATABASE_NAME)
+    if (::databaseContext.isInitialized) {
+      databaseContext.deleteDatabase(DATABASE_NAME)
     }
   }
 
   @Test
-  fun deterministicSourceCompletesBrowseDetailsLibraryAndContinue(): Unit =
+  fun deterministicSourceCompletesScreenFlows(): Unit =
     runBlocking {
       withTimeout(TEST_TIMEOUT_MILLIS) {
         val graph = graph(DeterministicSource())
         assertTrue(
-          graph.libraryScreenService.observeLibrary().first().shelves.isEmpty(),
+          graph.libraryService.observeLibrary().first().shelves.isEmpty(),
         )
 
-        val source = graph.browseScreenService.catalog().sources.single()
-        val browse = graph.browseScreenService
+        val source = graph.browseService.catalog().sources.single()
+        val browse = graph.browseService
           .loadBrowse(source.id)
           .successScreen()
         val browseTitle = browse.titles.single()
-        val details = graph.titleDetailsScreenService
+        val details = graph.detailsService
           .loadDetails(browseTitle.key)
           .successScreen()
 
@@ -112,9 +113,9 @@ class ApplicationScreenServicesAndroidTest {
 
         assertSame(
           AddToLibraryScreenResult.Success,
-          graph.titleDetailsScreenService.addToLibrary(details.id),
+          graph.detailsService.addToLibrary(details.id),
         )
-        val library = graph.libraryScreenService.observeLibrary().first {
+        val library = graph.libraryService.observeLibrary().first {
           details.id in it.titlesById
         }
         assertEquals("Default", library.shelves.single().name)
@@ -124,20 +125,20 @@ class ApplicationScreenServicesAndroidTest {
           library.titlesById.getValue(details.id).progress.chapterCount,
         )
 
-        val memberDetails = graph.titleDetailsScreenService
+        val memberDetails = graph.detailsService
           .loadDetails(browseTitle.key)
           .successScreen()
         assertTrue(memberDetails.isInLibrary)
-        val selected = graph.titleDetailsScreenService
+        val selected = graph.detailsService
           .selectContinue(details.id) as ContinueSelectionResult.Selected
         assertEquals(details.chapters.first().id, selected.target.chapterId)
       }
     }
 
   @Test
-  fun expectedSourceFailuresRemainScreenSpecific(): Unit = runBlocking {
+  fun sourceFailuresStayScreenSpecific(): Unit = runBlocking {
     withTimeout(TEST_TIMEOUT_MILLIS) {
-      val missing = graph(DeterministicSource()).browseScreenService
+      val missing = graph(DeterministicSource()).browseService
         .loadBrowse(ScreenSourceId("missing"))
       assertEquals(
         BrowseScreenResult.Failure(BrowseScreenFailure.SourceNotFound),
@@ -146,13 +147,13 @@ class ApplicationScreenServicesAndroidTest {
 
       val browseFailure = graph(
         DeterministicSource(UnavailableOperation.BROWSE),
-      ).browseScreenService.loadBrowse(SOURCE_ID)
+      ).browseService.loadBrowse(SOURCE_ID)
       assertEquals(
         BrowseScreenResult.Failure(BrowseScreenFailure.SourceUnavailable),
         browseFailure,
       )
 
-      val titleKey = graph(DeterministicSource()).browseScreenService
+      val titleKey = graph(DeterministicSource()).browseService
         .loadBrowse(SOURCE_ID)
         .successScreen()
         .titles
@@ -160,7 +161,7 @@ class ApplicationScreenServicesAndroidTest {
         .key
       val detailsFailure = graph(
         DeterministicSource(UnavailableOperation.DETAILS),
-      ).titleDetailsScreenService.loadDetails(titleKey)
+      ).detailsService.loadDetails(titleKey)
       assertEquals(
         DetailsScreenResult.Failure(
           DetailsScreenFailure.DetailsUnavailable,
@@ -170,7 +171,7 @@ class ApplicationScreenServicesAndroidTest {
 
       val chapterFailure = graph(
         DeterministicSource(UnavailableOperation.CHAPTERS),
-      ).titleDetailsScreenService.loadDetails(titleKey)
+      ).detailsService.loadDetails(titleKey)
       assertEquals(
         DetailsScreenResult.Failure(
           DetailsScreenFailure.ChaptersUnavailable,
@@ -178,14 +179,14 @@ class ApplicationScreenServicesAndroidTest {
         chapterFailure,
       )
       val invalidBrowse = graph(ForeignBrowseSource())
-        .browseScreenService
+        .browseService
         .loadBrowse(SOURCE_ID)
       assertEquals(
         BrowseScreenResult.Failure(BrowseScreenFailure.InvalidObservation),
         invalidBrowse,
       )
       val invalidDetails = graph(ForeignDetailsSource())
-        .titleDetailsScreenService
+        .detailsService
         .loadDetails(titleKey)
       assertEquals(
         DetailsScreenResult.Failure(
@@ -194,7 +195,7 @@ class ApplicationScreenServicesAndroidTest {
         invalidDetails,
       )
       val invalidChapters = graph(InvalidChapterSource())
-        .titleDetailsScreenService
+        .detailsService
         .loadDetails(titleKey)
       assertEquals(
         DetailsScreenResult.Failure(
@@ -206,34 +207,34 @@ class ApplicationScreenServicesAndroidTest {
   }
 
   @Test
-  fun laterRefreshRejectsAnOlderCompletion(): Unit = runBlocking {
+  fun newerRefreshRejectsOlderCompletion(): Unit = runBlocking {
     withTimeout(TEST_TIMEOUT_MILLIS) {
-      val source = ControlledSource()
-      val service = graph(source).titleDetailsScreenService
+      val source = ControlledRefreshSource()
+      val service = graph(source).detailsService
 
       val firstLoad = async(start = CoroutineStart.UNDISPATCHED) {
         service.loadDetails(TITLE_KEY.toScreenKey())
       }
-      val firstRequest = source.awaitRequest()
+      val firstRefresh = source.awaitRefresh()
       val secondLoad = async(start = CoroutineStart.UNDISPATCHED) {
         service.loadDetails(TITLE_KEY.toScreenKey())
       }
-      val secondRequest = source.awaitRequest()
+      val secondRefresh = source.awaitRefresh()
 
-      secondRequest.complete(listOf(chapter("new", "New")))
+      secondRefresh.complete(listOf(chapter("new", "New")))
       assertTrue(secondLoad.await() is DetailsScreenResult.Success)
-      firstRequest.complete(listOf(chapter("old", "Old")))
+      firstRefresh.complete(listOf(chapter("old", "Old")))
       assertTrue(firstLoad.await() === DetailsScreenResult.RejectedNotCurrent)
     }
   }
 
   @Test
-  fun laterLoadRejectsAnOlderDetailsCompletionBeforePersistence(): Unit =
+  fun rejectsStaleDetailsBeforePersistence(): Unit =
     runBlocking {
       withTimeout(TEST_TIMEOUT_MILLIS) {
         val source = ControlledDetailsSource()
         val graph = graph(source)
-        val service = graph.titleDetailsScreenService
+        val service = graph.detailsService
 
         val firstLoad = async(start = CoroutineStart.UNDISPATCHED) {
           service.loadDetails(TITLE_KEY.toScreenKey())
@@ -254,7 +255,7 @@ class ApplicationScreenServicesAndroidTest {
 
         firstDetails.complete("Stale title")
         assertSame(DetailsScreenResult.RejectedNotCurrent, firstLoad.await())
-        val library = graph.libraryScreenService.observeLibrary().first {
+        val library = graph.libraryService.observeLibrary().first {
           current.id in it.titlesById
         }
         assertEquals(
@@ -265,22 +266,22 @@ class ApplicationScreenServicesAndroidTest {
     }
 
   @Test
-  fun acceptedRefreshesSerializeThroughReconciliation(): Unit = runBlocking {
+  fun serializesAcceptedRefreshes(): Unit = runBlocking {
     withTimeout(TEST_TIMEOUT_MILLIS) {
-      val source = ControlledSource()
+      val source = ControlledRefreshSource()
       val blockingTitles = BlockingFirstReconciliation(store.titles)
-      val service = graph(source, blockingTitles).titleDetailsScreenService
+      val service = graph(source, blockingTitles).detailsService
 
       val firstLoad = async(start = CoroutineStart.UNDISPATCHED) {
         service.loadDetails(TITLE_KEY.toScreenKey())
       }
-      source.awaitRequest().complete(listOf(chapter("first", "First")))
+      source.awaitRefresh().complete(listOf(chapter("first", "First")))
       blockingTitles.firstEntered.await()
 
       val secondLoad = async(start = CoroutineStart.UNDISPATCHED) {
         service.loadDetails(TITLE_KEY.toScreenKey())
       }
-      source.awaitRequest().complete(
+      source.awaitRefresh().complete(
         listOf(
           chapter("first", "First"),
           chapter("second", "Second"),
@@ -301,7 +302,7 @@ class ApplicationScreenServicesAndroidTest {
   private fun graph(
     source: SourceBackend,
     titles: Titles = store.titles,
-  ): ApplicationGraph = createApplicationGraph(
+  ): AppGraph = createAppGraph(
     sourceRegistry = SourceRegistry.of(listOf(source)),
     titles = titles,
   )
@@ -344,20 +345,20 @@ class ApplicationScreenServicesAndroidTest {
     )
   }
 
-  private class ControlledSource(
+  private class ControlledRefreshSource(
     private val delegate: SourceBackend = DeterministicSource(),
   ) : SourceBackend by delegate {
-    private val requests = Channel<PendingRequest>(Channel.UNLIMITED)
+    private val refreshes = Channel<PendingRefresh>(Channel.UNLIMITED)
 
     override suspend fun refreshChapters(
       request: ChapterRefreshRequest,
     ): ChapterRefreshCompletion {
-      val pending = PendingRequest(request)
-      requests.send(pending)
+      val pending = PendingRefresh(request)
+      refreshes.send(pending)
       return pending.completion.await()
     }
 
-    suspend fun awaitRequest(): PendingRequest = requests.receive()
+    suspend fun awaitRefresh(): PendingRefresh = refreshes.receive()
   }
 
   private class ControlledDetailsSource(
@@ -393,7 +394,7 @@ class ApplicationScreenServicesAndroidTest {
     }
   }
 
-  private class PendingRequest(
+  private class PendingRefresh(
     private val request: ChapterRefreshRequest,
   ) {
     val completion = CompletableDeferred<ChapterRefreshCompletion>()
@@ -440,18 +441,18 @@ class ApplicationScreenServicesAndroidTest {
       key: String,
       displayName: String,
     ): SourceChapter = SourceChapter(
-      key = app.hakusan.extensions.SourceChapterKey(TITLE_KEY, key),
+      key = SourceChapterKey(TITLE_KEY, key),
       displayName = displayName,
     )
   }
 }
 
-private class TestDatabaseContext(
+private class IsolatedDatabaseContext(
   base: Context,
 ) : ContextWrapper(base) {
   private val databaseDirectory = File(
     base.cacheDir,
-    "application-screen-services-databases",
+    "screen-adapter-databases",
   )
 
   override fun getApplicationContext(): Context = this

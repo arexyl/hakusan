@@ -26,9 +26,9 @@ import org.junit.jupiter.api.Test
 class ScreenLoadStateTest {
   @Test
   fun `discarding details in one destination keeps the other owner`() {
-    val model = CatalogPresentationModel(
-      browseScreenService = EmptyBrowseScreenService,
-      titleDetailsScreenService = UnusedTitleDetailsScreenService,
+    val model = BrowsingViewModel(
+      browseService = EmptyBrowseService,
+      detailsService = UnusedDetailsService,
     )
     val route = TitleDetailsRoute("source", "title")
     val libraryKey = DetailsOwnerKey(PrimaryDestination.LIBRARY, route)
@@ -134,7 +134,7 @@ class ScreenLoadStateTest {
     )
   }
 
-  private object EmptyBrowseScreenService : BrowseScreenService {
+  private object EmptyBrowseService : BrowseScreenService {
     override fun catalog(): CatalogScreen = CatalogScreen.of(emptyList())
 
     override suspend fun loadBrowse(
@@ -142,7 +142,7 @@ class ScreenLoadStateTest {
     ): BrowseScreenResult = error("The owner test does not load browse data.")
   }
 
-  private object UnusedTitleDetailsScreenService :
+  private object UnusedDetailsService :
     TitleDetailsScreenService {
     override suspend fun loadDetails(
       titleKey: ScreenTitleKey,

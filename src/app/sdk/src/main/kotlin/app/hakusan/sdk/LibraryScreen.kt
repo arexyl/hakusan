@@ -9,7 +9,7 @@ enum class LibraryResumeState {
   TEMPORARILY_UNAVAILABLE,
 }
 
-/** Minimal reading progress rendered with one Library title. */
+/** Reading progress presented for one Library title. */
 data class LibraryTitleProgress(
   val chapterCount: Int,
   val readChapterCount: Int,

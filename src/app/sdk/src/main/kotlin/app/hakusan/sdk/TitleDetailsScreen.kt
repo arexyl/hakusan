@@ -172,12 +172,12 @@ sealed interface DetailsScreenFailure {
   data object LocalTitleNotFound : DetailsScreenFailure
 }
 
-/** Expected completion of the checkpoint's automatic Library Add. */
+/** Result of a screen request to add a title to the Library. */
 sealed interface AddToLibraryScreenResult {
   /** Includes both a new membership and an idempotent existing membership. */
   data object Success : AddToLibraryScreenResult
 
-  /** Several categories exist; their chooser belongs to a later slice. */
+  /** Multiple categories exist and require an explicit selection. */
   data object CategorySelectionRequired : AddToLibraryScreenResult
 
   data class Failure(

@@ -11,7 +11,7 @@ import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
-class HakusanNavigationStateTest {
+class NavigationStateTest {
   @Test
   fun `pop follows selection while an outgoing display remains composed`() {
     val retainedLibraryRoute = TitleDetailsRoute("library", "title")
@@ -20,7 +20,7 @@ class HakusanNavigationStateTest {
       retainedLibraryRoute,
     )
     val catalogBackStack = NavBackStack<NavKey>(CatalogRoute)
-    val state = HakusanNavigationState(
+    val state = NavigationState(
       selectedDestination = mutableStateOf(PrimaryDestination.CATALOG),
       libraryBackStack = libraryBackStack,
       catalogBackStack = catalogBackStack,
@@ -50,7 +50,7 @@ class HakusanNavigationStateTest {
       sourceTitleKey = "other",
     )
     val libraryBackStack = NavBackStack<NavKey>(LibraryRoute)
-    val state = HakusanNavigationState(
+    val state = NavigationState(
       selectedDestination = mutableStateOf(PrimaryDestination.CATALOG),
       libraryBackStack = libraryBackStack,
       catalogBackStack = NavBackStack<NavKey>(CatalogRoute),
@@ -83,7 +83,7 @@ class HakusanNavigationStateTest {
     )
     val libraryBackStack = NavBackStack<NavKey>(LibraryRoute)
     val catalogBackStack = NavBackStack<NavKey>(CatalogRoute)
-    val state = HakusanNavigationState(
+    val state = NavigationState(
       selectedDestination = mutableStateOf(PrimaryDestination.CATALOG),
       libraryBackStack = libraryBackStack,
       catalogBackStack = catalogBackStack,
@@ -140,7 +140,7 @@ class HakusanNavigationStateTest {
     val browseRoute = SourceBrowseRoute(sourceId.value)
     val libraryBackStack = NavBackStack<NavKey>(LibraryRoute)
     val catalogBackStack = NavBackStack<NavKey>(CatalogRoute)
-    val state = HakusanNavigationState(
+    val state = NavigationState(
       selectedDestination = mutableStateOf(PrimaryDestination.LIBRARY),
       libraryBackStack = libraryBackStack,
       catalogBackStack = catalogBackStack,

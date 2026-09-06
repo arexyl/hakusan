@@ -43,7 +43,7 @@ class DeterministicSourceTest {
     val details = first.details(title.key).successValue()
     assertEquals(title, details.title)
     assertEquals(
-      "Deterministic content for Hakusan checkpoint verification.",
+      "Deterministic debug content with canonical chapter ordering.",
       details.description,
     )
     assertEquals(details, second.details(title.key).successValue())

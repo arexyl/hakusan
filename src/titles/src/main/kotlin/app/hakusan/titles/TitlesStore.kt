@@ -7,7 +7,8 @@ import androidx.room3.Room
 import androidx.sqlite.driver.AndroidSQLiteDriver
 
 /**
- * Process-owned access to Hakusan title persistence and its explicit release.
+ * Process-owned access to application title persistence and its explicit
+ * release.
  */
 interface TitlesStore : AutoCloseable {
   val titles: Titles

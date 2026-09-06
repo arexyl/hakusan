@@ -32,12 +32,12 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 internal fun LibraryDestination(
-  libraryPresentationModel: () -> LibraryPresentationModel,
+  libraryModel: () -> LibraryViewModel,
   onTitleSelected: (ScreenTitleKey) -> Unit,
   contentBottomPadding: Dp,
   modifier: Modifier = Modifier,
 ) {
-  val model = remember { libraryPresentationModel() }
+  val model = remember { libraryModel() }
   LibraryContent(
     state = model.libraryState,
     onTitleSelected = onTitleSelected,

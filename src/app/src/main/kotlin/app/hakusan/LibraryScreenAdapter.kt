@@ -9,8 +9,8 @@ import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
 @Inject
-@SingleIn(ApplicationScope::class)
-internal class ApplicationLibraryScreenService(
+@SingleIn(AppScope::class)
+internal class LibraryScreenAdapter(
   private val titles: Titles,
 ) : LibraryScreenService {
   override fun observeLibrary(): Flow<LibraryScreen> =

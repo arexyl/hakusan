@@ -12,7 +12,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.platform.LocalContext
 
-private val HakusanTypography = Typography()
+private val AppTypography = Typography()
 
 @Composable
 fun HakusanTheme(
@@ -22,16 +22,16 @@ fun HakusanTheme(
 ) {
   val context = LocalContext.current
   val colorScheme = remember(context, darkTheme, dynamicColor) {
-    context.hakusanColorScheme(darkTheme, dynamicColor)
+    context.resolveColorScheme(darkTheme, dynamicColor)
   }
   MaterialTheme(
     colorScheme = colorScheme,
-    typography = HakusanTypography,
+    typography = AppTypography,
     content = content,
   )
 }
 
-private fun Context.hakusanColorScheme(
+private fun Context.resolveColorScheme(
   darkTheme: Boolean,
   dynamicColor: Boolean,
 ) = when {

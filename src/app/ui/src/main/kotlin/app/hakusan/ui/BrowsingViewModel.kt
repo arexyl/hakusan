@@ -33,11 +33,11 @@ internal data class DetailsOwnerKey(
   val route: TitleDetailsRoute,
 )
 
-class CatalogPresentationModel(
-  private val browseScreenService: BrowseScreenService,
-  private val titleDetailsScreenService: TitleDetailsScreenService,
+class BrowsingViewModel(
+  private val browseService: BrowseScreenService,
+  private val detailsService: TitleDetailsScreenService,
 ) : ViewModel() {
-  internal val catalog: CatalogScreen = browseScreenService.catalog()
+  internal val catalog: CatalogScreen = browseService.catalog()
 
   private val browseStates =
     mutableMapOf<SourceBrowseRoute, ScreenLoadOwner<
@@ -145,7 +145,7 @@ class CatalogPresentationModel(
   ) {
     val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
       when (
-        val result = browseScreenService.loadBrowse(
+        val result = browseService.loadBrowse(
           route.toScreenSourceId(),
         )
       ) {
@@ -171,7 +171,7 @@ class CatalogPresentationModel(
   ) {
     val job = viewModelScope.launch(start = CoroutineStart.LAZY) {
       when (
-        val result = titleDetailsScreenService.loadDetails(
+        val result = detailsService.loadDetails(
           key.route.toScreenTitleKey(),
         )
       ) {
@@ -203,7 +203,7 @@ class CatalogPresentationModel(
     job = viewModelScope.launch(start = CoroutineStart.LAZY) {
       try {
         when (
-          val result = titleDetailsScreenService.selectContinue(titleId)
+          val result = detailsService.selectContinue(titleId)
         ) {
           is ContinueSelectionResult.Selected -> owner.publishSelected(
             expectedRevision = revision,
@@ -241,13 +241,13 @@ class CatalogPresentationModel(
 
   companion object {
     fun factory(
-      browseScreenService: () -> BrowseScreenService,
-      titleDetailsScreenService: () -> TitleDetailsScreenService,
+      browseService: () -> BrowseScreenService,
+      detailsService: () -> TitleDetailsScreenService,
     ): ViewModelProvider.Factory = viewModelFactory {
       initializer {
-        CatalogPresentationModel(
-          browseScreenService = browseScreenService(),
-          titleDetailsScreenService = titleDetailsScreenService(),
+        BrowsingViewModel(
+          browseService = browseService(),
+          detailsService = detailsService(),
         )
       }
     }

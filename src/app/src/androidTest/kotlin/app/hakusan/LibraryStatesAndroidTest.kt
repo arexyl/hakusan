@@ -32,9 +32,9 @@ import app.hakusan.sdk.ScreenTitleId
 import app.hakusan.sdk.ScreenTitleKey
 import app.hakusan.sdk.TitleDetailsScreen
 import app.hakusan.sdk.TitleDetailsScreenService
-import app.hakusan.ui.CatalogPresentationModel
+import app.hakusan.ui.BrowsingViewModel
 import app.hakusan.ui.HakusanApp
-import app.hakusan.ui.LibraryPresentationModel
+import app.hakusan.ui.LibraryViewModel
 import androidx.activity.compose.setContent
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.test.assertHasClickAction
@@ -67,14 +67,14 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
-class HakusanLibraryStatesAndroidTest {
+class LibraryStatesAndroidTest {
   @get:Rule
   val compose = createAndroidComposeRule<HakusanActivity>()
 
   @Test
-  fun libraryRendersDistinctStatesInOwnedOrderAndReturnsFromDetails() {
-    val library = ControlledLibraryScreenService()
-    val details = ControlledTitleDetailsScreenService()
+  fun rendersOrderedStatesAndReturns() {
+    val library = ControlledLibraryService()
+    val details = ControlledDetailsService()
     installHost(library, details)
 
     compose.onNodeWithText("Loading Library").assertExists()
@@ -131,9 +131,9 @@ class HakusanLibraryStatesAndroidTest {
   }
 
   @Test
-  fun successfulLikeWaitsForCommittedLibraryFlow() {
-    val library = ControlledLibraryScreenService()
-    val details = ControlledTitleDetailsScreenService()
+  fun likeWaitsForCommittedLibraryFlow() {
+    val library = ControlledLibraryService()
+    val details = ControlledDetailsService()
     installHost(library, details)
     library.emit(EMPTY_LIBRARY)
     openCatalogDetails(details, DETAILS_A_READY)
@@ -162,9 +162,9 @@ class HakusanLibraryStatesAndroidTest {
   }
 
   @Test
-  fun pendingLikeSurvivesDetailsBackAndPublishesItsCommit() {
-    val library = ControlledLibraryScreenService()
-    val details = ControlledTitleDetailsScreenService()
+  fun pendingLikeCompletesAfterDetailsBack() {
+    val library = ControlledLibraryService()
+    val details = ControlledDetailsService()
     installHost(library, details)
     library.emit(EMPTY_LIBRARY)
     openCatalogDetails(details, DETAILS_A_READY)
@@ -186,9 +186,9 @@ class HakusanLibraryStatesAndroidTest {
   }
 
   @Test
-  fun likeKeepsCategoryChoiceAndMissingTitleDistinctAndRetryable() {
-    val library = ControlledLibraryScreenService()
-    val details = ControlledTitleDetailsScreenService()
+  fun likeOutcomesStayDistinctAndRetryable() {
+    val library = ControlledLibraryService()
+    val details = ControlledDetailsService()
     installHost(library, details)
     library.emit(EMPTY_LIBRARY)
     openCatalogDetails(details, DETAILS_A_READY)
@@ -200,7 +200,7 @@ class HakusanLibraryStatesAndroidTest {
     )
     compose.onNodeWithText(
       "This title needs a category choice. " +
-        "Category selection is not available yet.",
+        "Category selection is unavailable.",
     ).assertExists()
     compose.onNodeWithText("Like")
       .assertIsEnabled()
@@ -223,9 +223,9 @@ class HakusanLibraryStatesAndroidTest {
   }
 
   @Test
-  fun continueRemainsLabeledAndDisabledWithoutAChapter() {
-    val library = ControlledLibraryScreenService()
-    val details = ControlledTitleDetailsScreenService()
+  fun noChapterDisablesVisibleContinue() {
+    val library = ControlledLibraryService()
+    val details = ControlledDetailsService()
     installHost(library, details)
     library.emit(EMPTY_LIBRARY)
     openCatalogDetails(details, DETAILS_A_EMPTY)
@@ -238,9 +238,9 @@ class HakusanLibraryStatesAndroidTest {
   }
 
   @Test
-  fun continueSelectsAFreshExactTargetAndReportsUnavailableRetry() {
-    val library = ControlledLibraryScreenService()
-    val details = ControlledTitleDetailsScreenService()
+  fun continueUsesFreshTargetAndOffersRetry() {
+    val library = ControlledLibraryService()
+    val details = ControlledDetailsService()
     installHost(library, details)
     library.emit(EMPTY_LIBRARY)
     openCatalogDetails(details, DETAILS_A_READY)
@@ -303,9 +303,9 @@ class HakusanLibraryStatesAndroidTest {
   }
 
   @Test
-  fun libraryListViewportExtendsBehindIslandAndKeepsLastShelfReachable() {
-    val library = ControlledLibraryScreenService()
-    installHost(library, ControlledTitleDetailsScreenService())
+  fun lastShelfStaysReachableBehindIsland() {
+    val library = ControlledLibraryService()
+    installHost(library, ControlledDetailsService())
     library.emit(
       LibraryScreen.of(
         titlesById = emptyMap(),
@@ -347,9 +347,9 @@ class HakusanLibraryStatesAndroidTest {
   }
 
   @Test
-  fun titleListKeepsItsFinalChapterAboveExpandedActionStatus() {
-    val library = ControlledLibraryScreenService()
-    val details = ControlledTitleDetailsScreenService()
+  fun lastChapterStaysAboveExpandedActionStatus() {
+    val library = ControlledLibraryService()
+    val details = ControlledDetailsService()
     val longDetails = detailsWithChapterCount(20)
     installHost(library, details)
     library.emit(EMPTY_LIBRARY)
@@ -389,34 +389,34 @@ class HakusanLibraryStatesAndroidTest {
   private fun installHost(
     library: LibraryScreenService,
     details: TitleDetailsScreenService,
-    browse: BrowseScreenService = FixedBrowseScreenService,
+    browse: BrowseScreenService = FixedBrowseService,
   ) {
     val modelId = MODEL_ID.incrementAndGet()
     compose.activityRule.scenario.onActivity { activity ->
-      val catalogModel = ViewModelProvider(
+      val browsingModel = ViewModelProvider(
         owner = activity,
-        factory = CatalogPresentationModel.factory(
-          browseScreenService = { browse },
-          titleDetailsScreenService = { details },
+        factory = BrowsingViewModel.factory(
+          browseService = { browse },
+          detailsService = { details },
         ),
       ).get(
-        "library-states-catalog-$modelId",
-        CatalogPresentationModel::class.java,
+        "library-states-browsing-$modelId",
+        BrowsingViewModel::class.java,
       )
       val libraryModel = ViewModelProvider(
         owner = activity,
-        factory = LibraryPresentationModel.factory(
-          libraryScreenService = { library },
-          titleDetailsScreenService = { details },
+        factory = LibraryViewModel.factory(
+          libraryService = { library },
+          detailsService = { details },
         ),
       ).get(
         "library-states-library-$modelId",
-        LibraryPresentationModel::class.java,
+        LibraryViewModel::class.java,
       )
       activity.setContent {
         HakusanApp(
-          catalogPresentationModel = { catalogModel },
-          libraryPresentationModel = { libraryModel },
+          browsingModel = { browsingModel },
+          libraryModel = { libraryModel },
           onExit = activity::finish,
         )
       }
@@ -425,7 +425,7 @@ class HakusanLibraryStatesAndroidTest {
   }
 
   private fun openCatalogDetails(
-    details: ControlledTitleDetailsScreenService,
+    details: ControlledDetailsService,
     screen: TitleDetailsScreen,
   ) {
     compose.onNodeWithContentDescription("Catalog").performClick()
@@ -454,7 +454,7 @@ class HakusanLibraryStatesAndroidTest {
     }
   }
 
-  private class ControlledLibraryScreenService : LibraryScreenService {
+  private class ControlledLibraryService : LibraryScreenService {
     private val screens = Channel<LibraryScreen>(Channel.UNLIMITED)
     val observations = AtomicInteger()
 
@@ -470,7 +470,7 @@ class HakusanLibraryStatesAndroidTest {
     }
   }
 
-  private class ControlledTitleDetailsScreenService :
+  private class ControlledDetailsService :
     TitleDetailsScreenService {
     private val detailsCompletions =
       Channel<DetailsScreenResult>(Channel.UNLIMITED)
@@ -523,7 +523,7 @@ class HakusanLibraryStatesAndroidTest {
     }
   }
 
-  private data object FixedBrowseScreenService : BrowseScreenService {
+  private data object FixedBrowseService : BrowseScreenService {
     override fun catalog(): CatalogScreen = CATALOG
 
     override suspend fun loadBrowse(

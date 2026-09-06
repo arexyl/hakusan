@@ -1,6 +1,6 @@
 package app.hakusan.sdk
 
-/** One locally available source entry in the minimal Catalog. */
+/** One locally available source entry in the Catalog. */
 data class CatalogSourceItem(
   val id: ScreenSourceId,
   val displayName: String,

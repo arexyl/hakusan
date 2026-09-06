@@ -5,9 +5,9 @@ import app.hakusan.titles.TitlesStore
 import app.hakusan.titles.openTitlesStore
 
 class HakusanApplication : Application() {
-  internal val applicationGraph: ApplicationGraph by lazy {
-    createApplicationGraph(
-      sourceRegistry = SourceRegistry.of(applicationSourceBackends()),
+  internal val graph: AppGraph by lazy {
+    createAppGraph(
+      sourceRegistry = SourceRegistry.of(sourceBackends()),
       titles = titlesStore.titles,
     )
   }

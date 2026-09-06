@@ -18,7 +18,7 @@ import app.hakusan.sdk.ScreenTitleId
 import app.hakusan.sdk.ScreenTitleKey
 import app.hakusan.sdk.TitleDetailsScreen
 import app.hakusan.sdk.TitleDetailsScreenService
-import app.hakusan.ui.CatalogPresentationModel
+import app.hakusan.ui.BrowsingViewModel
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasProgressBarRangeInfo
@@ -43,14 +43,14 @@ import org.junit.Test
 import org.junit.runner.RunWith
 
 @RunWith(AndroidJUnit4::class)
-class HakusanCatalogStatesAndroidTest {
+class CatalogStatesAndroidTest {
   @get:Rule
   val compose = createAndroidComposeRule<HakusanActivity>()
 
   @Test
-  fun rendersBrowseAndDetailsLoadingFailureRetryAndEmptyChapters() {
-    val browse = ControlledBrowseScreenService(catalog(SOURCE))
-    val details = ControlledTitleDetailsScreenService()
+  fun rendersBrowseAndDetailsStates() {
+    val browse = ControlledBrowseService(catalog(SOURCE))
+    val details = ControlledDetailsService()
     installModel(browse, details)
 
     compose.onNodeWithContentDescription("Catalog").performClick()
@@ -98,10 +98,10 @@ class HakusanCatalogStatesAndroidTest {
 
   @Test
   fun rendersEmptyCatalog() {
-    val emptyCatalog = ControlledBrowseScreenService(
+    val emptyCatalog = ControlledBrowseService(
       CatalogScreen.of(emptyList()),
     )
-    installModel(emptyCatalog, ControlledTitleDetailsScreenService())
+    installModel(emptyCatalog, ControlledDetailsService())
 
     compose.onNodeWithContentDescription("Catalog").performClick()
     compose.onNodeWithText("No sources available").assertExists()
@@ -110,8 +110,8 @@ class HakusanCatalogStatesAndroidTest {
 
   @Test
   fun rendersEmptyBrowse() {
-    val emptyBrowse = ControlledBrowseScreenService(catalog(SOURCE))
-    installModel(emptyBrowse, ControlledTitleDetailsScreenService())
+    val emptyBrowse = ControlledBrowseService(catalog(SOURCE))
+    installModel(emptyBrowse, ControlledDetailsService())
     compose.onNodeWithContentDescription("Catalog").performClick()
     compose.onNodeWithText(SOURCE.displayName).performClick()
     awaitRequests(emptyBrowse.requests, 1)
@@ -126,7 +126,7 @@ class HakusanCatalogStatesAndroidTest {
   }
 
   @Test
-  fun rendersAccessibleFallbacksForBlankDisplayMetadata() {
+  fun rendersFallbacksForBlankMetadata() {
     val blankSource = CatalogSourceItem(
       id = ScreenSourceId("blank.source"),
       displayName = " \t",
@@ -135,8 +135,8 @@ class HakusanCatalogStatesAndroidTest {
       key = ScreenTitleKey(blankSource.id, "blank-title"),
       displayName = "",
     )
-    val browse = ControlledBrowseScreenService(catalog(blankSource))
-    val details = ControlledTitleDetailsScreenService()
+    val browse = ControlledBrowseService(catalog(blankSource))
+    val details = ControlledDetailsService()
     installModel(browse, details)
 
     compose.onNodeWithContentDescription("Catalog").performClick()
@@ -163,9 +163,9 @@ class HakusanCatalogStatesAndroidTest {
   }
 
   @Test
-  fun currentRejectedDetailsOffersNeutralRetry() {
-    val browse = ControlledBrowseScreenService(catalog(SOURCE))
-    val details = ControlledTitleDetailsScreenService()
+  fun rejectedDetailsOffersRetry() {
+    val browse = ControlledBrowseService(catalog(SOURCE))
+    val details = ControlledDetailsService()
     installModel(browse, details)
 
     compose.onNodeWithContentDescription("Catalog").performClick()
@@ -188,9 +188,9 @@ class HakusanCatalogStatesAndroidTest {
   }
 
   @Test
-  fun poppedPendingBrowseCannotRestoreItsScreen() {
-    val browse = ControlledBrowseScreenService(catalog(SOURCE))
-    installModel(browse, ControlledTitleDetailsScreenService())
+  fun poppedBrowseCannotRestoreScreen() {
+    val browse = ControlledBrowseService(catalog(SOURCE))
+    installModel(browse, ControlledDetailsService())
 
     compose.onNodeWithContentDescription("Catalog").performClick()
     compose.onNodeWithText(SOURCE.displayName).performClick()
@@ -205,9 +205,9 @@ class HakusanCatalogStatesAndroidTest {
   }
 
   @Test
-  fun pendingBrowseContinuesAcrossDestinationSwitch() {
-    val browse = ControlledBrowseScreenService(catalog(SOURCE))
-    installModel(browse, ControlledTitleDetailsScreenService())
+  fun pendingBrowseSurvivesDestinationSwitch() {
+    val browse = ControlledBrowseService(catalog(SOURCE))
+    installModel(browse, ControlledDetailsService())
 
     compose.onNodeWithContentDescription("Catalog").performClick()
     compose.onNodeWithText(SOURCE.displayName).performClick()
@@ -222,9 +222,9 @@ class HakusanCatalogStatesAndroidTest {
   }
 
   @Test
-  fun recreationRetainsBrowseContentWithoutAnotherRequest() {
-    val browse = ControlledBrowseScreenService(catalog(SOURCE))
-    installModel(browse, ControlledTitleDetailsScreenService())
+  fun recreationKeepsBrowseWithoutReload() {
+    val browse = ControlledBrowseService(catalog(SOURCE))
+    installModel(browse, ControlledDetailsService())
 
     compose.onNodeWithContentDescription("Catalog").performClick()
     compose.onNodeWithText(SOURCE.displayName).performClick()
@@ -240,7 +240,7 @@ class HakusanCatalogStatesAndroidTest {
   }
 
   @Test
-  fun CatalogListViewportExtendsBehindTheFloatingIsland() {
+  fun lastSourceStaysReachableBehindIsland() {
     val sources = (1..20).map { index ->
       CatalogSourceItem(
         id = ScreenSourceId("test.source.$index"),
@@ -248,8 +248,8 @@ class HakusanCatalogStatesAndroidTest {
       )
     }
     installModel(
-      ControlledBrowseScreenService(catalog(*sources.toTypedArray())),
-      ControlledTitleDetailsScreenService(),
+      ControlledBrowseService(catalog(*sources.toTypedArray())),
+      ControlledDetailsService(),
     )
 
     compose.onNodeWithContentDescription("Catalog").performClick()
@@ -280,11 +280,11 @@ class HakusanCatalogStatesAndroidTest {
     compose.activityRule.scenario.onActivity { activity ->
       ViewModelProvider(
         owner = activity,
-        factory = CatalogPresentationModel.factory(
-          browseScreenService = { browse },
-          titleDetailsScreenService = { details },
+        factory = BrowsingViewModel.factory(
+          browseService = { browse },
+          detailsService = { details },
         ),
-      )[CatalogPresentationModel::class.java]
+      )[BrowsingViewModel::class.java]
     }
     compose.waitForIdle()
   }
@@ -304,7 +304,7 @@ class HakusanCatalogStatesAndroidTest {
     }
   }
 
-  private class ControlledBrowseScreenService(
+  private class ControlledBrowseService(
     private val catalog: CatalogScreen,
   ) : BrowseScreenService {
     private val completions =
@@ -334,7 +334,7 @@ class HakusanCatalogStatesAndroidTest {
     }
   }
 
-  private class ControlledTitleDetailsScreenService :
+  private class ControlledDetailsService :
     TitleDetailsScreenService {
     private val completions =
       Channel<DetailsScreenResult>(Channel.UNLIMITED)
