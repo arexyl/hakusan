@@ -1,6 +1,7 @@
 package app.hakusan.debug.source
 
 import app.hakusan.extensions.ChapterRefreshAcceptance
+import app.hakusan.extensions.ChapterRefreshFailure
 import app.hakusan.extensions.ChapterRefreshGate
 import app.hakusan.extensions.ChapterSnapshot
 import app.hakusan.extensions.SourceChapterContent
@@ -259,7 +260,7 @@ class DeterministicSourceTest {
   private suspend fun refreshFailure(
     source: DeterministicSource,
     title: SourceTitleKey,
-  ): SourceFailure {
+  ): ChapterRefreshFailure {
     val gate = ChapterRefreshGate(title)
     return gate.accept(source.refreshChapters(gate.issue()))
       .acceptedResult()
@@ -278,18 +279,19 @@ class DeterministicSourceTest {
   }
 }
 
-private fun <Value> SourceResult<Value>.successValue(): Value = when (this) {
+private fun <Value> SourceResult<Value, *>.successValue(): Value = when (this) {
   is SourceResult.Success -> value
   is SourceResult.Failure -> fail("Expected success, got $error")
 }
 
-private fun SourceResult<*>.failureValue(): SourceFailure = when (this) {
-  is SourceResult.Success -> fail("Expected failure, got $value")
-  is SourceResult.Failure -> error
-}
+private fun <Error : SourceFailure> SourceResult<*, Error>.failureValue():
+  Error = when (this) {
+    is SourceResult.Success -> fail("Expected failure, got $value")
+    is SourceResult.Failure -> error
+  }
 
 private fun ChapterRefreshAcceptance.acceptedResult(
-): SourceResult<ChapterSnapshot> =
+): SourceResult<ChapterSnapshot, ChapterRefreshFailure> =
   when (this) {
     is ChapterRefreshAcceptance.Accepted -> result
     ChapterRefreshAcceptance.RejectedNotCurrent -> {

@@ -194,16 +194,18 @@ enum class ActualPositionNotPersisted {
   TITLE_NOT_IN_LIBRARY,
 }
 
+/**
+ * Outcome of one actual-position mutation.
+ *
+ * The result intentionally carries no progress snapshot. Callers that need
+ * current state read it explicitly after the transaction.
+ */
 sealed interface ActualPositionResult {
-  @ConsistentCopyVisibility
-  data class Persisted internal constructor(
-    val progress: TitleReadingProgress,
-  ) : ActualPositionResult
+  data object Persisted : ActualPositionResult
 
   @ConsistentCopyVisibility
   data class NotPersisted internal constructor(
     val reason: ActualPositionNotPersisted,
-    val progress: TitleReadingProgress,
   ) : ActualPositionResult
 
   @ConsistentCopyVisibility
@@ -212,15 +214,18 @@ sealed interface ActualPositionResult {
   ) : ActualPositionResult
 }
 
+/**
+ * Outcome of one chapter-completion mutation.
+ *
+ * The result intentionally carries no progress snapshot. Callers that need
+ * current state read it explicitly after the transaction.
+ */
 sealed interface CompletionResult {
   /**
    * The completion was accepted. A reordered event still converges read
    * status and completed-position cleanup, but writes no successor position.
    */
-  @ConsistentCopyVisibility
-  data class Success internal constructor(
-    val progress: TitleReadingProgress,
-  ) : CompletionResult
+  data object Success : CompletionResult
 
   @ConsistentCopyVisibility
   data class Failure internal constructor(

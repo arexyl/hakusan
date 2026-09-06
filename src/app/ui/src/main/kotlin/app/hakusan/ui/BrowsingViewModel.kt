@@ -5,8 +5,8 @@ import app.hakusan.sdk.BrowseScreenFailure
 import app.hakusan.sdk.BrowseScreenResult
 import app.hakusan.sdk.BrowseScreenService
 import app.hakusan.sdk.CatalogScreen
-import app.hakusan.sdk.ContinueSelectionFailure
 import app.hakusan.sdk.ContinueSelectionResult
+import app.hakusan.sdk.ContinueSelectionService
 import app.hakusan.sdk.ContinueTarget
 import app.hakusan.sdk.ContinueUnavailableReason
 import app.hakusan.sdk.DetailsScreenFailure
@@ -36,6 +36,7 @@ internal data class DetailsOwnerKey(
 class BrowsingViewModel(
   private val browseService: BrowseScreenService,
   private val detailsService: TitleDetailsScreenService,
+  private val continueService: ContinueSelectionService,
 ) : ViewModel() {
   internal val catalog: CatalogScreen = browseService.catalog()
 
@@ -203,7 +204,7 @@ class BrowsingViewModel(
     job = viewModelScope.launch(start = CoroutineStart.LAZY) {
       try {
         when (
-          val result = detailsService.selectContinue(titleId)
+          val result = continueService.selectContinue(titleId)
         ) {
           is ContinueSelectionResult.Selected -> owner.publishSelected(
             expectedRevision = revision,
@@ -216,10 +217,8 @@ class BrowsingViewModel(
               reason = result.reason,
             )
 
-          is ContinueSelectionResult.Failure -> when (result.error) {
-            ContinueSelectionFailure.TitleNotFound ->
-              owner.publishTitleNotFound(revision)
-          }
+          ContinueSelectionResult.TitleNotFound ->
+            owner.publishTitleNotFound(revision)
         }
       } finally {
         continueJobs.remove(key, job)
@@ -243,11 +242,13 @@ class BrowsingViewModel(
     fun factory(
       browseService: () -> BrowseScreenService,
       detailsService: () -> TitleDetailsScreenService,
+      continueService: () -> ContinueSelectionService,
     ): ViewModelProvider.Factory = viewModelFactory {
       initializer {
         BrowsingViewModel(
           browseService = browseService(),
           detailsService = detailsService(),
+          continueService = continueService(),
         )
       }
     }

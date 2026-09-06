@@ -6,6 +6,7 @@ import app.hakusan.sdk.BrowseScreenService
 import app.hakusan.sdk.CatalogScreen
 import app.hakusan.sdk.CatalogSourceItem
 import app.hakusan.sdk.ContinueSelectionResult
+import app.hakusan.sdk.ContinueSelectionService
 import app.hakusan.sdk.DetailsScreenResult
 import app.hakusan.sdk.LibraryScreen
 import app.hakusan.sdk.LibraryScreenService
@@ -56,16 +57,22 @@ private fun PreviewShell(destination: PrimaryDestination) {
 private val previewBrowsingModel = BrowsingViewModel(
   browseService = PreviewBrowseService,
   detailsService = PreviewDetailsService,
+  continueService = PreviewContinueService,
 )
 
 private val previewLibraryModel = LibraryViewModel(
   libraryService = PreviewLibraryService,
-  detailsService = PreviewDetailsService,
 )
 
 private object PreviewLibraryService : LibraryScreenService {
   override fun observeLibrary(): Flow<LibraryScreen> = flowOf(
     LibraryScreen.of(emptyMap(), emptyList()),
+  )
+
+  override suspend fun addToLibrary(
+    titleId: ScreenTitleId,
+  ): AddToLibraryScreenResult = error(
+    "The root preview does not modify Library membership.",
   )
 }
 
@@ -88,13 +95,9 @@ private object PreviewDetailsService : TitleDetailsScreenService {
   override suspend fun loadDetails(
     titleKey: ScreenTitleKey,
   ): DetailsScreenResult = error("The root preview does not load a title.")
+}
 
-  override suspend fun addToLibrary(
-    titleId: ScreenTitleId,
-  ): AddToLibraryScreenResult = error(
-    "The root preview does not modify Library membership.",
-  )
-
+private object PreviewContinueService : ContinueSelectionService {
   override suspend fun selectContinue(
     titleId: ScreenTitleId,
   ): ContinueSelectionResult = error(

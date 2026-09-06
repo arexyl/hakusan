@@ -95,15 +95,15 @@ class LibraryIntegrationAndroidTest {
           detailsService = {
             graph.detailsService
           },
+          continueService = {
+            graph.continueService
+          },
         ),
       )[BROWSING_MODEL_KEY, BrowsingViewModel::class.java]
       val libraryModel = ViewModelProvider(
         owner = activity,
         factory = LibraryViewModel.factory(
           libraryService = { graph.libraryService },
-          detailsService = {
-            graph.detailsService
-          },
         ),
       )[LIBRARY_MODEL_KEY, LibraryViewModel::class.java]
 

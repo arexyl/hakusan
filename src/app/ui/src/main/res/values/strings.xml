@@ -28,7 +28,6 @@
   <string name="details_failure_details_unavailable">The source could not provide this title’s details.</string>
   <string name="details_failure_invalid_chapters">The source returned a chapter list Hakusan could not use.</string>
   <string name="details_failure_invalid_title">The source returned title details Hakusan could not use.</string>
-  <string name="details_failure_local_title_not_found">Hakusan could not find the reconciled title.</string>
   <string name="details_failure_source_not_found">This title’s source is no longer available.</string>
   <string name="details_failure_title">Unable to load title</string>
   <string name="details_loading">Loading title</string>

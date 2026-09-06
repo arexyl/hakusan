@@ -26,9 +26,6 @@ import app.hakusan.titles.TitleReadingProgress
 import androidx.room3.withWriteTransaction
 import java.util.ArrayList
 import java.util.UUID
-import kotlinx.coroutines.flow.Flow
-import kotlinx.coroutines.flow.distinctUntilChanged
-import kotlinx.coroutines.flow.map
 
 internal class RoomReading(
   private val database: TitlesDatabase,
@@ -102,15 +99,10 @@ internal class RoomReading(
     )
   }
 
-  fun observeReadingProgress(
+  suspend fun readReadingProgress(
     titleId: TitleId,
-  ): Flow<TitleReadingProgress?> =
-    readingDao.observeReadingProgressRows(titleId.value)
-      .map(::toReadingProgress)
-      .distinctUntilChanged { previous, current ->
-        previous?.libraryResumePosition == current?.libraryResumePosition &&
-          previous == current
-      }
+  ): TitleReadingProgress? =
+    toReadingProgress(readingDao.loadReadingProgressRows(titleId.value))
 
   suspend fun recordActualPosition(
     update: ActualPositionUpdate,
@@ -132,7 +124,6 @@ internal class RoomReading(
     if (update.recency == ProgressEventRecency.REORDERED) {
       return@withWriteTransaction ActualPositionResult.NotPersisted(
         reason = ActualPositionNotPersisted.REORDERED_EVENT,
-        progress = loadReadingProgress(title.id),
       )
     }
     val facts = readingDao.loadLibraryChapterFacts(
@@ -142,13 +133,11 @@ internal class RoomReading(
     if (facts.isChapterRead) {
       return@withWriteTransaction ActualPositionResult.NotPersisted(
         reason = ActualPositionNotPersisted.CHAPTER_ALREADY_READ,
-        progress = loadReadingProgress(title.id),
       )
     }
     if (!facts.isLibraryMember) {
       return@withWriteTransaction ActualPositionResult.NotPersisted(
         reason = ActualPositionNotPersisted.TITLE_NOT_IN_LIBRARY,
-        progress = loadReadingProgress(title.id),
       )
     }
 
@@ -157,7 +146,7 @@ internal class RoomReading(
     if (currentPosition != storedPosition) {
       readingDao.upsertLibraryResumePosition(storedPosition)
     }
-    ActualPositionResult.Persisted(loadReadingProgress(title.id))
+    ActualPositionResult.Persisted
   }
 
   suspend fun completeChapterBoundary(
@@ -219,7 +208,7 @@ internal class RoomReading(
       )
     }
     if (completion.recency == ProgressEventRecency.REORDERED) {
-      return@withWriteTransaction completionSuccess(title.id)
+      return@withWriteTransaction CompletionResult.Success
     }
 
     val startedFacts = readingDao.loadLibraryChapterFacts(
@@ -233,7 +222,7 @@ internal class RoomReading(
         completion.startedPosition.toEntity(title, started),
       )
     }
-    completionSuccess(title.id)
+    CompletionResult.Success
   }
 
   suspend fun completeFinalChapter(
@@ -271,7 +260,7 @@ internal class RoomReading(
       titleStorageId = title.storageId,
       chapterStorageId = chapter.storageId,
     )
-    completionSuccess(title.id)
+    CompletionResult.Success
   }
 
   private fun List<ChapterEntity>.isAliasPrefixOf(
@@ -387,12 +376,6 @@ internal class RoomReading(
     )
   }
 
-  private suspend fun completionSuccess(
-    titleId: UUID,
-  ): CompletionResult.Success = CompletionResult.Success(
-    loadReadingProgress(titleId),
-  )
-
   private fun completionFailure(
     error: ReadingProgressFailure,
   ): CompletionResult.Failure = CompletionResult.Failure(error)
@@ -400,14 +383,6 @@ internal class RoomReading(
   private fun actualPositionFailure(
     error: ReadingProgressFailure,
   ): ActualPositionResult.Failure = ActualPositionResult.Failure(error)
-
-  private suspend fun loadReadingProgress(
-    titleId: UUID,
-  ): TitleReadingProgress = checkNotNull(
-    toReadingProgress(readingDao.loadReadingProgressRows(titleId)),
-  ) {
-    "Known title disappeared while reading its progress."
-  }
 
   private fun toReadingProgress(
     rows: List<ReadingProgressRow>,

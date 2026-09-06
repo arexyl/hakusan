@@ -572,7 +572,4 @@ private fun DetailsScreenFailure.message(): String = when (this) {
 
   DetailsScreenFailure.InvalidChapterSnapshot ->
     stringResource(R.string.details_failure_invalid_chapters)
-
-  DetailsScreenFailure.LocalTitleNotFound ->
-    stringResource(R.string.details_failure_local_title_not_found)
 }

@@ -5,11 +5,14 @@ import app.hakusan.extensions.ChapterRefreshRequest
 import app.hakusan.extensions.ChapterSequenceStatus
 import app.hakusan.extensions.SourceBackend
 import app.hakusan.extensions.SourceBrowseResult
+import app.hakusan.extensions.SourceBrowseFailure
 import app.hakusan.extensions.SourceChapter
 import app.hakusan.extensions.SourceChapterContent
 import app.hakusan.extensions.SourceChapterKey
+import app.hakusan.extensions.SourceContentFailure
 import app.hakusan.extensions.SourceContentUnit
 import app.hakusan.extensions.SourceContentUnitKind
+import app.hakusan.extensions.SourceDetailsFailure
 import app.hakusan.extensions.SourceFailure
 import app.hakusan.extensions.SourceIdentity
 import app.hakusan.extensions.SourceResult
@@ -95,7 +98,8 @@ internal class DeterministicSource(
     ),
   )
 
-  override suspend fun browse(): SourceResult<SourceBrowseResult> {
+  override suspend fun browse():
+    SourceResult<SourceBrowseResult, SourceBrowseFailure> {
     if (unavailableOperation == UnavailableOperation.BROWSE) {
       return unavailable()
     }
@@ -104,7 +108,7 @@ internal class DeterministicSource(
 
   override suspend fun details(
     title: SourceTitleKey,
-  ): SourceResult<SourceTitleDetails> {
+  ): SourceResult<SourceTitleDetails, SourceDetailsFailure> {
     requireOwned(title)
     if (title != this.title.key) {
       return unavailable()
@@ -137,7 +141,7 @@ internal class DeterministicSource(
 
   override suspend fun content(
     chapter: SourceChapterKey,
-  ): SourceResult<SourceChapterContent> {
+  ): SourceResult<SourceChapterContent, SourceContentFailure> {
     requireOwned(chapter)
     if (chapter.title != title.key || chapter !in contentByChapter) {
       return unavailable()
@@ -167,6 +171,6 @@ internal class DeterministicSource(
     }
   }
 
-  private fun unavailable(): SourceResult.Failure =
+  private fun unavailable(): SourceResult.Failure<SourceFailure.Unavailable> =
     SourceResult.Failure(SourceFailure.Unavailable)
 }

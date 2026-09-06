@@ -2,7 +2,8 @@ package app.hakusan.titles.storage
 
 import android.database.sqlite.SQLiteException
 import app.hakusan.titles.CategoryId
-import app.hakusan.titles.LibraryAddFailure
+import app.hakusan.titles.ExplicitLibraryAddFailure
+import app.hakusan.titles.ExplicitLibraryAddResult
 import app.hakusan.titles.LibraryAddResult
 import app.hakusan.titles.LibraryCategorySelection
 import app.hakusan.titles.ReconcileSourceTitle
@@ -181,7 +182,7 @@ class TitlesDatabaseAndroidTest {
       )
       val observedAdd = async(start = CoroutineStart.UNDISPATCHED) {
         withTimeout(TEST_TIMEOUT_MILLIS) {
-          titles.observeLibraryShelves().first {
+          titles.observeLibrary().first {
             id in it.titlesById
           }
         }
@@ -205,18 +206,21 @@ class TitlesDatabaseAndroidTest {
 
       val repeatedResult = titles.addToLibrary(
         titleId = id,
-        selection = LibraryCategorySelection.Explicit.of(
+        selection = LibraryCategorySelection.of(
           listOf(CategoryId(999)),
         ),
       )
 
-      assertEquals(firstResult, repeatedResult)
+      assertEquals(
+        firstSuccess.membership,
+        (repeatedResult as ExplicitLibraryAddResult.Success).membership,
+      )
       assertEquals(1, queryLong("SELECT COUNT(*) FROM categories"))
       assertEquals(1, queryLong("SELECT COUNT(*) FROM title_categories"))
 
       val observedUpdate = async(start = CoroutineStart.UNDISPATCHED) {
         withTimeout(TEST_TIMEOUT_MILLIS) {
-          titles.observeLibraryShelves().first {
+          titles.observeLibrary().first {
             it.titlesById[id]?.displayName == "Updated"
           }
         }
@@ -260,7 +264,7 @@ class TitlesDatabaseAndroidTest {
       val secondCategoryId = CategoryId(
         dao.insertCategory(CategoryEntity(name = "Want to read")),
       )
-      val emptyState = titles.observeLibraryShelves().first()
+      val emptyState = titles.observeLibrary().first()
       assertTrue(emptyState.titlesById.isEmpty())
       assertEquals(
         setOf(firstCategoryId, secondCategoryId),
@@ -281,16 +285,16 @@ class TitlesDatabaseAndroidTest {
 
       val missing = titles.addToLibrary(
         titleId = firstId,
-        selection = LibraryCategorySelection.Explicit.of(
+        selection = LibraryCategorySelection.of(
           listOf(firstCategoryId, CategoryId(999)),
         ),
-      ) as LibraryAddResult.Failure
+      ) as ExplicitLibraryAddResult.Failure
       val missingError = missing.error
-        as LibraryAddFailure.CategoriesNotFound
+        as ExplicitLibraryAddFailure.CategoriesNotFound
       assertEquals(setOf(CategoryId(999)), missingError.categoryIds)
       assertEquals(0, queryLong("SELECT COUNT(*) FROM title_categories"))
 
-      val selection = LibraryCategorySelection.Explicit.of(
+      val selection = LibraryCategorySelection.of(
         listOf(firstCategoryId, secondCategoryId),
       )
       titles.addToLibrary(firstId, selection)
@@ -299,7 +303,7 @@ class TitlesDatabaseAndroidTest {
       )
       titles.addToLibrary(secondId, selection)
 
-      val state = titles.observeLibraryShelves().first()
+      val state = titles.observeLibrary().first()
       assertEquals(2, state.titlesById.size)
       assertEquals(2, state.shelves.size)
       assertTrue(state.shelves.all { it.titleCount == 2 })
@@ -329,7 +333,7 @@ class TitlesDatabaseAndroidTest {
       assertTrue(results.all { it is LibraryAddResult.Success })
       assertEquals(listOf("Default"), dao.loadCategories().map { it.name })
       assertEquals(2, queryLong("SELECT COUNT(*) FROM title_categories"))
-      assertEquals(2, titles.observeLibraryShelves().first()
+      assertEquals(2, titles.observeLibrary().first()
         .shelves.single().titleCount)
     }
   }
@@ -365,7 +369,7 @@ class TitlesDatabaseAndroidTest {
       assertEquals(1, queryLong("SELECT COUNT(*) FROM titles"))
       assertEquals(0, queryLong("SELECT COUNT(*) FROM categories"))
       assertEquals(0, queryLong("SELECT COUNT(*) FROM title_categories"))
-      val state = titles.observeLibraryShelves().first()
+      val state = titles.observeLibrary().first()
       assertTrue(state.titlesById.isEmpty())
       assertTrue(state.shelves.isEmpty())
     }
@@ -373,11 +377,17 @@ class TitlesDatabaseAndroidTest {
 
   @Test
   fun unknownTitleDoesNotInitializeTheLibrary(): Unit = runBlocking {
-    val result = titles.addToLibrary(TitleId(FIRST_ID))
+    val titleId = TitleId(FIRST_ID)
+    val automatic = titles.addToLibrary(titleId)
+    val explicit = titles.addToLibrary(
+      titleId = titleId,
+      selection = LibraryCategorySelection.of(listOf(CategoryId(1))),
+    )
 
+    assertEquals(LibraryAddResult.TitleNotFound, automatic)
     assertEquals(
-      LibraryAddFailure.TitleNotFound,
-      (result as LibraryAddResult.Failure).error,
+      ExplicitLibraryAddFailure.TitleNotFound,
+      (explicit as ExplicitLibraryAddResult.Failure).error,
     )
     assertEquals(0, queryLong("SELECT COUNT(*) FROM categories"))
   }

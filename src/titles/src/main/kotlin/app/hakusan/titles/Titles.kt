@@ -6,9 +6,9 @@ import kotlinx.coroutines.flow.Flow
  * Domain operations and observations owned by the titles subsystem.
  *
  * Calls may suspend, but this contract creates no task and selects no caller
- * dispatcher or lifetime. Expected Library Add rejections use
- * [LibraryAddResult]. Cancellation and unexpected persistence failures
- * propagate to the caller or collector.
+ * dispatcher or lifetime. Expected Library Add rejections use typed result
+ * values. Cancellation and unexpected persistence failures propagate to the
+ * caller or collector.
  */
 interface Titles {
   /**
@@ -35,26 +35,27 @@ interface Titles {
    */
   suspend fun addToLibrary(
     titleId: TitleId,
-    selection: LibraryCategorySelection =
-      LibraryCategorySelection.Automatic,
   ): LibraryAddResult
 
   /**
-   * Observes a current snapshot followed by committed relevant changes.
+   * Adds a known title with an explicit nonempty initial category selection.
+   */
+  suspend fun addToLibrary(
+    titleId: TitleId,
+    selection: LibraryCategorySelection,
+  ): ExplicitLibraryAddResult
+
+  /**
+   * Observes a current Library snapshot followed by committed relevant changes.
    * Collection owns the observation lifetime; canceling it stops that
    * collection without changing stored state.
    */
-  fun observeLibraryShelves(): Flow<LibraryShelfState>
+  fun observeLibrary(): Flow<LibraryState>
 
-  /**
-   * Observes shelves and compact reading progress as one coherent snapshot.
-   */
-  fun observeLibrarySummary(): Flow<LibrarySummaryState>
-
-  /** Observes current canonical chapters, read status, and Library resume. */
-  fun observeReadingProgress(
+  /** Reads current canonical chapters, read status, and Library resume once. */
+  suspend fun readReadingProgress(
     titleId: TitleId,
-  ): Flow<TitleReadingProgress?>
+  ): TitleReadingProgress?
 
   /**
    * Persists one current actual position only for a Library title. Reordered

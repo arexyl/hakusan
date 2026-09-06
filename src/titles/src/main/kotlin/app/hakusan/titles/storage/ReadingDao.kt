@@ -7,7 +7,6 @@ import androidx.room3.OnConflictStrategy
 import androidx.room3.Query
 import androidx.room3.Upsert
 import java.util.UUID
-import kotlinx.coroutines.flow.Flow
 
 @Dao
 internal abstract class ReadingDao {
@@ -170,11 +169,6 @@ internal abstract class ReadingDao {
   abstract suspend fun loadReadingProgressRows(
     titleId: UUID,
   ): List<ReadingProgressRow>
-
-  @Query(READING_PROGRESS_QUERY)
-  abstract fun observeReadingProgressRows(
-    titleId: UUID,
-  ): Flow<List<ReadingProgressRow>>
 }
 
 internal data class LibraryChapterFacts(

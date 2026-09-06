@@ -31,7 +31,8 @@ internal class BrowseScreenAdapter(
       is SourceResult.Failure -> BrowseScreenResult.Failure(
         when (result.error) {
           SourceFailure.Unavailable -> BrowseScreenFailure.SourceUnavailable
-          else -> BrowseScreenFailure.InvalidObservation
+          is SourceFailure.InvalidBrowseResult ->
+            BrowseScreenFailure.InvalidObservation
         },
       )
 

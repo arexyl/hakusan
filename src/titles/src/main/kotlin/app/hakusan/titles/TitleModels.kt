@@ -45,11 +45,12 @@ data class ReconcileSourceTitle(
   val description: String?,
 )
 
-/** The latest stored metadata for one title currently in the Library. */
+/** Latest stored metadata and compact progress for one Library title. */
 @ConsistentCopyVisibility
 data class LibraryTitle internal constructor(
   val id: TitleId,
   val alias: SourceTitleAlias,
   val displayName: String,
   val description: String?,
+  val progress: LibraryTitleProgressSummary,
 )

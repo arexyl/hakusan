@@ -9,80 +9,6 @@ data class DetailsChapterItem(
   val isRead: Boolean,
 )
 
-/** Provider granularity retained by a screen-facing reading position. */
-enum class ScreenContentUnitKind {
-  PAGE,
-  PROVIDER_SEGMENT,
-}
-
-/** One actual, zero-based position retained for Continue. */
-data class ScreenReadingPosition(
-  val titleId: ScreenTitleId,
-  val chapterId: ScreenChapterId,
-  val unitKind: ScreenContentUnitKind,
-  val unitIndex: Int,
-) {
-  init {
-    require(unitIndex >= 0) {
-      "Screen content unit index must not be negative."
-    }
-  }
-}
-
-/** Where reading begins within the selected chapter. */
-sealed interface ScreenReadingStart {
-  data object Beginning : ScreenReadingStart
-
-  data class Resume(
-    val position: ScreenReadingPosition,
-  ) : ScreenReadingStart
-}
-
-/** A source and application-qualified target selected for Continue. */
-data class ContinueTarget(
-  val titleId: ScreenTitleId,
-  val chapterId: ScreenChapterId,
-  val chapterKey: ScreenChapterKey,
-  val start: ScreenReadingStart,
-) {
-  init {
-    require(
-      start !is ScreenReadingStart.Resume ||
-        (
-          start.position.titleId == titleId &&
-            start.position.chapterId == chapterId
-        ),
-    ) {
-      "A resumed position must identify the selected chapter."
-    }
-  }
-}
-
-/** Why Continue has no current target. */
-sealed interface ContinueUnavailableReason {
-  /** The accepted canonical sequence contains no chapter. */
-  data object NoAvailableChapter : ContinueUnavailableReason
-
-  /**
-   * The retained position targets a chapter omitted by the current sequence.
-   */
-  data class SavedTargetUnavailable(
-    val chapterKey: ScreenChapterKey,
-    val position: ScreenReadingPosition,
-  ) : ContinueUnavailableReason
-}
-
-/** Current details-screen availability of the labeled Continue action. */
-sealed interface ContinueState {
-  data class Ready(
-    val target: ContinueTarget,
-  ) : ContinueState
-
-  data class Unavailable(
-    val reason: ContinueUnavailableReason,
-  ) : ContinueState
-}
-
 /** One coherent title-details and canonical-reading snapshot. */
 @ConsistentCopyVisibility
 data class TitleDetailsScreen private constructor(
@@ -167,61 +93,13 @@ sealed interface DetailsScreenFailure {
   data object InvalidTitleObservation : DetailsScreenFailure
 
   data object InvalidChapterSnapshot : DetailsScreenFailure
-
-  /** Reconciliation no longer found the title established by this load. */
-  data object LocalTitleNotFound : DetailsScreenFailure
 }
 
-/** Result of a screen request to add a title to the Library. */
-sealed interface AddToLibraryScreenResult {
-  /** Includes both a new membership and an idempotent existing membership. */
-  data object Success : AddToLibraryScreenResult
-
-  /** Multiple categories exist and require an explicit selection. */
-  data object CategorySelectionRequired : AddToLibraryScreenResult
-
-  data class Failure(
-    val error: AddToLibraryScreenFailure,
-  ) : AddToLibraryScreenResult
-}
-
-sealed interface AddToLibraryScreenFailure {
-  data object TitleNotFound : AddToLibraryScreenFailure
-}
-
-/** Current selection produced when the user invokes Continue. */
-sealed interface ContinueSelectionResult {
-  data class Selected(
-    val target: ContinueTarget,
-  ) : ContinueSelectionResult
-
-  data class Unavailable(
-    val reason: ContinueUnavailableReason,
-  ) : ContinueSelectionResult
-
-  data class Failure(
-    val error: ContinueSelectionFailure,
-  ) : ContinueSelectionResult
-}
-
-sealed interface ContinueSelectionFailure {
-  data object TitleNotFound : ContinueSelectionFailure
-}
-
-/** Screen-facing title operations. */
+/** Screen-facing loading of one title and its current chapter state. */
 interface TitleDetailsScreenService {
   suspend fun loadDetails(
     titleKey: ScreenTitleKey,
   ): DetailsScreenResult
-
-  suspend fun addToLibrary(
-    titleId: ScreenTitleId,
-  ): AddToLibraryScreenResult
-
-  /** Resolves current progress again rather than trusting an older screen. */
-  suspend fun selectContinue(
-    titleId: ScreenTitleId,
-  ): ContinueSelectionResult
 }
 
 private fun validateContinue(

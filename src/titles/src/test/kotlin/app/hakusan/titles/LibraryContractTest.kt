@@ -44,13 +44,13 @@ class LibraryContractTest {
   @Test
   fun `explicit category selection is nonempty distinct and owned`() {
     val input = mutableListOf(CategoryId(1), CategoryId(1), CategoryId(2))
-    val selection = LibraryCategorySelection.Explicit.of(input)
+    val selection = LibraryCategorySelection.of(input)
 
     input.clear()
 
     assertEquals(setOf(CategoryId(1), CategoryId(2)), selection.categoryIds)
     assertThrows(IllegalArgumentException::class.java) {
-      LibraryCategorySelection.Explicit.of(emptyList())
+      LibraryCategorySelection.of(emptyList())
     }
   }
 
@@ -61,61 +61,69 @@ class LibraryContractTest {
     val duplicateName = category(3, "Want to read")
 
     assertSame(
-      InitialCategoryResolution.CreateDefault,
-      LibraryAddPolicy.resolve(
-        categories = emptyList(),
-        selection = LibraryCategorySelection.Automatic,
-      ),
+      AutomaticCategoryResolution.CreateDefault,
+      LibraryAddPolicy.resolveAutomatic(emptyList()),
     )
     assertEquals(
-      InitialCategoryResolution.Assign(setOf(renamed.id)),
-      LibraryAddPolicy.resolve(
-        categories = listOf(renamed),
-        selection = LibraryCategorySelection.Automatic,
-      ),
+      CategoryAssignment(setOf(renamed.id)),
+      LibraryAddPolicy.resolveAutomatic(listOf(renamed)),
     )
     assertEquals(
-      InitialCategoryResolution.SelectionRequired(
+      AutomaticCategoryResolution.SelectionRequired(
         setOf(first, renamed, duplicateName),
       ),
-      LibraryAddPolicy.resolve(
-        categories = listOf(first, renamed, duplicateName),
-        selection = LibraryCategorySelection.Automatic,
-      ),
+      LibraryAddPolicy.resolveAutomatic(listOf(first, renamed, duplicateName)),
     )
     assertEquals(
-      InitialCategoryResolution.Assign(setOf(renamed.id, duplicateName.id)),
-      LibraryAddPolicy.resolve(
+      CategoryAssignment(setOf(renamed.id, duplicateName.id)),
+      LibraryAddPolicy.resolveExplicit(
         categories = listOf(first, renamed, duplicateName),
-        selection = LibraryCategorySelection.Explicit.of(
+        selection = LibraryCategorySelection.of(
           listOf(renamed.id, duplicateName.id),
         ),
       ),
     )
     assertEquals(
-      InitialCategoryResolution.CategoriesNotFound(setOf(CategoryId(4))),
-      LibraryAddPolicy.resolve(
+      ExplicitCategoryResolution.CategoriesNotFound(setOf(CategoryId(4))),
+      LibraryAddPolicy.resolveExplicit(
         categories = listOf(first, renamed),
-        selection = LibraryCategorySelection.Explicit.of(
+        selection = LibraryCategorySelection.of(
           listOf(first.id, CategoryId(4)),
         ),
       ),
     )
     assertThrows(IllegalStateException::class.java) {
-      LibraryAddPolicy.resolve(
-        categories = listOf(first, category(1, "Renamed")),
-        selection = LibraryCategorySelection.Automatic,
+      LibraryAddPolicy.resolveAutomatic(
+        listOf(first, category(1, "Renamed")),
       )
     }
   }
 
   @Test
-  fun `shelf state normalizes shared title state and derives counts`() {
+  fun `explicit Library Add rejects duplicate category identities`() {
+    val storedCategory = category(1, "Default")
+
+    assertThrows(IllegalStateException::class.java) {
+      LibraryAddPolicy.resolveExplicit(
+        categories = listOf(storedCategory, category(1, "Renamed")),
+        selection = LibraryCategorySelection.of(listOf(storedCategory.id)),
+      )
+    }
+  }
+
+  @Test
+  fun `Library state normalizes shared title state and derives counts`() {
+    val progress = LibraryTitleProgressSummary(
+      chapterCount = 3,
+      readChapterCount = 1,
+      resumeAvailability = LibraryResumeAvailability.AVAILABLE,
+    )
     val title = LibraryTitle(
       id = TitleId(TITLE_ID),
       alias = SourceTitleAlias("source", "title"),
       displayName = "Title",
       description = "Description",
+      progress = progress,
     )
     val firstShelfTitleIds = mutableListOf(title.id)
     val firstShelf = LibraryShelf.create(
@@ -128,23 +136,24 @@ class LibraryContractTest {
     )
     val mutableTitles = linkedMapOf(title.id to title)
     val mutableShelves = mutableListOf(firstShelf, secondShelf)
-    val state = LibraryShelfState.create(mutableTitles, mutableShelves)
+    val state = LibraryState.create(mutableTitles, mutableShelves)
 
     mutableTitles.clear()
     mutableShelves.clear()
     firstShelfTitleIds.clear()
 
     assertEquals(mapOf(title.id to title), state.titlesById)
+    assertEquals(progress, state.titlesById.getValue(title.id).progress)
     assertEquals(setOf(firstShelf, secondShelf), state.shelves)
     assertEquals(1, state.shelves.single { it == firstShelf }.titleCount)
     assertThrows(IllegalArgumentException::class.java) {
-      LibraryShelfState.create(
+      LibraryState.create(
         titlesById = emptyMap(),
         shelves = listOf(firstShelf),
       )
     }
     assertThrows(IllegalArgumentException::class.java) {
-      LibraryShelfState.create(
+      LibraryState.create(
         titlesById = mapOf(TitleId(OTHER_TITLE_ID) to title),
         shelves = listOf(
           LibraryShelf.create(
@@ -155,7 +164,7 @@ class LibraryContractTest {
       )
     }
     assertThrows(IllegalArgumentException::class.java) {
-      LibraryShelfState.create(
+      LibraryState.create(
         titlesById = mapOf(title.id to title),
         shelves = listOf(
           firstShelf,
@@ -169,36 +178,13 @@ class LibraryContractTest {
   }
 
   @Test
-  fun `Library summary owns progress and requires exact title coverage`() {
-    val title = LibraryTitle(
-      id = TitleId(TITLE_ID),
-      alias = SourceTitleAlias("source", "title"),
-      displayName = "Title",
-      description = null,
-    )
-    val shelfState = LibraryShelfState.create(
-      titlesById = mapOf(title.id to title),
-      shelves = listOf(
-        LibraryShelf.create(
-          category = category(1, "Default"),
-          titleIds = listOf(title.id),
-        ),
-      ),
-    )
+  fun `Library progress validates counts and resume availability`() {
     val progress = LibraryTitleProgressSummary(
       chapterCount = 3,
       readChapterCount = 1,
       resumeAvailability = LibraryResumeAvailability.AVAILABLE,
     )
-    val mutableProgress = linkedMapOf(title.id to progress)
-    val summary = LibrarySummaryState.create(shelfState, mutableProgress)
-
-    mutableProgress.clear()
-
-    assertEquals(mapOf(title.id to progress), summary.progressByTitleId)
-    assertThrows(IllegalArgumentException::class.java) {
-      LibrarySummaryState.create(shelfState, emptyMap())
-    }
+    assertEquals(1, progress.readChapterCount)
     assertThrows(IllegalArgumentException::class.java) {
       LibraryTitleProgressSummary(
         chapterCount = 1,

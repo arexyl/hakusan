@@ -405,17 +405,18 @@ private fun <Value> race(
 
 private fun invalidSnapshot(
   reason: ChapterSnapshotRejection,
-): SourceResult.Failure = SourceResult.Failure(
-  SourceFailure.InvalidChapterSnapshot(reason),
-)
+): SourceResult.Failure<SourceFailure.InvalidChapterSnapshot> =
+  SourceResult.Failure(
+    SourceFailure.InvalidChapterSnapshot(reason),
+  )
 
-private fun <Value> SourceResult<Value>.successValue(): Value = when (this) {
+private fun <Value> SourceResult<Value, *>.successValue(): Value = when (this) {
   is SourceResult.Success -> value
   is SourceResult.Failure -> fail("Expected success, got $error")
 }
 
 private fun ChapterRefreshAcceptance.acceptedResult():
-  SourceResult<ChapterSnapshot> = when (this) {
+  SourceResult<ChapterSnapshot, ChapterRefreshFailure> = when (this) {
     is ChapterRefreshAcceptance.Accepted -> result
     ChapterRefreshAcceptance.RejectedNotCurrent -> {
       fail("Expected current completion")

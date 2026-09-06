@@ -493,19 +493,19 @@ class ReadingProgressDatabaseAndroidTest {
 
       reconcile(alias, "first" to "First")
       val omittedUpdate = second.copy(unitIndex = 6)
-      val result = record(omittedUpdate)
-        as ActualPositionResult.Persisted
+      assertTrue(record(omittedUpdate) is ActualPositionResult.Persisted)
+      val result = progress(titleId)
 
       assertEquals(
         omittedUpdate,
-        result.progress.libraryResumePosition?.position,
+        result.libraryResumePosition?.position,
       )
       assertFalse(
-        result.progress.libraryResumePosition?.isCurrentlyAvailable ?: true,
+        result.libraryResumePosition?.isCurrentlyAvailable ?: true,
       )
       assertEquals(
         listOf(chapters.chapters[0].id),
-        result.progress.canonicalChapters.map { it.chapter.id },
+        result.canonicalChapters.map { it.chapter.id },
       )
     }
 
@@ -523,7 +523,7 @@ class ReadingProgressDatabaseAndroidTest {
         as ActualPositionResult.NotPersisted
 
       assertEquals(ActualPositionNotPersisted.REORDERED_EVENT, result.reason)
-      assertEquals(newer, result.progress.libraryResumePosition?.position)
+      assertEquals(newer, progress(titleId).libraryResumePosition?.position)
     }
 
   @Test
@@ -693,25 +693,26 @@ class ReadingProgressDatabaseAndroidTest {
       )
       record(finalPosition)
 
-      val result = titles.completeChapterBoundary(
+      assertTrue(titles.completeChapterBoundary(
         boundary(
           completed = first,
           started = position(titleId, second, unitIndex = 0),
           recency = ProgressEventRecency.REORDERED,
         ),
-      ) as CompletionResult.Success
+      ) is CompletionResult.Success)
+      val result = progress(titleId)
 
       assertEquals(
         finalPosition,
-        result.progress.libraryResumePosition?.position,
+        result.libraryResumePosition?.position,
       )
       assertTrue(
-        result.progress.canonicalChapters
+        result.canonicalChapters
           .single { it.chapter.id == first.id }
           .isRead,
       )
       assertFalse(
-        result.progress.canonicalChapters
+        result.canonicalChapters
           .single { it.chapter.id == second.id }
           .isRead,
       )
@@ -730,17 +731,18 @@ class ReadingProgressDatabaseAndroidTest {
       )
       record(completedPosition)
 
-      val result = titles.completeChapterBoundary(
+      assertTrue(titles.completeChapterBoundary(
         boundary(
           completed = snapshot.chapters[0],
           started = position(titleId, snapshot.chapters[1], unitIndex = 0),
           recency = ProgressEventRecency.REORDERED,
         ),
-      ) as CompletionResult.Success
+      ) is CompletionResult.Success)
+      val result = progress(titleId)
 
-      assertNull(result.progress.libraryResumePosition)
-      assertTrue(result.progress.canonicalChapters.first().isRead)
-      assertFalse(result.progress.canonicalChapters.last().isRead)
+      assertNull(result.libraryResumePosition)
+      assertTrue(result.canonicalChapters.first().isRead)
+      assertFalse(result.canonicalChapters.last().isRead)
     }
 
   @Test
@@ -763,22 +765,23 @@ class ReadingProgressDatabaseAndroidTest {
       )
       titles.completeChapterBoundary(boundary(second, finalPosition))
 
-      val result = titles.completeChapterBoundary(
+      assertTrue(titles.completeChapterBoundary(
         boundary(
           completed = first,
           started = position(titleId, second, unitIndex = 0),
           recency = ProgressEventRecency.REORDERED,
         ),
-      ) as CompletionResult.Success
+      ) is CompletionResult.Success)
+      val result = progress(titleId)
 
       assertEquals(
         setOf(first.id, second.id),
-        result.progress.canonicalChapters.filter { it.isRead }
+        result.canonicalChapters.filter { it.isRead }
           .mapTo(HashSet()) { it.chapter.id },
       )
       assertEquals(
         finalPosition,
-        result.progress.libraryResumePosition?.position,
+        result.libraryResumePosition?.position,
       )
     }
 
@@ -846,15 +849,16 @@ class ReadingProgressDatabaseAndroidTest {
     val firstPosition = position(titleId, first, unitIndex = 3)
     record(firstPosition)
 
-    val result = titles.completeChapterBoundary(
+    assertTrue(titles.completeChapterBoundary(
       boundary(
         completed = first,
         started = position(titleId, final, unitIndex = 0),
       ),
-    ) as CompletionResult.Success
+    ) is CompletionResult.Success)
+    val result = progress(titleId)
 
-    assertNull(result.progress.libraryResumePosition)
-    assertTrue(result.progress.canonicalChapters.all { it.isRead })
+    assertNull(result.libraryResumePosition)
+    assertTrue(result.canonicalChapters.all { it.isRead })
   }
 
   @Test
@@ -982,27 +986,29 @@ class ReadingProgressDatabaseAndroidTest {
     val final = snapshot.chapters[1]
     record(position(titleId, final, unitIndex = 2))
 
-    val completed = titles.completeFinalChapter(
+    assertTrue(titles.completeFinalChapter(
       FinalChapterCompletion(
         titleId,
         final.id,
       ),
-    ) as CompletionResult.Success
-    assertNull(completed.progress.libraryResumePosition)
-    assertTrue(completed.progress.canonicalChapters.last().isRead)
+    ) is CompletionResult.Success)
+    val completed = progress(titleId)
+    assertNull(completed.libraryResumePosition)
+    assertTrue(completed.canonicalChapters.last().isRead)
 
     val newerPosition = position(titleId, first, unitIndex = 3)
     record(newerPosition)
-    val repeated = titles.completeFinalChapter(
+    assertTrue(titles.completeFinalChapter(
       FinalChapterCompletion(
         titleId,
         final.id,
       ),
-    ) as CompletionResult.Success
+    ) is CompletionResult.Success)
+    val repeated = progress(titleId)
 
     assertEquals(
       newerPosition,
-      repeated.progress.libraryResumePosition?.position,
+      repeated.libraryResumePosition?.position,
     )
   }
 
@@ -1174,10 +1180,10 @@ class ReadingProgressDatabaseAndroidTest {
   }
 
   @Test
-  fun observationDistinguishesUnknownEmptyAndUnavailableResume(): Unit =
+  fun readingSnapshotDistinguishesUnknownEmptyAndUnavailableResume(): Unit =
     runBlocking {
       assertNull(
-        titles.observeReadingProgress(TitleId(UNKNOWN_TITLE_ID)).first(),
+        titles.readReadingProgress(TitleId(UNKNOWN_TITLE_ID)),
       )
 
       val alias = SourceTitleAlias("source", "title")
@@ -1204,20 +1210,13 @@ class ReadingProgressDatabaseAndroidTest {
         availableResume.chapter,
       )
       assertTrue(availableResume.isCurrentlyAvailable)
-      val observedOmission = async(start = CoroutineStart.UNDISPATCHED) {
-        withTimeout(TEST_TIMEOUT_MILLIS) {
-          titles.observeReadingProgress(titleId).first {
-            it?.libraryResumePosition?.isCurrentlyAvailable == false
-          }
-        }
-      }
       reconcile(
         alias,
         "opening" to "Chapter 10",
         "final" to "Chapter 1",
       )
 
-      val progress = checkNotNull(observedOmission.await())
+      val progress = progress(titleId)
       assertEquals(
         listOf("opening", "final"),
         progress.canonicalChapters.map {
@@ -1233,7 +1232,7 @@ class ReadingProgressDatabaseAndroidTest {
     }
 
   @Test
-  fun librarySummaryTracksCountsAndResumeAvailability(): Unit = runBlocking {
+  fun libraryStateTracksCountsAndResumeAvailability(): Unit = runBlocking {
     val alias = SourceTitleAlias("source", "summary-title")
     val titleId = createTitle(alias, addToLibrary = true)
     val snapshot = reconcile(
@@ -1243,9 +1242,10 @@ class ReadingProgressDatabaseAndroidTest {
       "final" to "Final",
     )
 
-    val initial = titles.observeLibrarySummary().first()
-      .progressByTitleId
+    val initial = titles.observeLibrary().first()
+      .titlesById
       .getValue(titleId)
+      .progress
     assertEquals(3, initial.chapterCount)
     assertEquals(0, initial.readChapterCount)
     assertEquals(LibraryResumeAvailability.NONE, initial.resumeAvailability)
@@ -1253,16 +1253,19 @@ class ReadingProgressDatabaseAndroidTest {
     val availableInitial = CompletableDeferred<Unit>()
     val availableUpdate = async(start = CoroutineStart.UNDISPATCHED) {
       withTimeout(TEST_TIMEOUT_MILLIS) {
-        titles.observeLibrarySummary().first { summary ->
+        titles.observeLibrary().first { library ->
           availableInitial.complete(Unit)
-          summary.progressByTitleId[titleId]?.resumeAvailability ==
+          library.titlesById[titleId]?.progress?.resumeAvailability ==
             LibraryResumeAvailability.AVAILABLE
         }
       }
     }
     availableInitial.await()
     record(position(titleId, snapshot.chapters[1], unitIndex = 4))
-    val available = availableUpdate.await().progressByTitleId.getValue(titleId)
+    val available = availableUpdate.await()
+      .titlesById
+      .getValue(titleId)
+      .progress
     assertEquals(
       LibraryResumeAvailability.AVAILABLE,
       available.resumeAvailability,
@@ -1271,9 +1274,9 @@ class ReadingProgressDatabaseAndroidTest {
     val unavailableInitial = CompletableDeferred<Unit>()
     val unavailableUpdate = async(start = CoroutineStart.UNDISPATCHED) {
       withTimeout(TEST_TIMEOUT_MILLIS) {
-        titles.observeLibrarySummary().first { summary ->
+        titles.observeLibrary().first { library ->
           unavailableInitial.complete(Unit)
-          val progress = summary.progressByTitleId[titleId]
+          val progress = library.titlesById[titleId]?.progress
           progress?.readChapterCount == 1 &&
             progress.resumeAvailability ==
             LibraryResumeAvailability.TEMPORARILY_UNAVAILABLE
@@ -1290,8 +1293,9 @@ class ReadingProgressDatabaseAndroidTest {
       FinalChapterCompletion(titleId, current.chapters.last().id),
     )
     val unavailable = unavailableUpdate.await()
-      .progressByTitleId
+      .titlesById
       .getValue(titleId)
+      .progress
     assertEquals(2, unavailable.chapterCount)
     assertEquals(1, unavailable.readChapterCount)
     assertEquals(
@@ -1301,7 +1305,7 @@ class ReadingProgressDatabaseAndroidTest {
   }
 
   @Test
-  fun boundaryObservationPublishesOnlyCoherentCommittedProgress(): Unit =
+  fun boundaryCommitsCoherentProgress(): Unit =
     runBlocking {
       val alias = SourceTitleAlias("source", "title")
       val titleId = createTitle(alias, addToLibrary = true)
@@ -1318,87 +1322,45 @@ class ReadingProgressDatabaseAndroidTest {
       )
       record(firstPosition)
       val initialProgress = progress(titleId)
-      val firstObserved = CompletableDeferred<Unit>()
-      val observations = mutableListOf<TitleReadingProgress>()
-      val updated = async(start = CoroutineStart.UNDISPATCHED) {
-        withTimeout(TEST_TIMEOUT_MILLIS) {
-          titles.observeReadingProgress(titleId).first { progress ->
-            val current = checkNotNull(progress)
-            observations += current
-            firstObserved.complete(Unit)
-            current.canonicalChapters.first().isRead &&
-              current.libraryResumePosition?.position == finalPosition
-          }
-        }
-      }
-      firstObserved.await()
 
       titles.completeChapterBoundary(
         boundary(snapshot.chapters[0], finalPosition),
       )
-      val finalProgress = checkNotNull(updated.await())
+      val finalProgress = progress(titleId)
 
+      assertFalse(initialProgress.canonicalChapters.first().isRead)
       assertEquals(
-        listOf(initialProgress, finalProgress),
-        observations,
+        firstPosition,
+        initialProgress.libraryResumePosition?.position,
       )
+      assertTrue(finalProgress.canonicalChapters.first().isRead)
+      assertEquals(finalPosition, finalProgress.libraryResumePosition?.position)
     }
 
   @Test
-  fun observationTracksMembershipResumeAndReadTables(): Unit = runBlocking {
+  fun readingSnapshotTracksMembershipResumeAndReadTables(): Unit = runBlocking {
     val libraryAlias = SourceTitleAlias("source", "library-title")
     val libraryTitleId = createTitle(libraryAlias)
     val libraryChapter = reconcile(libraryAlias, "only" to "Only")
       .chapters.single()
-    val membershipInitial = CompletableDeferred<Unit>()
-    val membershipUpdate = async(start = CoroutineStart.UNDISPATCHED) {
-      withTimeout(TEST_TIMEOUT_MILLIS) {
-        titles.observeReadingProgress(libraryTitleId).first { progress ->
-          membershipInitial.complete(Unit)
-          progress?.isInLibrary == true
-        }
-      }
-    }
-    membershipInitial.await()
+    assertFalse(progress(libraryTitleId).isInLibrary)
     titles.addToLibrary(libraryTitleId)
-    assertTrue(checkNotNull(membershipUpdate.await()).isInLibrary)
+    assertTrue(progress(libraryTitleId).isInLibrary)
 
     val resumePosition = position(libraryTitleId, libraryChapter, unitIndex = 4)
-    val resumeInitial = CompletableDeferred<Unit>()
-    val resumeUpdate = async(start = CoroutineStart.UNDISPATCHED) {
-      withTimeout(TEST_TIMEOUT_MILLIS) {
-        titles.observeReadingProgress(libraryTitleId).first { progress ->
-          resumeInitial.complete(Unit)
-          progress?.libraryResumePosition?.position == resumePosition
-        }
-      }
-    }
-    resumeInitial.await()
     record(resumePosition)
     assertEquals(
       resumePosition,
-      checkNotNull(resumeUpdate.await()).libraryResumePosition?.position,
+      progress(libraryTitleId).libraryResumePosition?.position,
     )
 
     val readAlias = SourceTitleAlias("source", "read-title")
     val readTitleId = createTitle(readAlias)
     val readChapter = reconcile(readAlias, "only" to "Only").chapters.single()
-    val readInitial = CompletableDeferred<Unit>()
-    val readUpdate = async(start = CoroutineStart.UNDISPATCHED) {
-      withTimeout(TEST_TIMEOUT_MILLIS) {
-        titles.observeReadingProgress(readTitleId).first { progress ->
-          readInitial.complete(Unit)
-          progress?.canonicalChapters?.single()?.isRead == true
-        }
-      }
-    }
-    readInitial.await()
     titles.completeFinalChapter(
       FinalChapterCompletion(readTitleId, readChapter.id),
     )
-    assertTrue(
-      checkNotNull(readUpdate.await()).canonicalChapters.single().isRead,
-    )
+    assertTrue(progress(readTitleId).canonicalChapters.single().isRead)
   }
 
   @Test
@@ -1647,7 +1609,7 @@ class ReadingProgressDatabaseAndroidTest {
   )
 
   private suspend fun progress(titleId: TitleId): TitleReadingProgress =
-    checkNotNull(titles.observeReadingProgress(titleId).first())
+    checkNotNull(titles.readReadingProgress(titleId))
 
   private suspend fun assertCanonicalSnapshotPersisted(
     snapshot: CanonicalChapterSnapshot,

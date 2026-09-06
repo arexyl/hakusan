@@ -1,10 +1,10 @@
 package app.hakusan.ui
 
-import app.hakusan.sdk.AddToLibraryScreenResult
 import app.hakusan.sdk.BrowseScreenResult
 import app.hakusan.sdk.BrowseScreenService
 import app.hakusan.sdk.CatalogScreen
 import app.hakusan.sdk.ContinueSelectionResult
+import app.hakusan.sdk.ContinueSelectionService
 import app.hakusan.sdk.ContinueTarget
 import app.hakusan.sdk.ContinueUnavailableReason
 import app.hakusan.sdk.DetailsScreenResult
@@ -29,6 +29,7 @@ class ScreenLoadStateTest {
     val model = BrowsingViewModel(
       browseService = EmptyBrowseService,
       detailsService = UnusedDetailsService,
+      continueService = UnusedContinueService,
     )
     val route = TitleDetailsRoute("source", "title")
     val libraryKey = DetailsOwnerKey(PrimaryDestination.LIBRARY, route)
@@ -147,11 +148,9 @@ class ScreenLoadStateTest {
     override suspend fun loadDetails(
       titleKey: ScreenTitleKey,
     ): DetailsScreenResult = error("The owner test does not load details.")
+  }
 
-    override suspend fun addToLibrary(
-      titleId: ScreenTitleId,
-    ): AddToLibraryScreenResult = error("The owner test does not add.")
-
+  private object UnusedContinueService : ContinueSelectionService {
     override suspend fun selectContinue(
       titleId: ScreenTitleId,
     ): ContinueSelectionResult = error("The owner test does not continue.")
