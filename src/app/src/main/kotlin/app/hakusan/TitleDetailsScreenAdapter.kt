@@ -8,19 +8,12 @@ import app.hakusan.extensions.SourceFailure
 import app.hakusan.extensions.SourceResult
 import app.hakusan.extensions.SourceTitleDetails
 import app.hakusan.extensions.SourceTitleKey
-import app.hakusan.sdk.AddToLibraryScreenFailure
-import app.hakusan.sdk.AddToLibraryScreenResult
-import app.hakusan.sdk.ContinueSelectionFailure
-import app.hakusan.sdk.ContinueSelectionResult
 import app.hakusan.sdk.DetailsScreenFailure
 import app.hakusan.sdk.DetailsScreenResult
-import app.hakusan.sdk.ScreenTitleId
 import app.hakusan.sdk.ScreenTitleKey
 import app.hakusan.sdk.TitleDetailsScreenService
 import app.hakusan.titles.ChapterReconciliationFailure
 import app.hakusan.titles.ChapterReconciliationResult
-import app.hakusan.titles.LibraryAddFailure
-import app.hakusan.titles.LibraryAddResult
 import app.hakusan.titles.ReconcileChapterSnapshot
 import app.hakusan.titles.TitleId
 import app.hakusan.titles.TitleReadingProgress
@@ -103,36 +96,6 @@ internal class TitleDetailsScreenAdapter(
     } finally {
       releaseCoordinator(titleKey, coordinator)
     }
-  }
-
-  override suspend fun addToLibrary(
-    titleId: ScreenTitleId,
-  ): AddToLibraryScreenResult = when (
-    val result = titles.addToLibrary(TitleId(titleId.value))
-  ) {
-    is LibraryAddResult.Success -> AddToLibraryScreenResult.Success
-    is LibraryAddResult.CategorySelectionRequired ->
-      AddToLibraryScreenResult.CategorySelectionRequired
-
-    is LibraryAddResult.Failure -> when (result.error) {
-      LibraryAddFailure.TitleNotFound -> AddToLibraryScreenResult.Failure(
-        AddToLibraryScreenFailure.TitleNotFound,
-      )
-
-      is LibraryAddFailure.CategoriesNotFound -> error(
-        "Automatic Library Add cannot select missing categories.",
-      )
-    }
-  }
-
-  override suspend fun selectContinue(
-    titleId: ScreenTitleId,
-  ): ContinueSelectionResult {
-    val progress = titles.observeReadingProgress(TitleId(titleId.value)).first()
-      ?: return ContinueSelectionResult.Failure(
-        ContinueSelectionFailure.TitleNotFound,
-      )
-    return progress.toContinueState().toSelectionResult()
   }
 
   private fun acquireCoordinator(

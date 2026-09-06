@@ -1,6 +1,5 @@
 package app.hakusan
 
-import app.hakusan.sdk.AddToLibraryScreenFailure
 import app.hakusan.sdk.AddToLibraryScreenResult
 import app.hakusan.sdk.BrowseScreen
 import app.hakusan.sdk.BrowseScreenResult
@@ -9,7 +8,7 @@ import app.hakusan.sdk.BrowseTitleItem
 import app.hakusan.sdk.CatalogScreen
 import app.hakusan.sdk.CatalogSourceItem
 import app.hakusan.sdk.ContinueSelectionResult
-import app.hakusan.sdk.ContinueSelectionFailure
+import app.hakusan.sdk.ContinueSelectionService
 import app.hakusan.sdk.ContinueState
 import app.hakusan.sdk.ContinueTarget
 import app.hakusan.sdk.ContinueUnavailableReason
@@ -139,12 +138,12 @@ class LibraryStatesAndroidTest {
     openCatalogDetails(details, DETAILS_A_READY)
 
     compose.onNodeWithText("Like").performClick()
-    awaitCount(details.addRequests, 1)
-    assertEquals(listOf(TITLE_A_ID), details.addRequests)
+    awaitCount(library.addRequests, 1)
+    assertEquals(listOf(TITLE_A_ID), library.addRequests)
     compose.onNodeWithText("Like").assertIsNotEnabled()
     compose.onNodeWithText("Adding to Library").assertExists()
 
-    details.completeAdd(AddToLibraryScreenResult.Success)
+    library.completeAdd(AddToLibraryScreenResult.Success)
     compose.onNodeWithText("Added to Library.").assertExists()
     compose.onNodeWithText("Like")
       .assertIsSelected()
@@ -170,10 +169,10 @@ class LibraryStatesAndroidTest {
     openCatalogDetails(details, DETAILS_A_READY)
 
     compose.onNodeWithText("Like").performClick()
-    awaitCount(details.addRequests, 1)
+    awaitCount(library.addRequests, 1)
     compose.onNodeWithText("Back").performClick()
 
-    details.completeAdd(AddToLibraryScreenResult.Success)
+    library.completeAdd(AddToLibraryScreenResult.Success)
     compose.onNodeWithText(TITLE_A.displayName).performClick()
     awaitCount(details.detailsRequests, 2)
     details.completeDetails(DetailsScreenResult.Success(DETAILS_A_READY))
@@ -182,7 +181,7 @@ class LibraryStatesAndroidTest {
     compose.onNodeWithContentDescription("Like")
       .assertIsSelected()
       .assertHasNoClickAction()
-    assertEquals(listOf(TITLE_A_ID), details.addRequests)
+    assertEquals(listOf(TITLE_A_ID), library.addRequests)
   }
 
   @Test
@@ -194,8 +193,8 @@ class LibraryStatesAndroidTest {
     openCatalogDetails(details, DETAILS_A_READY)
 
     compose.onNodeWithText("Like").performClick()
-    awaitCount(details.addRequests, 1)
-    details.completeAdd(
+    awaitCount(library.addRequests, 1)
+    library.completeAdd(
       AddToLibraryScreenResult.CategorySelectionRequired,
     )
     compose.onNodeWithText(
@@ -207,26 +206,23 @@ class LibraryStatesAndroidTest {
       .assertHasClickAction()
 
     compose.onNodeWithText("Like").performClick()
-    awaitCount(details.addRequests, 2)
-    details.completeAdd(
-      AddToLibraryScreenResult.Failure(
-        AddToLibraryScreenFailure.TitleNotFound,
-      ),
-    )
+    awaitCount(library.addRequests, 2)
+    library.completeAdd(AddToLibraryScreenResult.TitleNotFound)
     compose.onNodeWithText(
       "Hakusan could not find this title. Tap Like to try again.",
     ).assertExists()
     compose.onNodeWithText("Like")
       .assertIsEnabled()
       .assertHasClickAction()
-    assertEquals(listOf(TITLE_A_ID, TITLE_A_ID), details.addRequests)
+    assertEquals(listOf(TITLE_A_ID, TITLE_A_ID), library.addRequests)
   }
 
   @Test
   fun noChapterDisablesVisibleContinue() {
     val library = ControlledLibraryService()
     val details = ControlledDetailsService()
-    installHost(library, details)
+    val continueSelection = ControlledContinueService()
+    installHost(library, details, continueSelection)
     library.emit(EMPTY_LIBRARY)
     openCatalogDetails(details, DETAILS_A_EMPTY)
 
@@ -234,26 +230,27 @@ class LibraryStatesAndroidTest {
     compose.onNodeWithText(
       "No chapter is available for Continue.",
     ).assertExists()
-    assertTrue(details.continueRequests.isEmpty())
+    assertTrue(continueSelection.requests.isEmpty())
   }
 
   @Test
   fun continueUsesFreshTargetAndOffersRetry() {
     val library = ControlledLibraryService()
     val details = ControlledDetailsService()
-    installHost(library, details)
+    val continueSelection = ControlledContinueService()
+    installHost(library, details, continueSelection)
     library.emit(EMPTY_LIBRARY)
     openCatalogDetails(details, DETAILS_A_READY)
 
     compose.onNodeWithText("Continue").performClick()
-    awaitCount(details.continueRequests, 1)
-    assertEquals(listOf(TITLE_A_ID), details.continueRequests)
+    awaitCount(continueSelection.requests, 1)
+    assertEquals(listOf(TITLE_A_ID), continueSelection.requests)
     compose.onNodeWithText("Continue").assertIsNotEnabled()
     compose.onNodeWithText(
       "Selecting the current Continue target.",
     ).assertExists()
 
-    details.completeContinue(
+    continueSelection.complete(
       ContinueSelectionResult.Selected(SECOND_CONTINUE_TARGET),
     )
     compose.onNodeWithText(
@@ -263,8 +260,8 @@ class LibraryStatesAndroidTest {
     compose.onNodeWithText("Continue").assertIsEnabled()
 
     compose.onNodeWithText("Continue").performClick()
-    awaitCount(details.continueRequests, 2)
-    details.completeContinue(
+    awaitCount(continueSelection.requests, 2)
+    continueSelection.complete(
       ContinueSelectionResult.Unavailable(SAVED_TARGET_UNAVAILABLE),
     )
     compose.onNodeWithText("Continue").assertIsNotEnabled()
@@ -279,8 +276,8 @@ class LibraryStatesAndroidTest {
     details.completeDetails(DetailsScreenResult.Success(DETAILS_A_READY))
     compose.onNodeWithText("First title details.").assertExists()
     compose.onNodeWithText("Continue").performClick()
-    awaitCount(details.continueRequests, 3)
-    details.completeContinue(
+    awaitCount(continueSelection.requests, 3)
+    continueSelection.complete(
       ContinueSelectionResult.Selected(FIRST_CONTINUE_TARGET),
     )
     compose.onNodeWithText(
@@ -288,12 +285,8 @@ class LibraryStatesAndroidTest {
     ).assertExists()
 
     compose.onNodeWithText("Continue").performClick()
-    awaitCount(details.continueRequests, 4)
-    details.completeContinue(
-      ContinueSelectionResult.Failure(
-        ContinueSelectionFailure.TitleNotFound,
-      ),
-    )
+    awaitCount(continueSelection.requests, 4)
+    continueSelection.complete(ContinueSelectionResult.TitleNotFound)
     compose.onNodeWithText("Continue").assertIsNotEnabled()
     compose.onNodeWithText(
       "Hakusan could not find this title for Continue. " +
@@ -350,14 +343,15 @@ class LibraryStatesAndroidTest {
   fun lastChapterStaysAboveExpandedActionStatus() {
     val library = ControlledLibraryService()
     val details = ControlledDetailsService()
+    val continueSelection = ControlledContinueService()
     val longDetails = detailsWithChapterCount(20)
-    installHost(library, details)
+    installHost(library, details, continueSelection)
     library.emit(EMPTY_LIBRARY)
     openCatalogDetails(details, longDetails)
 
     compose.onNodeWithText("Continue").performClick()
-    awaitCount(details.continueRequests, 1)
-    details.completeContinue(
+    awaitCount(continueSelection.requests, 1)
+    continueSelection.complete(
       ContinueSelectionResult.Unavailable(SAVED_TARGET_UNAVAILABLE),
     )
     val unavailableMessage =
@@ -388,7 +382,8 @@ class LibraryStatesAndroidTest {
 
   private fun installHost(
     library: LibraryScreenService,
-    details: TitleDetailsScreenService,
+    details: ControlledDetailsService,
+    continueSelection: ContinueSelectionService = UnusedContinueService,
     browse: BrowseScreenService = FixedBrowseService,
   ) {
     val modelId = MODEL_ID.incrementAndGet()
@@ -398,6 +393,7 @@ class LibraryStatesAndroidTest {
         factory = BrowsingViewModel.factory(
           browseService = { browse },
           detailsService = { details },
+          continueService = { continueSelection },
         ),
       ).get(
         "library-states-browsing-$modelId",
@@ -407,7 +403,6 @@ class LibraryStatesAndroidTest {
         owner = activity,
         factory = LibraryViewModel.factory(
           libraryService = { library },
-          detailsService = { details },
         ),
       ).get(
         "library-states-library-$modelId",
@@ -456,38 +451,14 @@ class LibraryStatesAndroidTest {
 
   private class ControlledLibraryService : LibraryScreenService {
     private val screens = Channel<LibraryScreen>(Channel.UNLIMITED)
+    private val addCompletions =
+      Channel<AddToLibraryScreenResult>(Channel.UNLIMITED)
     val observations = AtomicInteger()
+    val addRequests = CopyOnWriteArrayList<ScreenTitleId>()
 
     override fun observeLibrary(): Flow<LibraryScreen> {
       observations.incrementAndGet()
       return screens.receiveAsFlow()
-    }
-
-    fun emit(screen: LibraryScreen) {
-      check(screens.trySend(screen).isSuccess) {
-        "Unable to emit a controlled Library snapshot."
-      }
-    }
-  }
-
-  private class ControlledDetailsService :
-    TitleDetailsScreenService {
-    private val detailsCompletions =
-      Channel<DetailsScreenResult>(Channel.UNLIMITED)
-    private val addCompletions =
-      Channel<AddToLibraryScreenResult>(Channel.UNLIMITED)
-    private val continueCompletions =
-      Channel<ContinueSelectionResult>(Channel.UNLIMITED)
-
-    val detailsRequests = CopyOnWriteArrayList<ScreenTitleKey>()
-    val addRequests = CopyOnWriteArrayList<ScreenTitleId>()
-    val continueRequests = CopyOnWriteArrayList<ScreenTitleId>()
-
-    override suspend fun loadDetails(
-      titleKey: ScreenTitleKey,
-    ): DetailsScreenResult {
-      detailsRequests += titleKey
-      return detailsCompletions.receive()
     }
 
     override suspend fun addToLibrary(
@@ -497,16 +468,9 @@ class LibraryStatesAndroidTest {
       return addCompletions.receive()
     }
 
-    override suspend fun selectContinue(
-      titleId: ScreenTitleId,
-    ): ContinueSelectionResult {
-      continueRequests += titleId
-      return continueCompletions.receive()
-    }
-
-    fun completeDetails(result: DetailsScreenResult) {
-      check(detailsCompletions.trySend(result).isSuccess) {
-        "Unable to complete a controlled details request."
+    fun emit(screen: LibraryScreen) {
+      check(screens.trySend(screen).isSuccess) {
+        "Unable to emit a controlled Library snapshot."
       }
     }
 
@@ -515,12 +479,53 @@ class LibraryStatesAndroidTest {
         "Unable to complete a controlled Library Add."
       }
     }
+  }
 
-    fun completeContinue(result: ContinueSelectionResult) {
-      check(continueCompletions.trySend(result).isSuccess) {
+  private class ControlledDetailsService : TitleDetailsScreenService {
+    private val detailsCompletions =
+      Channel<DetailsScreenResult>(Channel.UNLIMITED)
+
+    val detailsRequests = CopyOnWriteArrayList<ScreenTitleKey>()
+
+    override suspend fun loadDetails(
+      titleKey: ScreenTitleKey,
+    ): DetailsScreenResult {
+      detailsRequests += titleKey
+      return detailsCompletions.receive()
+    }
+
+    fun completeDetails(result: DetailsScreenResult) {
+      check(detailsCompletions.trySend(result).isSuccess) {
+        "Unable to complete a controlled details request."
+      }
+    }
+  }
+
+  private class ControlledContinueService : ContinueSelectionService {
+    private val completions =
+      Channel<ContinueSelectionResult>(Channel.UNLIMITED)
+    val requests = CopyOnWriteArrayList<ScreenTitleId>()
+
+    override suspend fun selectContinue(
+      titleId: ScreenTitleId,
+    ): ContinueSelectionResult {
+      requests += titleId
+      return completions.receive()
+    }
+
+    fun complete(result: ContinueSelectionResult) {
+      check(completions.trySend(result).isSuccess) {
         "Unable to complete a controlled Continue selection."
       }
     }
+  }
+
+  private data object UnusedContinueService : ContinueSelectionService {
+    override suspend fun selectContinue(
+      titleId: ScreenTitleId,
+    ): ContinueSelectionResult = error(
+      "This controlled Library test does not select Continue.",
+    )
   }
 
   private data object FixedBrowseService : BrowseScreenService {

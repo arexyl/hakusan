@@ -1,6 +1,5 @@
 package app.hakusan
 
-import app.hakusan.sdk.AddToLibraryScreenResult
 import app.hakusan.sdk.BrowseScreen
 import app.hakusan.sdk.BrowseScreenFailure
 import app.hakusan.sdk.BrowseScreenResult
@@ -9,6 +8,7 @@ import app.hakusan.sdk.BrowseTitleItem
 import app.hakusan.sdk.CatalogScreen
 import app.hakusan.sdk.CatalogSourceItem
 import app.hakusan.sdk.ContinueSelectionResult
+import app.hakusan.sdk.ContinueSelectionService
 import app.hakusan.sdk.ContinueState
 import app.hakusan.sdk.ContinueUnavailableReason
 import app.hakusan.sdk.DetailsScreenFailure
@@ -283,6 +283,7 @@ class CatalogStatesAndroidTest {
         factory = BrowsingViewModel.factory(
           browseService = { browse },
           detailsService = { details },
+          continueService = { UnusedContinueService },
         ),
       )[BrowsingViewModel::class.java]
     }
@@ -347,23 +348,19 @@ class CatalogStatesAndroidTest {
       return completions.receive()
     }
 
-    override suspend fun addToLibrary(
-      titleId: ScreenTitleId,
-    ): AddToLibraryScreenResult = error(
-      "This controlled Catalog test does not modify Library membership.",
-    )
-
-    override suspend fun selectContinue(
-      titleId: ScreenTitleId,
-    ): ContinueSelectionResult = error(
-      "This controlled Catalog test does not select Continue.",
-    )
-
     fun complete(result: DetailsScreenResult) {
       check(completions.trySend(result).isSuccess) {
         "Unable to complete a controlled details request."
       }
     }
+  }
+
+  private data object UnusedContinueService : ContinueSelectionService {
+    override suspend fun selectContinue(
+      titleId: ScreenTitleId,
+    ): ContinueSelectionResult = error(
+      "This controlled Catalog test does not select Continue.",
+    )
   }
 
   private companion object {

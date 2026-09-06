@@ -1,11 +1,9 @@
 package app.hakusan.ui
 
-import app.hakusan.sdk.AddToLibraryScreenFailure
 import app.hakusan.sdk.AddToLibraryScreenResult
 import app.hakusan.sdk.LibraryScreen
 import app.hakusan.sdk.LibraryScreenService
 import app.hakusan.sdk.ScreenTitleId
-import app.hakusan.sdk.TitleDetailsScreenService
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -22,7 +20,6 @@ import kotlinx.coroutines.launch
 
 class LibraryViewModel(
   private val libraryService: LibraryScreenService,
-  private val detailsService: TitleDetailsScreenService,
 ) : ViewModel() {
   internal var libraryState: LibraryLoadState by mutableStateOf(
     LibraryLoadState.Loading,
@@ -70,7 +67,7 @@ class LibraryViewModel(
     job = viewModelScope.launch(start = CoroutineStart.LAZY) {
       try {
         when (
-          val result = detailsService.addToLibrary(titleId)
+          val result = libraryService.addToLibrary(titleId)
         ) {
           AddToLibraryScreenResult.Success -> {
             confirmedMemberships.add(titleId)
@@ -80,9 +77,7 @@ class LibraryViewModel(
           AddToLibraryScreenResult.CategorySelectionRequired ->
             owner.requireCategorySelection()
 
-          is AddToLibraryScreenResult.Failure -> when (result.error) {
-            AddToLibraryScreenFailure.TitleNotFound -> owner.titleNotFound()
-          }
+          AddToLibraryScreenResult.TitleNotFound -> owner.titleNotFound()
         }
       } finally {
         addJobs.remove(titleId, job)
@@ -104,12 +99,10 @@ class LibraryViewModel(
   companion object {
     fun factory(
       libraryService: () -> LibraryScreenService,
-      detailsService: () -> TitleDetailsScreenService,
     ): ViewModelProvider.Factory = viewModelFactory {
       initializer {
         LibraryViewModel(
           libraryService = libraryService(),
-          detailsService = detailsService(),
         )
       }
     }

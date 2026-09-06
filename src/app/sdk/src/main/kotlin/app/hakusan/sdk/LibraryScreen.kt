@@ -101,7 +101,7 @@ data class LibraryScreen private constructor(
   }
 }
 
-/** Screen-facing observation of committed Library state. */
+/** Screen-facing Library observation and automatic membership addition. */
 interface LibraryScreenService {
   /**
    * Observes immutable snapshots until the collector cancels.
@@ -109,4 +109,21 @@ interface LibraryScreenService {
    * Unexpected failures and cancellation propagate to the collector.
    */
   fun observeLibrary(): Flow<LibraryScreen>
+
+  /** Adds a known title using the current automatic category policy. */
+  suspend fun addToLibrary(
+    titleId: ScreenTitleId,
+  ): AddToLibraryScreenResult
+}
+
+/** Result of an automatic request to add one title to the Library. */
+sealed interface AddToLibraryScreenResult {
+  /** Includes both a new membership and an idempotent existing membership. */
+  data object Success : AddToLibraryScreenResult
+
+  /** Multiple categories exist and require an explicit selection. */
+  data object CategorySelectionRequired : AddToLibraryScreenResult
+
+  /** The supplied application title identity is no longer known locally. */
+  data object TitleNotFound : AddToLibraryScreenResult
 }

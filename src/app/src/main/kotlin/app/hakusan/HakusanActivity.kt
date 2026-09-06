@@ -37,6 +37,9 @@ class HakusanActivity : ComponentActivity() {
         detailsService = {
           graph.detailsService
         },
+        continueService = {
+          graph.continueService
+        },
       ),
     )[BrowsingViewModel::class.java]
   }
@@ -49,9 +52,6 @@ class HakusanActivity : ComponentActivity() {
       factory = LibraryViewModel.factory(
         libraryService = {
           graph.libraryService
-        },
-        detailsService = {
-          graph.detailsService
         },
       ),
     )[LibraryViewModel::class.java]

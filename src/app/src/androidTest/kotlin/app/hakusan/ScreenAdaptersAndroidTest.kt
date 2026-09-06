@@ -115,7 +115,7 @@ class ScreenAdaptersAndroidTest {
 
         assertSame(
           AddToLibraryScreenResult.Success,
-          graph.detailsService.addToLibrary(details.id),
+          graph.libraryService.addToLibrary(details.id),
         )
         val library = graph.libraryService.observeLibrary().first {
           details.id in it.titlesById
@@ -131,7 +131,7 @@ class ScreenAdaptersAndroidTest {
           .loadDetails(browseTitle.key)
           .successScreen()
         assertTrue(memberDetails.isInLibrary)
-        val selected = graph.detailsService
+        val selected = graph.continueService
           .selectContinue(details.id) as ContinueSelectionResult.Selected
         assertEquals(details.chapters.first().id, selected.target.chapterId)
       }
@@ -252,7 +252,7 @@ class ScreenAdaptersAndroidTest {
         assertEquals("Current title", current.displayName)
         assertSame(
           AddToLibraryScreenResult.Success,
-          service.addToLibrary(current.id),
+          graph.libraryService.addToLibrary(current.id),
         )
 
         firstDetails.complete("Stale title")
