@@ -1,6 +1,8 @@
 package app.hakusan
 
 import android.content.Context
+import android.content.ContextWrapper
+import android.database.sqlite.SQLiteDatabase
 import app.hakusan.debug.source.DeterministicSource
 import app.hakusan.debug.source.UnavailableOperation
 import app.hakusan.extensions.ChapterRefreshCompletion
@@ -31,6 +33,7 @@ import app.hakusan.titles.TitlesStore
 import app.hakusan.titles.openTitlesStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
+import java.io.File
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
@@ -52,23 +55,32 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class ScreenAdaptersAndroidTest {
   private lateinit var store: TitlesStore
-
-  private val context: Context
-    get() = InstrumentationRegistry
-      .getInstrumentation()
-      .targetContext
-      .applicationContext
+  private lateinit var databaseContext: IsolatedDatabaseContext
 
   @Before
   fun openStore() {
-    context.deleteDatabase(DATABASE_NAME)
-    store = openTitlesStore(context)
+    val appContext = InstrumentationRegistry.getInstrumentation()
+      .targetContext
+      .applicationContext
+    databaseContext = IsolatedDatabaseContext(appContext)
+    check(
+      databaseContext.getDatabasePath(DATABASE_NAME) !=
+        appContext.getDatabasePath(DATABASE_NAME),
+    ) {
+      "Screen adapter tests must not own the target database."
+    }
+    databaseContext.prepareDatabase(DATABASE_NAME)
+    store = openTitlesStore(databaseContext)
   }
 
   @After
   fun closeStore() {
-    store.close()
-    context.deleteDatabase(DATABASE_NAME)
+    if (::store.isInitialized) {
+      store.close()
+    }
+    if (::databaseContext.isInitialized) {
+      databaseContext.deleteDatabase(DATABASE_NAME)
+    }
   }
 
   @Test
@@ -432,6 +444,38 @@ class ScreenAdaptersAndroidTest {
       key = SourceChapterKey(TITLE_KEY, key),
       displayName = displayName,
     )
+  }
+}
+
+private class IsolatedDatabaseContext(
+  base: Context,
+) : ContextWrapper(base) {
+  private val databaseDirectory = File(
+    base.cacheDir,
+    "screen-adapter-databases",
+  )
+
+  override fun getApplicationContext(): Context = this
+
+  override fun getDatabasePath(name: String): File =
+    File(databaseDirectory, name)
+
+  override fun deleteDatabase(name: String): Boolean {
+    val database = getDatabasePath(name)
+    val databaseDeleted =
+      !database.exists() || SQLiteDatabase.deleteDatabase(database)
+    val lock = File("${database.path}.lck")
+    val lockDeleted = !lock.exists() || lock.delete()
+    return databaseDeleted && lockDeleted
+  }
+
+  fun prepareDatabase(name: String) {
+    check(databaseDirectory.isDirectory || databaseDirectory.mkdirs()) {
+      "Unable to create the isolated test database directory."
+    }
+    check(deleteDatabase(name)) {
+      "Unable to reset the isolated test database."
+    }
   }
 }
 
