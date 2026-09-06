@@ -1,5 +1,6 @@
 package app.hakusan
 
+import android.content.ContentValues
 import android.content.Context
 import android.content.ContextWrapper
 import android.database.sqlite.SQLiteDatabase
@@ -28,14 +29,21 @@ import app.hakusan.sdk.DetailsScreenFailure
 import app.hakusan.sdk.DetailsScreenResult
 import app.hakusan.sdk.ScreenReadingStart
 import app.hakusan.sdk.ScreenSourceId
+import app.hakusan.sdk.ScreenTitleId
+import app.hakusan.titles.CategoryId
 import app.hakusan.titles.ChapterReconciliationResult
+import app.hakusan.titles.ExplicitLibraryAddResult
+import app.hakusan.titles.LibraryCategorySelection
 import app.hakusan.titles.ReconcileChapterSnapshot
+import app.hakusan.titles.ReconcileSourceTitle
+import app.hakusan.titles.SourceTitleAlias
 import app.hakusan.titles.Titles
 import app.hakusan.titles.TitlesStore
 import app.hakusan.titles.openTitlesStore
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
+import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
@@ -136,6 +144,50 @@ class ScreenAdaptersAndroidTest {
         assertEquals(details.chapters.first().id, selected.target.chapterId)
       }
     }
+
+  @Test
+  fun libraryAddAdapterMapsEveryAutomaticOutcome(): Unit = runBlocking {
+    withTimeout(TEST_TIMEOUT_MILLIS) {
+      val unknownId = ScreenTitleId(
+        UUID.fromString("00000000-0000-7000-8000-000000000099"),
+      )
+      assertSame(
+        AddToLibraryScreenResult.TitleNotFound,
+        graph(DeterministicSource()).libraryService.addToLibrary(unknownId),
+      )
+
+      val titleId = store.titles.reconcileSourceTitle(
+        ReconcileSourceTitle(
+          alias = SourceTitleAlias("mapping.source", "automatic-add"),
+          displayName = "Automatic Add",
+          description = null,
+        ),
+      )
+      store.close()
+      databaseContext.seedCategories(
+        databaseName = DATABASE_NAME,
+        names = listOf("First", "Second"),
+      )
+      store = openTitlesStore(databaseContext)
+      val graph = graph(DeterministicSource())
+      val screenTitleId = ScreenTitleId(titleId.value)
+
+      assertSame(
+        AddToLibraryScreenResult.CategorySelectionRequired,
+        graph.libraryService.addToLibrary(screenTitleId),
+      )
+      assertTrue(
+        store.titles.addToLibrary(
+          titleId = titleId,
+          selection = LibraryCategorySelection.of(listOf(CategoryId(1))),
+        ) is ExplicitLibraryAddResult.Success,
+      )
+      assertSame(
+        AddToLibraryScreenResult.Success,
+        graph.libraryService.addToLibrary(screenTitleId),
+      )
+    }
+  }
 
   @Test
   fun sourceFailuresStayScreenSpecific(): Unit = runBlocking {
@@ -481,6 +533,27 @@ private class IsolatedDatabaseContext(
     }
     check(deleteDatabase(name)) {
       "Unable to reset the isolated test database."
+    }
+  }
+
+  fun seedCategories(
+    databaseName: String,
+    names: List<String>,
+  ) {
+    val parameters = SQLiteDatabase.OpenParams.Builder()
+      .addOpenFlags(SQLiteDatabase.OPEN_READWRITE)
+      .build()
+    SQLiteDatabase.openDatabase(
+      getDatabasePath(databaseName),
+      parameters,
+    ).use { database ->
+      names.forEachIndexed { index, name ->
+        val values = ContentValues(2).apply {
+          put("id", index + 1L)
+          put("name", name)
+        }
+        database.insertOrThrow("categories", null, values)
+      }
     }
   }
 }

@@ -6,9 +6,9 @@ import kotlinx.coroutines.flow.Flow
  * Domain operations and observations owned by the titles subsystem.
  *
  * Calls may suspend, but this contract creates no task and selects no caller
- * dispatcher or lifetime. Expected Library Add rejections use
- * [LibraryAddResult]. Cancellation and unexpected persistence failures
- * propagate to the caller or collector.
+ * dispatcher or lifetime. Expected Library Add rejections use typed result
+ * values. Cancellation and unexpected persistence failures propagate to the
+ * caller or collector.
  */
 interface Titles {
   /**
@@ -35,9 +35,15 @@ interface Titles {
    */
   suspend fun addToLibrary(
     titleId: TitleId,
-    selection: LibraryCategorySelection =
-      LibraryCategorySelection.Automatic,
   ): LibraryAddResult
+
+  /**
+   * Adds a known title with an explicit nonempty initial category selection.
+   */
+  suspend fun addToLibrary(
+    titleId: TitleId,
+    selection: LibraryCategorySelection,
+  ): ExplicitLibraryAddResult
 
   /**
    * Observes a current snapshot followed by committed relevant changes.

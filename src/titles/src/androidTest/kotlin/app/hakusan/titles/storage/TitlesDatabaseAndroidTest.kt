@@ -2,7 +2,8 @@ package app.hakusan.titles.storage
 
 import android.database.sqlite.SQLiteException
 import app.hakusan.titles.CategoryId
-import app.hakusan.titles.LibraryAddFailure
+import app.hakusan.titles.ExplicitLibraryAddFailure
+import app.hakusan.titles.ExplicitLibraryAddResult
 import app.hakusan.titles.LibraryAddResult
 import app.hakusan.titles.LibraryCategorySelection
 import app.hakusan.titles.ReconcileSourceTitle
@@ -205,12 +206,15 @@ class TitlesDatabaseAndroidTest {
 
       val repeatedResult = titles.addToLibrary(
         titleId = id,
-        selection = LibraryCategorySelection.Explicit.of(
+        selection = LibraryCategorySelection.of(
           listOf(CategoryId(999)),
         ),
       )
 
-      assertEquals(firstResult, repeatedResult)
+      assertEquals(
+        firstSuccess.membership,
+        (repeatedResult as ExplicitLibraryAddResult.Success).membership,
+      )
       assertEquals(1, queryLong("SELECT COUNT(*) FROM categories"))
       assertEquals(1, queryLong("SELECT COUNT(*) FROM title_categories"))
 
@@ -281,16 +285,16 @@ class TitlesDatabaseAndroidTest {
 
       val missing = titles.addToLibrary(
         titleId = firstId,
-        selection = LibraryCategorySelection.Explicit.of(
+        selection = LibraryCategorySelection.of(
           listOf(firstCategoryId, CategoryId(999)),
         ),
-      ) as LibraryAddResult.Failure
+      ) as ExplicitLibraryAddResult.Failure
       val missingError = missing.error
-        as LibraryAddFailure.CategoriesNotFound
+        as ExplicitLibraryAddFailure.CategoriesNotFound
       assertEquals(setOf(CategoryId(999)), missingError.categoryIds)
       assertEquals(0, queryLong("SELECT COUNT(*) FROM title_categories"))
 
-      val selection = LibraryCategorySelection.Explicit.of(
+      val selection = LibraryCategorySelection.of(
         listOf(firstCategoryId, secondCategoryId),
       )
       titles.addToLibrary(firstId, selection)
@@ -373,11 +377,17 @@ class TitlesDatabaseAndroidTest {
 
   @Test
   fun unknownTitleDoesNotInitializeTheLibrary(): Unit = runBlocking {
-    val result = titles.addToLibrary(TitleId(FIRST_ID))
+    val titleId = TitleId(FIRST_ID)
+    val automatic = titles.addToLibrary(titleId)
+    val explicit = titles.addToLibrary(
+      titleId = titleId,
+      selection = LibraryCategorySelection.of(listOf(CategoryId(1))),
+    )
 
+    assertEquals(LibraryAddResult.TitleNotFound, automatic)
     assertEquals(
-      LibraryAddFailure.TitleNotFound,
-      (result as LibraryAddResult.Failure).error,
+      ExplicitLibraryAddFailure.TitleNotFound,
+      (explicit as ExplicitLibraryAddResult.Failure).error,
     )
     assertEquals(0, queryLong("SELECT COUNT(*) FROM categories"))
   }

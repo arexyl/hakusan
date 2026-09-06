@@ -3,13 +3,16 @@ package app.hakusan.titles.storage
 import app.hakusan.titles.ActualPositionResult
 import app.hakusan.titles.ActualPositionUpdate
 import app.hakusan.titles.ApplicationUuidFactory
+import app.hakusan.titles.AutomaticCategoryResolution
+import app.hakusan.titles.CategoryAssignment
 import app.hakusan.titles.CategoryId
 import app.hakusan.titles.ChapterBoundaryCompletion
 import app.hakusan.titles.ChapterReconciliationResult
 import app.hakusan.titles.CompletionResult
+import app.hakusan.titles.ExplicitCategoryResolution
+import app.hakusan.titles.ExplicitLibraryAddFailure
+import app.hakusan.titles.ExplicitLibraryAddResult
 import app.hakusan.titles.FinalChapterCompletion
-import app.hakusan.titles.InitialCategoryResolution
-import app.hakusan.titles.LibraryAddFailure
 import app.hakusan.titles.LibraryAddPolicy
 import app.hakusan.titles.LibraryAddResult
 import app.hakusan.titles.LibraryCategory
@@ -90,49 +93,95 @@ internal class RoomTitles(
 
   override suspend fun addToLibrary(
     titleId: TitleId,
-    selection: LibraryCategorySelection,
   ): LibraryAddResult = database.withWriteTransaction {
-    val title = dao.findTitleById(titleId.value)
-      ?: return@withWriteTransaction LibraryAddResult.Failure(
-        LibraryAddFailure.TitleNotFound,
+    when (val context = loadLibraryAddContext(titleId)) {
+      LibraryAddContext.TitleNotFound -> LibraryAddResult.TitleNotFound
+
+      is LibraryAddContext.ExistingMembership ->
+        LibraryAddResult.Success(context.membership)
+
+      is LibraryAddContext.Nonmember -> when (
+        val resolution = LibraryAddPolicy.resolveAutomatic(context.categories)
+      ) {
+        AutomaticCategoryResolution.CreateDefault -> {
+          val categoryIds = setOf(
+            CategoryId(
+              dao.insertCategory(CategoryEntity(name = DEFAULT_CATEGORY_NAME)),
+            ),
+          )
+          LibraryAddResult.Success(
+            persistMembership(context.title, titleId, categoryIds),
+          )
+        }
+
+        is CategoryAssignment -> LibraryAddResult.Success(
+          persistMembership(context.title, titleId, resolution.categoryIds),
+        )
+
+        is AutomaticCategoryResolution.SelectionRequired ->
+          LibraryAddResult.CategorySelectionRequired(resolution.categories)
+      }
+    }
+  }
+
+  override suspend fun addToLibrary(
+    titleId: TitleId,
+    selection: LibraryCategorySelection,
+  ): ExplicitLibraryAddResult = database.withWriteTransaction {
+    when (val context = loadLibraryAddContext(titleId)) {
+      LibraryAddContext.TitleNotFound -> ExplicitLibraryAddResult.Failure(
+        ExplicitLibraryAddFailure.TitleNotFound,
       )
 
+      is LibraryAddContext.ExistingMembership ->
+        ExplicitLibraryAddResult.Success(context.membership)
+
+      is LibraryAddContext.Nonmember -> when (
+        val resolution = LibraryAddPolicy.resolveExplicit(
+          categories = context.categories,
+          selection = selection,
+        )
+      ) {
+        is CategoryAssignment ->
+          ExplicitLibraryAddResult.Success(
+            persistMembership(context.title, titleId, resolution.categoryIds),
+          )
+
+        is ExplicitCategoryResolution.CategoriesNotFound ->
+          ExplicitLibraryAddResult.Failure(
+            ExplicitLibraryAddFailure.CategoriesNotFound.create(
+              resolution.categoryIds,
+            ),
+          )
+      }
+    }
+  }
+
+  private suspend fun loadLibraryAddContext(
+    titleId: TitleId,
+  ): LibraryAddContext {
+    val title = dao.findTitleById(titleId.value)
+      ?: return LibraryAddContext.TitleNotFound
     val currentCategoryIds = dao.findTitleCategoryIds(title.storageId)
     if (currentCategoryIds.isNotEmpty()) {
-      return@withWriteTransaction successfulMembership(
-        titleId = titleId,
-        categoryIds = currentCategoryIds.map(::CategoryId),
-      )
-    }
-
-    val resolution = LibraryAddPolicy.resolve(
-      categories = dao.loadCategories().map { it.toLibraryCategory() },
-      selection = selection,
-    )
-    val categoryIds = when (resolution) {
-      InitialCategoryResolution.CreateDefault -> setOf(
-        CategoryId(
-          dao.insertCategory(CategoryEntity(name = DEFAULT_CATEGORY_NAME)),
+      return LibraryAddContext.ExistingMembership(
+        LibraryMembership.create(
+          titleId = titleId,
+          categoryIds = currentCategoryIds.map(::CategoryId),
         ),
       )
-
-      is InitialCategoryResolution.Assign -> resolution.categoryIds
-      is InitialCategoryResolution.SelectionRequired -> {
-        val result = LibraryAddResult.CategorySelectionRequired(
-          resolution.categories,
-        )
-        return@withWriteTransaction result
-      }
-
-      is InitialCategoryResolution.CategoriesNotFound -> {
-        return@withWriteTransaction LibraryAddResult.Failure(
-          LibraryAddFailure.CategoriesNotFound.create(
-            resolution.categoryIds,
-          ),
-        )
-      }
     }
+    return LibraryAddContext.Nonmember(
+      title = title,
+      categories = dao.loadCategories().map { it.toLibraryCategory() },
+    )
+  }
 
+  private suspend fun persistMembership(
+    title: TitleEntity,
+    titleId: TitleId,
+    categoryIds: Set<CategoryId>,
+  ): LibraryMembership {
     dao.insertTitleCategories(
       categoryIds.map { categoryId ->
         TitleCategoryEntity(
@@ -141,7 +190,7 @@ internal class RoomTitles(
         )
       },
     )
-    successfulMembership(titleId, categoryIds)
+    return LibraryMembership.create(titleId, categoryIds)
   }
 
   override suspend fun reconcileChapterSnapshot(
@@ -319,21 +368,24 @@ internal class RoomTitles(
     return toInt()
   }
 
-  private fun successfulMembership(
-    titleId: TitleId,
-    categoryIds: Iterable<CategoryId>,
-  ): LibraryAddResult.Success = LibraryAddResult.Success(
-    LibraryMembership.create(
-      titleId = titleId,
-      categoryIds = categoryIds,
-    ),
-  )
-
   private fun CategoryEntity.toLibraryCategory(): LibraryCategory =
     LibraryCategory(
       id = CategoryId(id),
       name = name,
     )
+
+  private sealed interface LibraryAddContext {
+    data object TitleNotFound : LibraryAddContext
+
+    data class ExistingMembership(
+      val membership: LibraryMembership,
+    ) : LibraryAddContext
+
+    data class Nonmember(
+      val title: TitleEntity,
+      val categories: List<LibraryCategory>,
+    ) : LibraryAddContext
+  }
 
   private class ShelfAccumulator(
     val category: LibraryCategory,

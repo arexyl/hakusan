@@ -44,13 +44,13 @@ class LibraryContractTest {
   @Test
   fun `explicit category selection is nonempty distinct and owned`() {
     val input = mutableListOf(CategoryId(1), CategoryId(1), CategoryId(2))
-    val selection = LibraryCategorySelection.Explicit.of(input)
+    val selection = LibraryCategorySelection.of(input)
 
     input.clear()
 
     assertEquals(setOf(CategoryId(1), CategoryId(2)), selection.categoryIds)
     assertThrows(IllegalArgumentException::class.java) {
-      LibraryCategorySelection.Explicit.of(emptyList())
+      LibraryCategorySelection.of(emptyList())
     }
   }
 
@@ -61,50 +61,52 @@ class LibraryContractTest {
     val duplicateName = category(3, "Want to read")
 
     assertSame(
-      InitialCategoryResolution.CreateDefault,
-      LibraryAddPolicy.resolve(
-        categories = emptyList(),
-        selection = LibraryCategorySelection.Automatic,
-      ),
+      AutomaticCategoryResolution.CreateDefault,
+      LibraryAddPolicy.resolveAutomatic(emptyList()),
     )
     assertEquals(
-      InitialCategoryResolution.Assign(setOf(renamed.id)),
-      LibraryAddPolicy.resolve(
-        categories = listOf(renamed),
-        selection = LibraryCategorySelection.Automatic,
-      ),
+      CategoryAssignment(setOf(renamed.id)),
+      LibraryAddPolicy.resolveAutomatic(listOf(renamed)),
     )
     assertEquals(
-      InitialCategoryResolution.SelectionRequired(
+      AutomaticCategoryResolution.SelectionRequired(
         setOf(first, renamed, duplicateName),
       ),
-      LibraryAddPolicy.resolve(
-        categories = listOf(first, renamed, duplicateName),
-        selection = LibraryCategorySelection.Automatic,
-      ),
+      LibraryAddPolicy.resolveAutomatic(listOf(first, renamed, duplicateName)),
     )
     assertEquals(
-      InitialCategoryResolution.Assign(setOf(renamed.id, duplicateName.id)),
-      LibraryAddPolicy.resolve(
+      CategoryAssignment(setOf(renamed.id, duplicateName.id)),
+      LibraryAddPolicy.resolveExplicit(
         categories = listOf(first, renamed, duplicateName),
-        selection = LibraryCategorySelection.Explicit.of(
+        selection = LibraryCategorySelection.of(
           listOf(renamed.id, duplicateName.id),
         ),
       ),
     )
     assertEquals(
-      InitialCategoryResolution.CategoriesNotFound(setOf(CategoryId(4))),
-      LibraryAddPolicy.resolve(
+      ExplicitCategoryResolution.CategoriesNotFound(setOf(CategoryId(4))),
+      LibraryAddPolicy.resolveExplicit(
         categories = listOf(first, renamed),
-        selection = LibraryCategorySelection.Explicit.of(
+        selection = LibraryCategorySelection.of(
           listOf(first.id, CategoryId(4)),
         ),
       ),
     )
     assertThrows(IllegalStateException::class.java) {
-      LibraryAddPolicy.resolve(
-        categories = listOf(first, category(1, "Renamed")),
-        selection = LibraryCategorySelection.Automatic,
+      LibraryAddPolicy.resolveAutomatic(
+        listOf(first, category(1, "Renamed")),
+      )
+    }
+  }
+
+  @Test
+  fun `explicit Library Add rejects duplicate category identities`() {
+    val storedCategory = category(1, "Default")
+
+    assertThrows(IllegalStateException::class.java) {
+      LibraryAddPolicy.resolveExplicit(
+        categories = listOf(storedCategory, category(1, "Renamed")),
+        selection = LibraryCategorySelection.of(listOf(storedCategory.id)),
       )
     }
   }

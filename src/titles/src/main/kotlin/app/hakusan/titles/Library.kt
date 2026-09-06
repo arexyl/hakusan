@@ -12,24 +12,18 @@ value class CategoryId(
   }
 }
 
-/** Selects how a title receives its initial category associations. */
-sealed interface LibraryCategorySelection {
-  /** Apply the zero, one, or multiple-category Library Add rules. */
-  data object Automatic : LibraryCategorySelection
-
-  /** A caller-selected, nonempty category identity set. */
-  @ConsistentCopyVisibility
-  data class Explicit private constructor(
-    val categoryIds: Set<CategoryId>,
-  ) : LibraryCategorySelection {
-    companion object {
-      fun of(categoryIds: Iterable<CategoryId>): Explicit {
-        val ownedIds = categoryIds.toOwnedSet()
-        require(ownedIds.isNotEmpty()) {
-          "An explicit category selection must not be empty."
-        }
-        return Explicit(ownedIds)
+/** A caller-selected, nonempty initial category identity set. */
+@ConsistentCopyVisibility
+data class LibraryCategorySelection private constructor(
+  val categoryIds: Set<CategoryId>,
+) {
+  companion object {
+    fun of(categoryIds: Iterable<CategoryId>): LibraryCategorySelection {
+      val ownedIds = categoryIds.toOwnedSet()
+      require(ownedIds.isNotEmpty()) {
+        "An explicit category selection must not be empty."
       }
+      return LibraryCategorySelection(ownedIds)
     }
   }
 }
@@ -86,23 +80,35 @@ sealed interface LibraryAddResult {
     val categories: Set<LibraryCategory>,
   ) : LibraryAddResult
 
+  /** The supplied application title identity is not known locally. */
+  data object TitleNotFound : LibraryAddResult
+}
+
+/** Expected outcome of adding a known title with explicit categories. */
+sealed interface ExplicitLibraryAddResult {
+  /** Includes both a new membership and an idempotent existing membership. */
+  @ConsistentCopyVisibility
+  data class Success internal constructor(
+    val membership: LibraryMembership,
+  ) : ExplicitLibraryAddResult
+
   /** The operation was rejected without changing membership. */
   @ConsistentCopyVisibility
   data class Failure internal constructor(
-    val error: LibraryAddFailure,
-  ) : LibraryAddResult
+    val error: ExplicitLibraryAddFailure,
+  ) : ExplicitLibraryAddResult
 }
 
-/** Caller-actionable reasons why Library Add did not change membership. */
-sealed interface LibraryAddFailure {
+/** Rejections specific to an explicit initial category selection. */
+sealed interface ExplicitLibraryAddFailure {
   /** The supplied application title identity is not known locally. */
-  data object TitleNotFound : LibraryAddFailure
+  data object TitleNotFound : ExplicitLibraryAddFailure
 
   /** At least one explicitly selected category no longer exists. */
   @ConsistentCopyVisibility
   data class CategoriesNotFound private constructor(
     val categoryIds: Set<CategoryId>,
-  ) : LibraryAddFailure {
+  ) : ExplicitLibraryAddFailure {
     init {
       require(categoryIds.isNotEmpty()) {
         "At least one missing category id is required."

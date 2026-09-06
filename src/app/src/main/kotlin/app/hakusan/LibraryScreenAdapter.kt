@@ -4,7 +4,6 @@ import app.hakusan.sdk.AddToLibraryScreenResult
 import app.hakusan.sdk.LibraryScreen
 import app.hakusan.sdk.LibraryScreenService
 import app.hakusan.sdk.ScreenTitleId
-import app.hakusan.titles.LibraryAddFailure
 import app.hakusan.titles.LibraryAddResult
 import app.hakusan.titles.TitleId
 import app.hakusan.titles.Titles
@@ -32,13 +31,6 @@ internal class LibraryScreenAdapter(
     is LibraryAddResult.CategorySelectionRequired ->
       AddToLibraryScreenResult.CategorySelectionRequired
 
-    is LibraryAddResult.Failure -> when (result.error) {
-      LibraryAddFailure.TitleNotFound ->
-        AddToLibraryScreenResult.TitleNotFound
-
-      is LibraryAddFailure.CategoriesNotFound -> error(
-        "Automatic Library Add cannot select missing categories.",
-      )
-    }
+    LibraryAddResult.TitleNotFound -> AddToLibraryScreenResult.TitleNotFound
   }
 }
