@@ -1,5 +1,7 @@
 package app.hakusan.ui
 
+import app.hakusan.sdk.ContinueState
+import app.hakusan.sdk.ContinueUnavailableReason
 import app.hakusan.sdk.DetailsChapterItem
 import app.hakusan.sdk.DetailsScreenFailure
 import app.hakusan.sdk.TitleDetailsScreen
@@ -26,6 +28,7 @@ import androidx.compose.material3.HorizontalFloatingToolbar
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.SideEffect
@@ -66,7 +69,11 @@ internal fun TitleDetailsDestination(
   val owner = remember(ownerKey, browsing) {
     browsing.details(ownerKey)
   }
+  val continueOwner = remember(ownerKey, browsing) {
+    browsing.continueAction(ownerKey)
+  }
   val state = owner.state
+  val continueActionState = continueOwner.state
   LaunchedEffect(browsing, ownerKey) {
     browsing.ensureDetails(ownerKey)
   }
@@ -112,12 +119,16 @@ internal fun TitleDetailsDestination(
           .padding(FloatingIslandEdgeSpacing),
       ) {
         TitleActions(
+          screen = screen,
           isInLibrary = library.isInLibrary(
             titleId = screen.id,
             snapshotMembership = screen.isInLibrary,
           ),
           addState = library.addState(screen.id),
+          continueActionState = continueActionState,
           onLike = { library.addToLibrary(screen.id) },
+          onContinue = { browsing.selectContinue(ownerKey) },
+          onRetryDetails = { browsing.retryDetails(ownerKey) },
           modifier = Modifier.onSizeChanged { size ->
             islandHeightPx = size.height
           },
@@ -250,18 +261,27 @@ private fun TitleActionsIsland(
 
 @Composable
 private fun TitleActions(
+  screen: TitleDetailsScreen,
   isInLibrary: Boolean,
   addState: LibraryAddState,
+  continueActionState: ContinueActionState,
   onLike: () -> Unit,
+  onContinue: () -> Unit,
+  onRetryDetails: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   val addMessage = addState.message()
+  val selectedContinueMessage = continueMessage(
+    screen = screen,
+    actionState = continueActionState,
+  )
+  val showDetailsRetry = needsDetailsRetry(screen, continueActionState)
   Column(
     modifier = modifier,
     horizontalAlignment = Alignment.CenterHorizontally,
     verticalArrangement = Arrangement.spacedBy(8.dp),
   ) {
-    if (addMessage != null) {
+    if (addMessage != null || selectedContinueMessage != null) {
       Surface(
         shape = MaterialTheme.shapes.large,
         color = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -275,6 +295,17 @@ private fun TitleActions(
           addMessage?.let { message ->
             ActionMessage(message)
           }
+          selectedContinueMessage?.let { message ->
+            ActionMessage(message)
+          }
+          if (showDetailsRetry) {
+            TextButton(
+              onClick = onRetryDetails,
+              modifier = Modifier.heightIn(min = 48.dp),
+            ) {
+              Text(stringResource(R.string.retry_title_details))
+            }
+          }
         }
       }
     }
@@ -283,6 +314,11 @@ private fun TitleActions(
         isInLibrary = isInLibrary,
         addState = addState,
         onClick = onLike,
+      )
+      ContinueAction(
+        screenState = screen.continueState,
+        actionState = continueActionState,
+        onClick = onContinue,
       )
     }
   }
@@ -333,6 +369,52 @@ private fun LikeAction(
       },
   ) {
     Text(label)
+  }
+}
+
+@Composable
+private fun ContinueAction(
+  screenState: ContinueState,
+  actionState: ContinueActionState,
+  onClick: () -> Unit,
+) {
+  val enabled = when (actionState) {
+    ContinueActionState.Idle,
+    is ContinueActionState.Selected
+    -> screenState is ContinueState.Ready
+
+    ContinueActionState.Selecting,
+    is ContinueActionState.Unavailable,
+    ContinueActionState.TitleNotFound
+    -> false
+  }
+  val stateDescription = when (actionState) {
+    ContinueActionState.Idle -> when (screenState) {
+      is ContinueState.Ready -> null
+      is ContinueState.Unavailable -> screenState.reason.message()
+    }
+
+    ContinueActionState.Selecting ->
+      stringResource(R.string.continue_selecting)
+
+    is ContinueActionState.Selected ->
+      stringResource(R.string.continue_target_selected_state)
+
+    is ContinueActionState.Unavailable -> actionState.reason.message()
+
+    ContinueActionState.TitleNotFound ->
+      stringResource(R.string.continue_title_not_found)
+  }
+  Button(
+    onClick = onClick,
+    enabled = enabled,
+    modifier = Modifier
+      .heightIn(min = 48.dp)
+      .semantics {
+        stateDescription?.let { this.stateDescription = it }
+      },
+  ) {
+    Text(stringResource(R.string.continue_action))
   }
 }
 
@@ -414,6 +496,64 @@ private fun LibraryAddState.message(): String? = when (this) {
 
   LibraryAddState.TitleNotFound ->
     stringResource(R.string.library_add_title_not_found)
+}
+
+@Composable
+private fun continueMessage(
+  screen: TitleDetailsScreen,
+  actionState: ContinueActionState,
+): String? = when (actionState) {
+  ContinueActionState.Idle -> when (val state = screen.continueState) {
+    is ContinueState.Ready -> null
+    is ContinueState.Unavailable -> state.reason.message()
+  }
+
+  ContinueActionState.Selecting ->
+    stringResource(R.string.continue_selecting)
+
+  is ContinueActionState.Selected -> {
+    val chapter = screen.chapters.singleOrNull { item ->
+      item.id == actionState.target.chapterId &&
+        item.key == actionState.target.chapterKey
+    }
+    if (chapter == null) {
+      stringResource(R.string.continue_target_selected_unknown_chapter)
+    } else {
+      val chapterName = displayName(
+        value = chapter.displayName,
+        fallback = R.string.chapter_name_fallback,
+      )
+      stringResource(R.string.continue_target_selected, chapterName)
+    }
+  }
+
+  is ContinueActionState.Unavailable -> actionState.reason.message()
+
+  ContinueActionState.TitleNotFound ->
+    stringResource(R.string.continue_title_not_found)
+}
+
+private fun needsDetailsRetry(
+  screen: TitleDetailsScreen,
+  actionState: ContinueActionState,
+): Boolean = when (actionState) {
+  is ContinueActionState.Unavailable ->
+    actionState.reason is ContinueUnavailableReason.SavedTargetUnavailable
+
+  ContinueActionState.TitleNotFound -> true
+  else -> screen.continueState.let { state ->
+    state is ContinueState.Unavailable &&
+      state.reason is ContinueUnavailableReason.SavedTargetUnavailable
+  }
+}
+
+@Composable
+private fun ContinueUnavailableReason.message(): String = when (this) {
+  ContinueUnavailableReason.NoAvailableChapter ->
+    stringResource(R.string.continue_no_chapter)
+
+  is ContinueUnavailableReason.SavedTargetUnavailable ->
+    stringResource(R.string.continue_saved_target_unavailable)
 }
 
 @Composable

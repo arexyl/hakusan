@@ -223,6 +223,86 @@ class LibraryStatesAndroidTest {
   }
 
   @Test
+  fun noChapterDisablesVisibleContinue() {
+    val library = ControlledLibraryService()
+    val details = ControlledDetailsService()
+    installHost(library, details)
+    library.emit(EMPTY_LIBRARY)
+    openCatalogDetails(details, DETAILS_A_EMPTY)
+
+    compose.onNodeWithText("Continue").assertIsNotEnabled()
+    compose.onNodeWithText(
+      "No chapter is available for Continue.",
+    ).assertExists()
+    assertTrue(details.continueRequests.isEmpty())
+  }
+
+  @Test
+  fun continueUsesFreshTargetAndOffersRetry() {
+    val library = ControlledLibraryService()
+    val details = ControlledDetailsService()
+    installHost(library, details)
+    library.emit(EMPTY_LIBRARY)
+    openCatalogDetails(details, DETAILS_A_READY)
+
+    compose.onNodeWithText("Continue").performClick()
+    awaitCount(details.continueRequests, 1)
+    assertEquals(listOf(TITLE_A_ID), details.continueRequests)
+    compose.onNodeWithText("Continue").assertIsNotEnabled()
+    compose.onNodeWithText(
+      "Selecting the current Continue target.",
+    ).assertExists()
+
+    details.completeContinue(
+      ContinueSelectionResult.Selected(SECOND_CONTINUE_TARGET),
+    )
+    compose.onNodeWithText(
+      "Continue target selected: Chapter two. " +
+        "Reading has not started.",
+    ).assertExists()
+    compose.onNodeWithText("Continue").assertIsEnabled()
+
+    compose.onNodeWithText("Continue").performClick()
+    awaitCount(details.continueRequests, 2)
+    details.completeContinue(
+      ContinueSelectionResult.Unavailable(SAVED_TARGET_UNAVAILABLE),
+    )
+    compose.onNodeWithText("Continue").assertIsNotEnabled()
+    compose.onNodeWithText(
+      "The saved reading position is not in the current chapter list. " +
+        "Retry the title details.",
+    ).assertExists()
+    compose.onNodeWithText("Retry title details").performClick()
+    awaitCount(details.detailsRequests, 2)
+    compose.onNodeWithText("Loading title").assertExists()
+
+    details.completeDetails(DetailsScreenResult.Success(DETAILS_A_READY))
+    compose.onNodeWithText("First title details.").assertExists()
+    compose.onNodeWithText("Continue").performClick()
+    awaitCount(details.continueRequests, 3)
+    details.completeContinue(
+      ContinueSelectionResult.Selected(FIRST_CONTINUE_TARGET),
+    )
+    compose.onNodeWithText(
+      "Continue target selected: Chapter one. Reading has not started.",
+    ).assertExists()
+
+    compose.onNodeWithText("Continue").performClick()
+    awaitCount(details.continueRequests, 4)
+    details.completeContinue(
+      ContinueSelectionResult.Failure(
+        ContinueSelectionFailure.TitleNotFound,
+      ),
+    )
+    compose.onNodeWithText("Continue").assertIsNotEnabled()
+    compose.onNodeWithText(
+      "Hakusan could not find this title for Continue. " +
+        "Retry the title details.",
+    ).assertExists()
+    compose.onNodeWithText("Retry title details").assertExists()
+  }
+
+  @Test
   fun lastShelfStaysReachableBehindIsland() {
     val library = ControlledLibraryService()
     installHost(library, ControlledDetailsService())
@@ -266,6 +346,45 @@ class LibraryStatesAndroidTest {
     )
   }
 
+  @Test
+  fun lastChapterStaysAboveExpandedActionStatus() {
+    val library = ControlledLibraryService()
+    val details = ControlledDetailsService()
+    val longDetails = detailsWithChapterCount(20)
+    installHost(library, details)
+    library.emit(EMPTY_LIBRARY)
+    openCatalogDetails(details, longDetails)
+
+    compose.onNodeWithText("Continue").performClick()
+    awaitCount(details.continueRequests, 1)
+    details.completeContinue(
+      ContinueSelectionResult.Unavailable(SAVED_TARGET_UNAVAILABLE),
+    )
+    val unavailableMessage =
+      "The saved reading position is not in the current chapter list. " +
+        "Retry the title details."
+    compose.onNodeWithText(unavailableMessage).assertExists()
+
+    val list = compose.onNode(hasScrollAction())
+    val listBottom = list.fetchSemanticsNode().boundsInRoot.bottom
+    val statusTop = compose.onNodeWithText(unavailableMessage)
+      .fetchSemanticsNode()
+      .boundsInRoot
+      .top
+    assertTrue(listBottom > statusTop)
+
+    list.performScrollToIndex(22)
+    list.performTouchInput { swipeUp() }
+    compose.waitForIdle()
+    val finalChapterBottom = compose.onNodeWithContentDescription(
+      "Chapter 20",
+    ).fetchSemanticsNode().boundsInRoot.bottom
+    assertTrue(
+      "Final chapter bottom $finalChapterBottom must be above " +
+        "expanded status top $statusTop",
+      finalChapterBottom < statusTop,
+    )
+  }
 
   private fun installHost(
     library: LibraryScreenService,

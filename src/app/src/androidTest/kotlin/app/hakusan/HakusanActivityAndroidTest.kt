@@ -51,7 +51,7 @@ class HakusanActivityAndroidTest {
     ).assertExists()
     compose.onNodeWithContentDescription("Catalog").assertDoesNotExist()
     compose.onNodeWithContentDescription("Library").assertDoesNotExist()
-    compose.onNodeWithText("Continue").assertDoesNotExist()
+    compose.onNodeWithText("Continue").assertExists()
     compose.onNodeWithText("Like").assertExists()
 
     val openingTop = compose.onNodeWithContentDescription("Chapter 10")

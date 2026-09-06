@@ -58,6 +58,11 @@ class LibraryIntegrationAndroidTest {
       .assertIsSelected()
       .assertHasNoClickAction()
 
+    compose.onNodeWithText("Continue").performClick()
+    waitForText(
+      "Continue target selected: Chapter 10. Reading has not started.",
+    )
+
     compose.onNodeWithText("Back").performClick()
     compose.onNodeWithContentDescription("Library").performClick()
     waitForText("Default")

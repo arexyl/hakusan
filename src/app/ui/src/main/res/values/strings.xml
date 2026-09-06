@@ -12,6 +12,14 @@
   <string name="catalog_empty_body">No sources are available in this build.</string>
   <string name="catalog_empty_title">No sources available</string>
   <string name="catalog_sources">Sources</string>
+  <string name="continue_action">Continue</string>
+  <string name="continue_no_chapter">No chapter is available for Continue.</string>
+  <string name="continue_saved_target_unavailable">The saved reading position is not in the current chapter list. Retry the title details.</string>
+  <string name="continue_selecting">Selecting the current Continue target.</string>
+  <string name="continue_target_selected">Continue target selected: %1$s. Reading has not started.</string>
+  <string name="continue_target_selected_state">Target selected; reading has not started</string>
+  <string name="continue_target_selected_unknown_chapter">Continue target selected. Reading has not started.</string>
+  <string name="continue_title_not_found">Hakusan could not find this title for Continue. Retry the title details.</string>
   <string name="details_chapter_read">Read</string>
   <string name="details_chapters">Chapters</string>
   <string name="details_empty_chapters_body">This source did not provide any chapters.</string>
@@ -53,6 +61,7 @@
   <string name="load_superseded_body">Retry to load this content in the current window.</string>
   <string name="load_superseded_title">This content is loading elsewhere</string>
   <string name="retry">Retry</string>
+  <string name="retry_title_details">Retry title details</string>
   <string name="source_fallback">Source</string>
   <string name="source_name_fallback">Unnamed source</string>
   <string name="title_name_fallback">Unnamed title</string>

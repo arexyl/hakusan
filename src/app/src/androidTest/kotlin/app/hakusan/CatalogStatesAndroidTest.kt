@@ -20,6 +20,7 @@ import app.hakusan.sdk.TitleDetailsScreen
 import app.hakusan.sdk.TitleDetailsScreenService
 import app.hakusan.ui.BrowsingViewModel
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasProgressBarRangeInfo
 import androidx.compose.ui.test.hasScrollAction
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
@@ -89,7 +90,10 @@ class CatalogStatesAndroidTest {
     compose.onNodeWithText("Details without chapters.").assertExists()
     compose.onNodeWithText("No chapters available").assertExists()
     compose.onNodeWithText("Like").assertExists()
-    compose.onNodeWithText("Continue").assertDoesNotExist()
+    compose.onNodeWithText("Continue").assertIsNotEnabled()
+    compose.onNodeWithText(
+      "No chapter is available for Continue.",
+    ).assertExists()
   }
 
   @Test
