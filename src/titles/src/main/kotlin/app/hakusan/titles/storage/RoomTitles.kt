@@ -201,9 +201,9 @@ internal class RoomTitles(
       .map(::toLibraryState)
       .distinctUntilChanged()
 
-  override fun observeReadingProgress(
+  override suspend fun readReadingProgress(
     titleId: TitleId,
-  ): Flow<TitleReadingProgress?> = reading.observeReadingProgress(titleId)
+  ): TitleReadingProgress? = reading.readReadingProgress(titleId)
 
   override suspend fun recordActualPosition(
     update: ActualPositionUpdate,

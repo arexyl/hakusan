@@ -25,10 +25,12 @@ import app.hakusan.sdk.BrowseScreenFailure
 import app.hakusan.sdk.BrowseScreenResult
 import app.hakusan.sdk.ContinueSelectionResult
 import app.hakusan.sdk.ContinueState
+import app.hakusan.sdk.ContinueUnavailableReason
 import app.hakusan.sdk.DetailsScreenFailure
 import app.hakusan.sdk.DetailsScreenResult
 import app.hakusan.sdk.LibraryResumeState
 import app.hakusan.sdk.LibraryTitleProgress
+import app.hakusan.sdk.ScreenContentUnitKind
 import app.hakusan.sdk.ScreenReadingStart
 import app.hakusan.sdk.ScreenSourceId
 import app.hakusan.sdk.ScreenTitleId
@@ -36,9 +38,11 @@ import app.hakusan.titles.ActualPositionResult
 import app.hakusan.titles.ActualPositionUpdate
 import app.hakusan.titles.CategoryId
 import app.hakusan.titles.ChapterBoundaryCompletion
+import app.hakusan.titles.ChapterId
 import app.hakusan.titles.ChapterReconciliationResult
 import app.hakusan.titles.CompletionResult
 import app.hakusan.titles.ExplicitLibraryAddResult
+import app.hakusan.titles.FinalChapterCompletion
 import app.hakusan.titles.LibraryAddResult
 import app.hakusan.titles.LibraryCategorySelection
 import app.hakusan.titles.ProgressEventRecency
@@ -188,7 +192,8 @@ class ScreenAdaptersAndroidTest {
       assertTrue(
         store.titles.addToLibrary(zuluId) is LibraryAddResult.Success,
       )
-      assertTrue(
+      assertSame(
+        CompletionResult.Success,
         store.titles.completeChapterBoundary(
           ChapterBoundaryCompletion(
             completedChapterId = zuluSnapshot.snapshot.chapters[0].id,
@@ -200,7 +205,7 @@ class ScreenAdaptersAndroidTest {
             ),
             recency = ProgressEventRecency.CURRENT,
           ),
-        ) is CompletionResult.Success,
+        ),
       )
 
       val alphaAlias = SourceTitleAlias("mapping.source", "alpha")
@@ -305,6 +310,172 @@ class ScreenAdaptersAndroidTest {
         AddToLibraryScreenResult.Success,
         graph.libraryService.addToLibrary(screenTitleId),
       )
+    }
+  }
+
+  @Test
+  fun continueSelectionMapsResumeAndUnavailableTarget(): Unit = runBlocking {
+    withTimeout(TEST_TIMEOUT_MILLIS) {
+      val graph = graph(DeterministicSource())
+      val details = graph.detailsService
+        .loadDetails(TITLE_KEY.toScreenKey())
+        .successScreen()
+      assertSame(
+        AddToLibraryScreenResult.Success,
+        graph.libraryService.addToLibrary(details.id),
+      )
+      val middle = details.chapters[1]
+      assertSame(
+        ActualPositionResult.Persisted,
+        store.titles.recordActualPosition(
+          ActualPositionUpdate(
+            position = ReadingPosition(
+              titleId = TitleId(details.id.value),
+              chapterId = ChapterId(middle.id.value),
+              unitKind = ReadingContentUnitKind.PROVIDER_SEGMENT,
+              unitIndex = 2,
+            ),
+            recency = ProgressEventRecency.CURRENT,
+          ),
+        ),
+      )
+
+      val selected = graph.continueService.selectContinue(details.id)
+        as ContinueSelectionResult.Selected
+      assertEquals(middle.id, selected.target.chapterId)
+      assertEquals(middle.key, selected.target.chapterKey)
+      val resume = selected.target.start as ScreenReadingStart.Resume
+      assertEquals(
+        ScreenContentUnitKind.PROVIDER_SEGMENT,
+        resume.position.unitKind,
+      )
+      assertEquals(2, resume.position.unitIndex)
+
+      val source = ControlledRefreshSource()
+      val refreshedGraph = graph(source)
+      val refresh = async(start = CoroutineStart.UNDISPATCHED) {
+        refreshedGraph.detailsService.loadDetails(TITLE_KEY.toScreenKey())
+      }
+      source.awaitRefresh().complete(
+        listOf(
+          chapter("opening", "Chapter 10"),
+          chapter("final", "Chapter 1"),
+        ),
+      )
+      val refreshed = refresh.await().successScreen()
+      val screenReason =
+        (refreshed.continueState as ContinueState.Unavailable).reason
+      val selectionReason = (
+        refreshedGraph.continueService.selectContinue(details.id)
+          as ContinueSelectionResult.Unavailable
+        ).reason
+      assertEquals(screenReason, selectionReason)
+      val unavailable = selectionReason as
+        ContinueUnavailableReason.SavedTargetUnavailable
+      assertEquals(middle.id, unavailable.position.chapterId)
+      assertEquals(middle.key, unavailable.chapterKey)
+      assertEquals(2, unavailable.position.unitIndex)
+    }
+  }
+
+  @Test
+  fun continueSelectionMapsNoChapter(): Unit = runBlocking {
+    withTimeout(TEST_TIMEOUT_MILLIS) {
+      val source = ControlledRefreshSource()
+      val graph = graph(source)
+      val load = async(start = CoroutineStart.UNDISPATCHED) {
+        graph.detailsService.loadDetails(TITLE_KEY.toScreenKey())
+      }
+      source.awaitRefresh().complete(emptyList())
+      val details = load.await().successScreen()
+
+      assertEquals(
+        ContinueState.Unavailable(
+          ContinueUnavailableReason.NoAvailableChapter,
+        ),
+        details.continueState,
+      )
+      assertEquals(
+        ContinueSelectionResult.Unavailable(
+          ContinueUnavailableReason.NoAvailableChapter,
+        ),
+        graph.continueService.selectContinue(details.id),
+      )
+    }
+  }
+
+  @Test
+  fun continueSelectionReportsMissingTitle(): Unit = runBlocking {
+    withTimeout(TEST_TIMEOUT_MILLIS) {
+      val graph = graph(DeterministicSource())
+
+      assertSame(
+        ContinueSelectionResult.TitleNotFound,
+        graph.continueService.selectContinue(
+          ScreenTitleId(
+            UUID.fromString("00000000-0000-7000-8000-000000000001"),
+          ),
+        ),
+      )
+    }
+  }
+
+  @Test
+  fun continueSelectionMapsAllReadFinalFallback(): Unit = runBlocking {
+    withTimeout(TEST_TIMEOUT_MILLIS) {
+      val graph = graph(DeterministicSource())
+      val details = graph.detailsService
+        .loadDetails(TITLE_KEY.toScreenKey())
+        .successScreen()
+      val titleId = TitleId(details.id.value)
+      val opening = details.chapters[0]
+      val middle = details.chapters[1]
+      val final = details.chapters[2]
+      assertSame(
+        CompletionResult.Success,
+        store.titles.completeChapterBoundary(
+          ChapterBoundaryCompletion(
+            completedChapterId = ChapterId(opening.id.value),
+            startedPosition = ReadingPosition(
+              titleId = titleId,
+              chapterId = ChapterId(middle.id.value),
+              unitKind = ReadingContentUnitKind.PROVIDER_SEGMENT,
+              unitIndex = 0,
+            ),
+            recency = ProgressEventRecency.CURRENT,
+          ),
+        ),
+      )
+      assertSame(
+        CompletionResult.Success,
+        store.titles.completeChapterBoundary(
+          ChapterBoundaryCompletion(
+            completedChapterId = ChapterId(middle.id.value),
+            startedPosition = ReadingPosition(
+              titleId = titleId,
+              chapterId = ChapterId(final.id.value),
+              unitKind = ReadingContentUnitKind.PAGE,
+              unitIndex = 0,
+            ),
+            recency = ProgressEventRecency.CURRENT,
+          ),
+        ),
+      )
+      assertSame(
+        CompletionResult.Success,
+        store.titles.completeFinalChapter(
+          FinalChapterCompletion(
+            titleId = titleId,
+            chapterId = ChapterId(final.id.value),
+          ),
+        ),
+      )
+
+      val selected = graph.continueService.selectContinue(details.id)
+        as ContinueSelectionResult.Selected
+      assertEquals(final.id, selected.target.chapterId)
+      assertEquals(final.key, selected.target.chapterKey)
+      assertSame(ScreenReadingStart.Beginning, selected.target.start)
     }
   }
 
@@ -498,14 +669,14 @@ class ScreenAdaptersAndroidTest {
       title: SourceTitleKey,
     ): SourceResult<SourceTitleDetails, SourceDetailsFailure> =
       SourceResult.Success(
-      SourceTitleDetails(
-        title = SourceTitle(
-          key = SourceTitleKey(identity, "foreign"),
-          displayName = "Foreign",
+        SourceTitleDetails(
+          title = SourceTitle(
+            key = SourceTitleKey(identity, "foreign"),
+            displayName = "Foreign",
+          ),
+          description = null,
         ),
-        description = null,
-      ),
-    )
+      )
   }
 
   private class InvalidChapterSource(

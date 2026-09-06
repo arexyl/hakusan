@@ -52,10 +52,10 @@ interface Titles {
    */
   fun observeLibrary(): Flow<LibraryState>
 
-  /** Observes current canonical chapters, read status, and Library resume. */
-  fun observeReadingProgress(
+  /** Reads current canonical chapters, read status, and Library resume once. */
+  suspend fun readReadingProgress(
     titleId: TitleId,
-  ): Flow<TitleReadingProgress?>
+  ): TitleReadingProgress?
 
   /**
    * Persists one current actual position only for a Library title. Reordered

@@ -21,7 +21,6 @@ import app.hakusan.titles.Titles
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import java.util.concurrent.ConcurrentHashMap
-import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -230,7 +229,7 @@ private class TitleRefreshCoordinator(
     }
 
     is ChapterReconciliationResult.Success -> {
-      val progress = titles.observeReadingProgress(titleId).first()
+      val progress = titles.readReadingProgress(titleId)
         ?: return ChapterLoadResult.Failure(
           DetailsScreenFailure.LocalTitleNotFound,
         )

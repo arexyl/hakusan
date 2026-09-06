@@ -7,7 +7,6 @@ import app.hakusan.titles.TitleId
 import app.hakusan.titles.Titles
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
-import kotlinx.coroutines.flow.first
 
 /** Adapts current title progress to the screen-facing Continue contract. */
 @Inject
@@ -18,7 +17,7 @@ internal class ContinueSelectionAdapter(
   override suspend fun selectContinue(
     titleId: ScreenTitleId,
   ): ContinueSelectionResult {
-    val progress = titles.observeReadingProgress(TitleId(titleId.value)).first()
+    val progress = titles.readReadingProgress(TitleId(titleId.value))
       ?: return ContinueSelectionResult.TitleNotFound
     return progress.toContinueState().toSelectionResult()
   }
