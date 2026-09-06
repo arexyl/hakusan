@@ -18,7 +18,6 @@ data class TitleDetailsScreen private constructor(
   val displayName: String,
   val description: String?,
   val chapters: List<DetailsChapterItem>,
-  val isInLibrary: Boolean,
   val continueState: ContinueState,
 ) {
   companion object {
@@ -29,7 +28,6 @@ data class TitleDetailsScreen private constructor(
       displayName: String,
       description: String?,
       chapters: Iterable<DetailsChapterItem>,
-      isInLibrary: Boolean,
       continueState: ContinueState,
     ): TitleDetailsScreen {
       val ownedChapters = chapters.toOwnedList()
@@ -61,7 +59,6 @@ data class TitleDetailsScreen private constructor(
         displayName = displayName,
         description = description,
         chapters = ownedChapters,
-        isInLibrary = isInLibrary,
         continueState = continueState,
       )
     }

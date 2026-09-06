@@ -20,6 +20,8 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
@@ -36,8 +38,9 @@ internal fun LibraryDestination(
   contentBottomPadding: Dp,
   modifier: Modifier = Modifier,
 ) {
+  val state by model.libraryState.collectAsState()
   LibraryContent(
-    state = model.libraryState,
+    state = state,
     onTitleSelected = onTitleSelected,
     contentBottomPadding = contentBottomPadding,
     modifier = modifier,

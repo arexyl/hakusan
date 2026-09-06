@@ -32,9 +32,9 @@ import app.hakusan.sdk.ScreenTitleKey
 import app.hakusan.sdk.TitleDetailsScreen
 import app.hakusan.sdk.TitleDetailsScreenService
 import app.hakusan.ui.CatalogViewModel
-import app.hakusan.ui.TitleDetailsViewModel
 import app.hakusan.ui.HakusanApp
 import app.hakusan.ui.LibraryViewModel
+import app.hakusan.ui.TitleDetailsViewModel
 import androidx.activity.compose.setContent
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.test.assertHasClickAction
@@ -129,7 +129,9 @@ class LibraryStatesAndroidTest {
     compose.onNodeWithText("Back").performClick()
     compose.onNodeWithText("Reading now").assertExists()
     compose.onNodeWithText("Second title").assertExists()
-    assertEquals(1, library.observations.get())
+    library.emit(EMPTY_LIBRARY)
+    waitForText("Your Library is empty")
+    compose.onNodeWithText("Reading now").assertDoesNotExist()
   }
 
   @Test
@@ -161,6 +163,20 @@ class LibraryStatesAndroidTest {
     compose.onNodeWithText("Default").assertExists()
     compose.onNodeWithText("1 title").assertExists()
     compose.onNodeWithText("First title").assertExists()
+  }
+
+  @Test
+  fun likeWaitsForCommittedMembershipObservation() {
+    val library = ControlledLibraryService()
+    val details = ControlledDetailsService()
+    installHost(library, details)
+    openCatalogDetails(details, DETAILS_A_READY)
+
+    compose.onNodeWithText("Like").assertIsNotEnabled()
+
+    library.emit(EMPTY_LIBRARY)
+    compose.waitForIdle()
+    compose.onNodeWithText("Like").assertIsEnabled()
   }
 
   @Test
@@ -485,15 +501,17 @@ class LibraryStatesAndroidTest {
 
   private class ControlledLibraryService : LibraryScreenService {
     private val screens = Channel<LibraryScreen>(Channel.UNLIMITED)
+    private val libraryTitleIds =
+      Channel<Set<ScreenTitleId>>(Channel.UNLIMITED)
     private val addCompletions =
       Channel<AddToLibraryScreenResult>(Channel.UNLIMITED)
-    val observations = AtomicInteger()
     val addRequests = CopyOnWriteArrayList<ScreenTitleId>()
 
-    override fun observeLibrary(): Flow<LibraryScreen> {
-      observations.incrementAndGet()
-      return screens.receiveAsFlow()
-    }
+    override fun observeLibrary(): Flow<LibraryScreen> =
+      screens.receiveAsFlow()
+
+    override fun observeLibraryTitleIds(): Flow<Set<ScreenTitleId>> =
+      libraryTitleIds.receiveAsFlow()
 
     override suspend fun addToLibrary(
       titleId: ScreenTitleId,
@@ -503,6 +521,9 @@ class LibraryStatesAndroidTest {
     }
 
     fun emit(screen: LibraryScreen) {
+      check(libraryTitleIds.trySend(screen.titlesById.keys).isSuccess) {
+        "Unable to emit controlled Library membership."
+      }
       check(screens.trySend(screen).isSuccess) {
         "Unable to emit a controlled Library snapshot."
       }
@@ -644,7 +665,6 @@ class LibraryStatesAndroidTest {
       displayName = TITLE_A.displayName,
       description = "First title details.",
       chapters = listOf(CHAPTER_A, CHAPTER_B),
-      isInLibrary = false,
       continueState = ContinueState.Ready(FIRST_CONTINUE_TARGET),
     )
     val DETAILS_A_EMPTY = TitleDetailsScreen.of(
@@ -654,7 +674,6 @@ class LibraryStatesAndroidTest {
       displayName = TITLE_A.displayName,
       description = "Chapterless title details.",
       chapters = emptyList(),
-      isInLibrary = false,
       continueState = ContinueState.Unavailable(
         ContinueUnavailableReason.NoAvailableChapter,
       ),
@@ -674,7 +693,6 @@ class LibraryStatesAndroidTest {
           isRead = false,
         ),
       ),
-      isInLibrary = true,
       continueState = ContinueState.Ready(
         ContinueTarget(
           titleId = TITLE_B_ID,
@@ -794,8 +812,7 @@ class LibraryStatesAndroidTest {
         displayName = TITLE_A.displayName,
         description = "Scrollable title details.",
         chapters = chapters,
-        isInLibrary = false,
-        continueState = ContinueState.Ready(
+          continueState = ContinueState.Ready(
           ContinueTarget(
             titleId = TITLE_A_ID,
             chapterId = first.id,

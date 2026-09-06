@@ -110,6 +110,15 @@ interface LibraryScreenService {
    */
   fun observeLibrary(): Flow<LibraryScreen>
 
+  /**
+   * Observes the current unordered title identities with committed Library
+   * membership, followed by committed membership changes. Each emitted set is
+   * an immutable owned snapshot until the collector cancels.
+   *
+   * Unexpected failures and cancellation propagate to the collector.
+   */
+  fun observeLibraryTitleIds(): Flow<Set<ScreenTitleId>>
+
   /** Adds a known title using the current automatic category policy. */
   suspend fun addToLibrary(
     titleId: ScreenTitleId,

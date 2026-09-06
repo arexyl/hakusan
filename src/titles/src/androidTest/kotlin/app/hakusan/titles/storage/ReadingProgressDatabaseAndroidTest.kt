@@ -37,10 +37,14 @@ import java.util.UUID
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
+import kotlinx.coroutines.cancelAndJoin
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.collect
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -1305,6 +1309,37 @@ class ReadingProgressDatabaseAndroidTest {
   }
 
   @Test
+  fun progressWritesDoNotInvalidateMembershipRows(): Unit = runBlocking {
+    val firstAlias = SourceTitleAlias("source", "first-membership")
+    val firstId = createTitle(firstAlias, addToLibrary = true)
+    val secondId = createTitle(SourceTitleAlias("source", "second-membership"))
+    val emissions = Channel<List<UUID>>(Channel.UNLIMITED)
+    val collector = launch(start = CoroutineStart.UNDISPATCHED) {
+      database.titlesDao().observeLibraryTitleIds().collect(emissions::send)
+    }
+    assertEquals(
+      listOf(firstId.value),
+      withTimeout(TEST_TIMEOUT_MILLIS) { emissions.receive() },
+    )
+
+    val chapter = reconcile(firstAlias, "only" to "Only").chapters.single()
+    record(position(firstId, chapter, unitIndex = 2))
+    titles.completeFinalChapter(FinalChapterCompletion(firstId, chapter.id))
+
+    assertNull(
+      withTimeoutOrNull(NON_MEMBERSHIP_INVALIDATION_MILLIS) {
+        emissions.receive()
+      },
+    )
+    titles.addToLibrary(secondId)
+    assertEquals(
+      setOf(firstId.value, secondId.value),
+      withTimeout(TEST_TIMEOUT_MILLIS) { emissions.receive() }.toSet(),
+    )
+    collector.cancelAndJoin()
+  }
+
+  @Test
   fun boundaryCommitsCoherentProgress(): Unit =
     runBlocking {
       val alias = SourceTitleAlias("source", "title")
@@ -1643,6 +1678,7 @@ class ReadingProgressDatabaseAndroidTest {
   )
 
   private companion object {
+    const val NON_MEMBERSHIP_INVALIDATION_MILLIS = 500L
     const val TEST_TIMEOUT_MILLIS = 5_000L
     val FIRST_CHAPTER_ID: UUID = uuid(1)
     val SECOND_CHAPTER_ID: UUID = uuid(2)

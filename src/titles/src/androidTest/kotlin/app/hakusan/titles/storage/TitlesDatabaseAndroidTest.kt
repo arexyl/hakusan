@@ -24,6 +24,9 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.onEach
+import kotlinx.coroutines.flow.take
+import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withTimeout
@@ -238,6 +241,41 @@ class TitlesDatabaseAndroidTest {
       assertEquals("Updated", updatedTitle.displayName)
       assertEquals(null, updatedTitle.description)
     }
+
+  @Test
+  fun membershipIdsAreOwnedAndSuppressEqualTitleChanges(): Unit = runBlocking {
+    val firstId = titles.reconcileSourceTitle(title("source", "first"))
+    titles.addToLibrary(firstId)
+    val initialObserved = CompletableDeferred<Unit>()
+    val observations = async(start = CoroutineStart.UNDISPATCHED) {
+      withTimeout(TEST_TIMEOUT_MILLIS) {
+        titles.observeLibraryTitleIds()
+          .onEach { initialObserved.complete(Unit) }
+          .take(2)
+          .toList()
+      }
+    }
+    initialObserved.await()
+
+    titles.reconcileSourceTitle(
+      title(
+        source = "source",
+        key = "first",
+        displayName = "Updated",
+      ),
+    )
+    val secondId = titles.reconcileSourceTitle(title("source", "second"))
+    titles.addToLibrary(secondId)
+
+    val snapshots = observations.await()
+    assertEquals(
+      listOf(setOf(firstId), setOf(firstId, secondId)),
+      snapshots,
+    )
+    assertThrows(UnsupportedOperationException::class.java) {
+      (snapshots.first() as MutableSet).clear()
+    }
+  }
 
   @Test
   fun automaticAddUsesTheOnlyExistingCategory(): Unit = runBlocking {

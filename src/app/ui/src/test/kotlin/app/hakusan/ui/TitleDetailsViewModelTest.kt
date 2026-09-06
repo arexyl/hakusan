@@ -354,7 +354,6 @@ class TitleDetailsViewModelTest {
           isRead = false,
         ),
       ),
-      isInLibrary = false,
       continueState = ContinueState.Ready(TARGET),
     )
     val UNAVAILABLE_SCREEN = TitleDetailsScreen.of(
@@ -364,7 +363,6 @@ class TitleDetailsViewModelTest {
       displayName = "Title",
       description = null,
       chapters = emptyList(),
-      isInLibrary = false,
       continueState = ContinueState.Unavailable(
         ContinueUnavailableReason.NoAvailableChapter,
       ),

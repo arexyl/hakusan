@@ -74,6 +74,9 @@ private object PreviewLibraryService : LibraryScreenService {
     LibraryScreen.of(emptyMap(), emptyList()),
   )
 
+  override fun observeLibraryTitleIds(): Flow<Set<ScreenTitleId>> =
+    flowOf(emptySet())
+
   override suspend fun addToLibrary(
     titleId: ScreenTitleId,
   ): AddToLibraryScreenResult = error(

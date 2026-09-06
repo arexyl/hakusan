@@ -109,7 +109,7 @@ class TitleDetailsScreenContractTest {
   }
 
   @Test
-  fun `available resume is current and unread regardless of membership`() {
+  fun `available resume is current and unread`() {
     val position = ScreenReadingPosition(
       titleId = titleId,
       chapterId = middle.id,
@@ -122,23 +122,15 @@ class TitleDetailsScreenContractTest {
       chapterKey = middle.key,
       start = ScreenReadingStart.Resume(position),
     )
-    val libraryScreen = details(
+    val screen = details(
       chapters = listOf(opening, middle, final),
-      isInLibrary = true,
-      continueState = ContinueState.Ready(target),
-    )
-    val transientScreen = details(
-      chapters = listOf(opening, middle, final),
-      isInLibrary = false,
       continueState = ContinueState.Ready(target),
     )
 
-    assertEquals(ContinueState.Ready(target), libraryScreen.continueState)
-    assertEquals(ContinueState.Ready(target), transientScreen.continueState)
+    assertEquals(ContinueState.Ready(target), screen.continueState)
     assertThrows(IllegalArgumentException::class.java) {
       details(
         chapters = listOf(opening, middle.copy(isRead = true), final),
-        isInLibrary = true,
         continueState = ContinueState.Ready(target),
       )
     }
@@ -198,7 +190,6 @@ class TitleDetailsScreenContractTest {
     )
     val screen = details(
       chapters = listOf(opening, middle, final),
-      isInLibrary = false,
       continueState = ContinueState.Unavailable(reason),
     )
 
@@ -211,7 +202,6 @@ class TitleDetailsScreenContractTest {
           final,
           chapter(OMITTED_CHAPTER_ID, "omitted", "Omitted"),
         ),
-        isInLibrary = true,
         continueState = ContinueState.Unavailable(reason),
       )
     }
@@ -247,7 +237,6 @@ class TitleDetailsScreenContractTest {
   private fun details(
     chapters: Iterable<DetailsChapterItem>,
     continueState: ContinueState,
-    isInLibrary: Boolean = false,
   ): TitleDetailsScreen = TitleDetailsScreen.of(
     id = titleId,
     key = titleKey,
@@ -255,7 +244,6 @@ class TitleDetailsScreenContractTest {
     displayName = "",
     description = "  Description  ",
     chapters = chapters,
-    isInLibrary = isInLibrary,
     continueState = continueState,
   )
 

@@ -31,7 +31,6 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
@@ -97,11 +96,6 @@ internal fun TitleDetailsDestination(
 
     if (state is TitleDetailsEntryState.Content) {
       val screen = state.screen
-      if (screen.isInLibrary) {
-        SideEffect {
-          libraryModel.confirmMembership(screen.id)
-        }
-      }
       TitleActionsIsland(
         modifier = Modifier
           .align(Alignment.BottomCenter)
@@ -114,10 +108,7 @@ internal fun TitleDetailsDestination(
       ) {
         TitleActions(
           screen = screen,
-          isInLibrary = libraryModel.isInLibrary(
-            titleId = screen.id,
-            snapshotMembership = screen.isInLibrary,
-          ),
+          membership = libraryModel.membership(screen.id),
           addState = libraryModel.addState(screen.id),
           continueActionState = state.continueAction,
           onLike = { libraryModel.addToLibrary(screen.id) },
@@ -256,7 +247,7 @@ private fun TitleActionsIsland(
 @Composable
 private fun TitleActions(
   screen: TitleDetailsScreen,
-  isInLibrary: Boolean,
+  membership: LibraryMembership,
   addState: LibraryAddState,
   continueActionState: ContinueActionState,
   onLike: () -> Unit,
@@ -264,7 +255,12 @@ private fun TitleActions(
   onRetryDetails: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  val addMessage = addState.message()
+  val addMessage = when (membership) {
+    LibraryMembership.Loading -> stringResource(R.string.library_loading)
+    LibraryMembership.NotMember,
+    LibraryMembership.Member,
+    -> addState.message()
+  }
   val selectedContinueMessage = continueMessage(
     screen = screen,
     actionState = continueActionState,
@@ -305,7 +301,7 @@ private fun TitleActions(
     }
     HorizontalFloatingToolbar(expanded = true) {
       LikeAction(
-        isInLibrary = isInLibrary,
+        membership = membership,
         addState = addState,
         onClick = onLike,
       )
@@ -320,12 +316,12 @@ private fun TitleActions(
 
 @Composable
 private fun LikeAction(
-  isInLibrary: Boolean,
+  membership: LibraryMembership,
   addState: LibraryAddState,
   onClick: () -> Unit,
 ) {
   val label = stringResource(R.string.like)
-  if (isInLibrary) {
+  if (membership == LibraryMembership.Member) {
     val membershipState = stringResource(R.string.library_membership_selected)
     Surface(
       modifier = Modifier
@@ -351,10 +347,14 @@ private fun LikeAction(
 
   val adding = addState == LibraryAddState.Adding
   val addDescription = stringResource(R.string.add_to_library)
-  val addStateDescription = addState.message()
+  val addStateDescription = if (membership == LibraryMembership.Loading) {
+    stringResource(R.string.library_loading)
+  } else {
+    addState.message()
+  }
   Button(
     onClick = onClick,
-    enabled = !adding,
+    enabled = membership == LibraryMembership.NotMember && !adding,
     modifier = Modifier
       .heightIn(min = 48.dp)
       .semantics {

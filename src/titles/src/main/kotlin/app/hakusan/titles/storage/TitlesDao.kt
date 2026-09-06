@@ -73,6 +73,18 @@ internal abstract class TitlesDao {
 
   @Query(LIBRARY_QUERY)
   abstract fun observeLibraryRows(): Flow<List<LibraryRow>>
+
+  @Query(
+    """
+    SELECT titles.id
+    FROM titles
+    WHERE titles.storage_id IN (
+      SELECT title_categories.title_storage_id
+      FROM title_categories
+    )
+    """,
+  )
+  abstract fun observeLibraryTitleIds(): Flow<List<UUID>>
 }
 
 internal data class LibraryRow(

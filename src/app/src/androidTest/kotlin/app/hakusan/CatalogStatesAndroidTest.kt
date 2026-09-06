@@ -408,7 +408,6 @@ class CatalogStatesAndroidTest {
       displayName = TITLE.displayName,
       description = "Details without chapters.",
       chapters = emptyList(),
-      isInLibrary = false,
       continueState = ContinueState.Unavailable(
         ContinueUnavailableReason.NoAvailableChapter,
       ),
@@ -430,7 +429,6 @@ class CatalogStatesAndroidTest {
       displayName = title.displayName,
       description = null,
       chapters = emptyList(),
-      isInLibrary = false,
       continueState = ContinueState.Unavailable(
         ContinueUnavailableReason.NoAvailableChapter,
       ),

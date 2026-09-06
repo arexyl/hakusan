@@ -52,6 +52,14 @@ interface Titles {
    */
   fun observeLibrary(): Flow<LibraryState>
 
+  /**
+   * Observes the current unordered identities with committed Library
+   * membership, followed by committed membership changes. Each emitted set is
+   * an immutable owned snapshot. Collection owns the observation lifetime;
+   * cancellation and unexpected failures propagate to the collector.
+   */
+  fun observeLibraryTitleIds(): Flow<Set<TitleId>>
+
   /** Reads current canonical chapters, read status, and Library resume once. */
   suspend fun readReadingProgress(
     titleId: TitleId,
