@@ -46,6 +46,11 @@ interface Titles {
    */
   fun observeLibraryShelves(): Flow<LibraryShelfState>
 
+  /**
+   * Observes shelves and compact reading progress as one coherent snapshot.
+   */
+  fun observeLibrarySummary(): Flow<LibrarySummaryState>
+
   /** Observes current canonical chapters, read status, and Library resume. */
   fun observeReadingProgress(
     titleId: TitleId,

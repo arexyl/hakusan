@@ -13,6 +13,7 @@ import app.hakusan.titles.ChapterReconciliationResult
 import app.hakusan.titles.CompletionResult
 import app.hakusan.titles.FinalChapterCompletion
 import app.hakusan.titles.LibraryAddResult
+import app.hakusan.titles.LibraryResumeAvailability
 import app.hakusan.titles.ProgressEventRecency
 import app.hakusan.titles.ReadingContentUnitKind
 import app.hakusan.titles.ReadingPosition
@@ -1230,6 +1231,74 @@ class ReadingProgressDatabaseAndroidTest {
       )
       assertFalse(progress.libraryResumePosition?.isCurrentlyAvailable ?: true)
     }
+
+  @Test
+  fun librarySummaryTracksCountsAndResumeAvailability(): Unit = runBlocking {
+    val alias = SourceTitleAlias("source", "summary-title")
+    val titleId = createTitle(alias, addToLibrary = true)
+    val snapshot = reconcile(
+      alias,
+      "opening" to "Opening",
+      "middle" to "Middle",
+      "final" to "Final",
+    )
+
+    val initial = titles.observeLibrarySummary().first()
+      .progressByTitleId
+      .getValue(titleId)
+    assertEquals(3, initial.chapterCount)
+    assertEquals(0, initial.readChapterCount)
+    assertEquals(LibraryResumeAvailability.NONE, initial.resumeAvailability)
+
+    val availableInitial = CompletableDeferred<Unit>()
+    val availableUpdate = async(start = CoroutineStart.UNDISPATCHED) {
+      withTimeout(TEST_TIMEOUT_MILLIS) {
+        titles.observeLibrarySummary().first { summary ->
+          availableInitial.complete(Unit)
+          summary.progressByTitleId[titleId]?.resumeAvailability ==
+            LibraryResumeAvailability.AVAILABLE
+        }
+      }
+    }
+    availableInitial.await()
+    record(position(titleId, snapshot.chapters[1], unitIndex = 4))
+    val available = availableUpdate.await().progressByTitleId.getValue(titleId)
+    assertEquals(
+      LibraryResumeAvailability.AVAILABLE,
+      available.resumeAvailability,
+    )
+
+    val unavailableInitial = CompletableDeferred<Unit>()
+    val unavailableUpdate = async(start = CoroutineStart.UNDISPATCHED) {
+      withTimeout(TEST_TIMEOUT_MILLIS) {
+        titles.observeLibrarySummary().first { summary ->
+          unavailableInitial.complete(Unit)
+          val progress = summary.progressByTitleId[titleId]
+          progress?.readChapterCount == 1 &&
+            progress.resumeAvailability ==
+            LibraryResumeAvailability.TEMPORARILY_UNAVAILABLE
+        }
+      }
+    }
+    unavailableInitial.await()
+    val current = reconcile(
+      alias,
+      "opening" to "Opening",
+      "final" to "Final",
+    )
+    titles.completeFinalChapter(
+      FinalChapterCompletion(titleId, current.chapters.last().id),
+    )
+    val unavailable = unavailableUpdate.await()
+      .progressByTitleId
+      .getValue(titleId)
+    assertEquals(2, unavailable.chapterCount)
+    assertEquals(1, unavailable.readChapterCount)
+    assertEquals(
+      LibraryResumeAvailability.TEMPORARILY_UNAVAILABLE,
+      unavailable.resumeAvailability,
+    )
+  }
 
   @Test
   fun boundaryObservationPublishesOnlyCoherentCommittedProgress(): Unit =
