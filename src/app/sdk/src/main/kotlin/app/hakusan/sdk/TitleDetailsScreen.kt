@@ -93,9 +93,6 @@ sealed interface DetailsScreenFailure {
   data object InvalidTitleObservation : DetailsScreenFailure
 
   data object InvalidChapterSnapshot : DetailsScreenFailure
-
-  /** Reconciliation no longer found the title established by this load. */
-  data object LocalTitleNotFound : DetailsScreenFailure
 }
 
 /** Screen-facing loading of one title and its current chapter state. */

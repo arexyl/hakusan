@@ -26,9 +26,9 @@ import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Test
 
-class TitleDetailsScreenAdapterTest {
+class WholeTitleLoadCoordinatorTest {
   @Test
-  fun `older details completion is rejected before persistence`() =
+  fun `newer attempt rejects older details before chapter refresh`() =
     runBlocking {
       withTimeout(TEST_TIMEOUT_MILLIS) {
         val source = ControlledDetailsSource()
