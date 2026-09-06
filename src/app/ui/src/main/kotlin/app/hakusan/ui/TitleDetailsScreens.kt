@@ -8,19 +8,14 @@ import app.hakusan.sdk.TitleDetailsScreen
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.WindowInsets
-import androidx.compose.foundation.layout.WindowInsetsSides
-import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
-import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
-import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.width
-import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.material3.Button
@@ -31,15 +26,10 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.clearAndSetSemantics
@@ -49,106 +39,48 @@ import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.stateDescription
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 @Composable
 internal fun TitleDetailsDestination(
-  destination: PrimaryDestination,
+  entryId: PresentationEntryId,
   route: TitleDetailsRoute,
-  browsingModel: () -> BrowsingViewModel,
-  libraryModel: () -> LibraryViewModel,
+  model: TitleDetailsViewModel,
   onBack: () -> Unit,
+  contentPadding: PaddingValues,
   modifier: Modifier = Modifier,
 ) {
-  val browsing = remember { browsingModel() }
-  val library = remember { libraryModel() }
-  val ownerKey = remember(destination, route) {
-    DetailsOwnerKey(destination, route)
+  val titleKey = remember(route) {
+    route.toScreenTitleKey()
   }
-  val owner = remember(ownerKey, browsing) {
-    browsing.details(ownerKey)
+  val stateHolder = remember(model, entryId, titleKey) {
+    model.state(entryId, titleKey)
   }
-  val continueOwner = remember(ownerKey, browsing) {
-    browsing.continueAction(ownerKey)
-  }
-  val state = owner.state
-  val continueActionState = continueOwner.state
-  LaunchedEffect(browsing, ownerKey) {
-    browsing.ensureDetails(ownerKey)
+  val state by stateHolder
+  LaunchedEffect(model, entryId) {
+    model.ensureDetails(entryId)
   }
 
-  val safeBottom = WindowInsets.safeDrawing
-    .only(WindowInsetsSides.Bottom)
-    .asPaddingValues()
-    .calculateBottomPadding()
-  var islandHeightPx by remember(ownerKey) {
-    mutableIntStateOf(0)
-  }
-  val islandHeight = with(LocalDensity.current) {
-    islandHeightPx.toDp()
-  }
-  val contentBottomPadding = if (state is ScreenLoadState.Loaded) {
-    safeBottom + FloatingIslandEdgeSpacing + islandHeight
-  } else {
-    safeBottom
-  }
-  Box(modifier = modifier.fillMaxSize()) {
-    TitleDetailsContent(
-      state = state,
-      onRetry = { browsing.retryDetails(ownerKey) },
-      onBack = onBack,
-      contentBottomPadding = contentBottomPadding,
-    )
-
-    if (state is ScreenLoadState.Loaded) {
-      val screen = state.content
-      if (screen.isInLibrary) {
-        SideEffect {
-          library.confirmMembership(screen.id)
-        }
-      }
-      TitleActionsIsland(
-        modifier = Modifier
-          .align(Alignment.BottomCenter)
-          .windowInsetsPadding(
-            WindowInsets.safeDrawing.only(
-              WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
-            ),
-          )
-          .padding(FloatingIslandEdgeSpacing),
-      ) {
-        TitleActions(
-          screen = screen,
-          isInLibrary = library.isInLibrary(
-            titleId = screen.id,
-            snapshotMembership = screen.isInLibrary,
-          ),
-          addState = library.addState(screen.id),
-          continueActionState = continueActionState,
-          onLike = { library.addToLibrary(screen.id) },
-          onContinue = { browsing.selectContinue(ownerKey) },
-          onRetryDetails = { browsing.retryDetails(ownerKey) },
-          modifier = Modifier.onSizeChanged { size ->
-            islandHeightPx = size.height
-          },
-        )
-      }
-    }
-  }
+  TitleDetailsContent(
+    state = state,
+    onRetry = { model.retryDetails(entryId) },
+    onBack = onBack,
+    contentPadding = contentPadding,
+    modifier = modifier,
+  )
 }
 
 @Composable
 private fun TitleDetailsContent(
-  state: ScreenLoadState<TitleDetailsScreen, DetailsScreenFailure>,
+  state: TitleDetailsEntryState,
   onRetry: () -> Unit,
   onBack: () -> Unit,
-  contentBottomPadding: Dp,
+  contentPadding: PaddingValues,
   modifier: Modifier = Modifier,
 ) {
   val title = when (state) {
-    is ScreenLoadState.Loaded -> displayName(
-      value = state.content.displayName,
+    is TitleDetailsEntryState.Content -> displayName(
+      value = state.screen.displayName,
       fallback = R.string.title_name_fallback,
     )
 
@@ -160,26 +92,28 @@ private fun TitleDetailsContent(
     modifier = modifier,
   ) {
     when (state) {
-      ScreenLoadState.Loading -> LoadingContent(
+      TitleDetailsEntryState.Loading -> LoadingContent(
         message = stringResource(R.string.details_loading),
-        contentBottomPadding = contentBottomPadding,
+        contentPadding = contentPadding,
       )
 
-      ScreenLoadState.Superseded -> SupersededContent(
+      TitleDetailsEntryState.Superseded -> FailureContent(
+        title = stringResource(R.string.load_superseded_title),
+        body = stringResource(R.string.load_superseded_body),
         onRetry = onRetry,
-        contentBottomPadding = contentBottomPadding,
+        contentPadding = contentPadding,
       )
 
-      is ScreenLoadState.Failed -> FailureContent(
+      is TitleDetailsEntryState.Failed -> FailureContent(
         title = stringResource(R.string.details_failure_title),
         body = state.failure.message(),
         onRetry = onRetry,
-        contentBottomPadding = contentBottomPadding,
+        contentPadding = contentPadding,
       )
 
-      is ScreenLoadState.Loaded -> DetailsBody(
-        screen = state.content,
-        contentBottomPadding = contentBottomPadding,
+      is TitleDetailsEntryState.Content -> DetailsBody(
+        screen = state.screen,
+        contentPadding = contentPadding,
       )
     }
   }
@@ -188,12 +122,12 @@ private fun TitleDetailsContent(
 @Composable
 private fun DetailsBody(
   screen: TitleDetailsScreen,
-  contentBottomPadding: Dp,
+  contentPadding: PaddingValues,
   modifier: Modifier = Modifier,
 ) {
   LazyColumn(
     modifier = modifier.fillMaxSize(),
-    contentPadding = screenContentPadding(contentBottomPadding),
+    contentPadding = contentPadding,
     verticalArrangement = Arrangement.spacedBy(12.dp),
   ) {
     item {
@@ -247,37 +181,27 @@ private fun ActionMessage(message: String) {
 }
 
 @Composable
-private fun TitleActionsIsland(
-  modifier: Modifier = Modifier,
-  content: @Composable () -> Unit,
-) {
-  Box(
-    modifier = modifier,
-    contentAlignment = Alignment.Center,
-  ) {
-    content()
-  }
-}
-
-@Composable
-private fun TitleActions(
+internal fun TitleActionsOverlay(
   screen: TitleDetailsScreen,
-  isInLibrary: Boolean,
+  membership: LibraryMembership,
   addState: LibraryAddState,
   continueActionState: ContinueActionState,
   onLike: () -> Unit,
   onContinue: () -> Unit,
   onRetryDetails: () -> Unit,
-  modifier: Modifier = Modifier,
 ) {
-  val addMessage = addState.message()
+  val addMessage = when (membership) {
+    LibraryMembership.Loading -> stringResource(R.string.library_loading)
+    LibraryMembership.NotMember,
+    LibraryMembership.Member,
+    -> addState.message()
+  }
   val selectedContinueMessage = continueMessage(
     screen = screen,
     actionState = continueActionState,
   )
   val showDetailsRetry = needsDetailsRetry(screen, continueActionState)
   Column(
-    modifier = modifier,
     horizontalAlignment = Alignment.CenterHorizontally,
     verticalArrangement = Arrangement.spacedBy(8.dp),
   ) {
@@ -301,7 +225,6 @@ private fun TitleActions(
           if (showDetailsRetry) {
             TextButton(
               onClick = onRetryDetails,
-              modifier = Modifier.heightIn(min = 48.dp),
             ) {
               Text(stringResource(R.string.retry_title_details))
             }
@@ -311,7 +234,7 @@ private fun TitleActions(
     }
     HorizontalFloatingToolbar(expanded = true) {
       LikeAction(
-        isInLibrary = isInLibrary,
+        membership = membership,
         addState = addState,
         onClick = onLike,
       )
@@ -326,12 +249,12 @@ private fun TitleActions(
 
 @Composable
 private fun LikeAction(
-  isInLibrary: Boolean,
+  membership: LibraryMembership,
   addState: LibraryAddState,
   onClick: () -> Unit,
 ) {
   val label = stringResource(R.string.like)
-  if (isInLibrary) {
+  if (membership == LibraryMembership.Member) {
     val membershipState = stringResource(R.string.library_membership_selected)
     Surface(
       modifier = Modifier
@@ -357,16 +280,18 @@ private fun LikeAction(
 
   val adding = addState == LibraryAddState.Adding
   val addDescription = stringResource(R.string.add_to_library)
-  val addStateDescription = addState.message()
+  val addStateDescription = if (membership == LibraryMembership.Loading) {
+    stringResource(R.string.library_loading)
+  } else {
+    addState.message()
+  }
   Button(
     onClick = onClick,
-    enabled = !adding,
-    modifier = Modifier
-      .heightIn(min = 48.dp)
-      .semantics {
-        contentDescription = addDescription
-        addStateDescription?.let { stateDescription = it }
-      },
+    enabled = membership == LibraryMembership.NotMember && !adding,
+    modifier = Modifier.semantics {
+      contentDescription = addDescription
+      addStateDescription?.let { stateDescription = it }
+    },
   ) {
     Text(label)
   }
@@ -408,11 +333,9 @@ private fun ContinueAction(
   Button(
     onClick = onClick,
     enabled = enabled,
-    modifier = Modifier
-      .heightIn(min = 48.dp)
-      .semantics {
-        stateDescription?.let { this.stateDescription = it }
-      },
+    modifier = Modifier.semantics {
+      stateDescription?.let { this.stateDescription = it }
+    },
   ) {
     Text(stringResource(R.string.continue_action))
   }

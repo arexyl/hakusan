@@ -30,6 +30,7 @@ import app.hakusan.titles.TitleId
 import app.hakusan.titles.TitleReadingProgress
 import app.hakusan.titles.Titles
 import androidx.room3.withWriteTransaction
+import java.util.Collections
 import java.util.LinkedHashMap
 import java.util.LinkedHashSet
 import java.util.UUID
@@ -201,6 +202,11 @@ internal class RoomTitles(
       .map(::toLibraryState)
       .distinctUntilChanged()
 
+  override fun observeLibraryTitleIds(): Flow<Set<TitleId>> =
+    dao.observeLibraryTitleIds()
+      .map(::toOwnedTitleIds)
+      .distinctUntilChanged()
+
   override suspend fun readReadingProgress(
     titleId: TitleId,
   ): TitleReadingProgress? = reading.readReadingProgress(titleId)
@@ -268,6 +274,14 @@ internal class RoomTitles(
         )
       },
     )
+  }
+
+  private fun toOwnedTitleIds(ids: List<UUID>): Set<TitleId> {
+    val result = LinkedHashSet<TitleId>(ids.size)
+    ids.forEach { id ->
+      result += TitleId(id)
+    }
+    return Collections.unmodifiableSet(result)
   }
 
   private fun LibraryRow.validateEmptyShelfRow() {

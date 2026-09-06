@@ -15,10 +15,11 @@ import app.hakusan.sdk.ScreenTitleId
 import app.hakusan.sdk.ScreenTitleKey
 import app.hakusan.sdk.TitleDetailsScreenService
 import app.hakusan.ui.AppShell
-import app.hakusan.ui.BrowsingViewModel
+import app.hakusan.ui.CatalogViewModel
 import app.hakusan.ui.HakusanTheme
 import app.hakusan.ui.LibraryViewModel
 import app.hakusan.ui.PrimaryDestination
+import app.hakusan.ui.TitleDetailsViewModel
 import app.hakusan.ui.rememberNavigationState
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.tooling.preview.Preview
@@ -47,15 +48,19 @@ private fun PreviewShell(destination: PrimaryDestination) {
   HakusanTheme(dynamicColor = false) {
     AppShell(
       navigationState = rememberNavigationState(destination),
-      browsingModel = { previewBrowsingModel },
+      catalogModel = { previewCatalogModel },
+      titleDetailsModel = { previewTitleDetailsModel },
       libraryModel = { previewLibraryModel },
       onExit = {},
     )
   }
 }
 
-private val previewBrowsingModel = BrowsingViewModel(
+private val previewCatalogModel = CatalogViewModel(
   browseService = PreviewBrowseService,
+)
+
+private val previewTitleDetailsModel = TitleDetailsViewModel(
   detailsService = PreviewDetailsService,
   continueService = PreviewContinueService,
 )
@@ -68,6 +73,9 @@ private object PreviewLibraryService : LibraryScreenService {
   override fun observeLibrary(): Flow<LibraryScreen> = flowOf(
     LibraryScreen.of(emptyMap(), emptyList()),
   )
+
+  override fun observeLibraryTitleIds(): Flow<Set<ScreenTitleId>> =
+    flowOf(emptySet())
 
   override suspend fun addToLibrary(
     titleId: ScreenTitleId,

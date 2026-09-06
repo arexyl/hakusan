@@ -57,6 +57,7 @@ dependencies {
   implementation(libs.compose.material3)
   implementation(libs.compose.runtime)
   implementation(libs.compose.ui)
+  implementation(libs.kotlinx.coroutines.core)
   implementation(libs.kotlinx.serialization.core)
   implementation(libs.lifecycle.viewmodel)
   implementation(libs.navigation3.runtime)

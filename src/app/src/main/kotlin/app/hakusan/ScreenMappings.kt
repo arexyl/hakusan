@@ -124,7 +124,6 @@ internal fun TitleReadingProgress.toDetailsScreen(
         isRead = state.isRead,
       )
     },
-    isInLibrary = isInLibrary,
     continueState = toContinueState(),
   )
 }

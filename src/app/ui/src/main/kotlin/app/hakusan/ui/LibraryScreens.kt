@@ -7,6 +7,7 @@ import app.hakusan.sdk.LibraryTitleItem
 import app.hakusan.sdk.ScreenTitleKey
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -20,28 +21,28 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
+import androidx.compose.runtime.collectAsState
+import androidx.compose.runtime.getValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.semantics
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 @Composable
 internal fun LibraryDestination(
-  libraryModel: () -> LibraryViewModel,
+  model: LibraryViewModel,
   onTitleSelected: (ScreenTitleKey) -> Unit,
-  contentBottomPadding: Dp,
+  contentPadding: PaddingValues,
   modifier: Modifier = Modifier,
 ) {
-  val model = remember { libraryModel() }
+  val state by model.libraryState.collectAsState()
   LibraryContent(
-    state = model.libraryState,
+    state = state,
     onTitleSelected = onTitleSelected,
-    contentBottomPadding = contentBottomPadding,
+    contentPadding = contentPadding,
     modifier = modifier,
   )
 }
@@ -50,7 +51,7 @@ internal fun LibraryDestination(
 private fun LibraryContent(
   state: LibraryLoadState,
   onTitleSelected: (ScreenTitleKey) -> Unit,
-  contentBottomPadding: Dp,
+  contentPadding: PaddingValues,
   modifier: Modifier = Modifier,
 ) {
   ScreenFrame(
@@ -60,13 +61,13 @@ private fun LibraryContent(
     when (state) {
       LibraryLoadState.Loading -> LoadingContent(
         message = stringResource(R.string.library_loading),
-        contentBottomPadding = contentBottomPadding,
+        contentPadding = contentPadding,
       )
 
       is LibraryLoadState.Loaded -> LibrarySnapshotContent(
         screen = state.screen,
         onTitleSelected = onTitleSelected,
-        contentBottomPadding = contentBottomPadding,
+        contentPadding = contentPadding,
       )
     }
   }
@@ -76,20 +77,20 @@ private fun LibraryContent(
 private fun LibrarySnapshotContent(
   screen: LibraryScreen,
   onTitleSelected: (ScreenTitleKey) -> Unit,
-  contentBottomPadding: Dp,
+  contentPadding: PaddingValues,
 ) {
   if (screen.shelves.isEmpty()) {
     EmptyContent(
       title = stringResource(R.string.library_empty_title),
       body = stringResource(R.string.library_empty_body),
-      contentBottomPadding = contentBottomPadding,
+      contentPadding = contentPadding,
     )
     return
   }
 
   LazyColumn(
     modifier = Modifier.fillMaxSize(),
-    contentPadding = screenContentPadding(contentBottomPadding),
+    contentPadding = contentPadding,
     verticalArrangement = Arrangement.spacedBy(24.dp),
   ) {
     items(
@@ -157,10 +158,17 @@ private fun LibraryShelf(
           key = { titleId -> titleId.value.toString() },
         ) { titleId ->
           val title = screen.titlesById.getValue(titleId)
-          LibraryTitleCard(
-            title = title,
+          Surface(
             onClick = { onTitleSelected(title.key) },
-          )
+            modifier = Modifier
+              .widthIn(min = 220.dp, max = 320.dp)
+              .heightIn(min = 120.dp)
+              .semantics(mergeDescendants = true) {},
+            shape = MaterialTheme.shapes.large,
+            color = MaterialTheme.colorScheme.surfaceContainer,
+          ) {
+            LibraryTitleContent(title)
+          }
         }
       }
     }
@@ -168,47 +176,36 @@ private fun LibraryShelf(
 }
 
 @Composable
-private fun LibraryTitleCard(
+private fun LibraryTitleContent(
   title: LibraryTitleItem,
-  onClick: () -> Unit,
 ) {
   val progress = title.progress
-  Surface(
-    onClick = onClick,
-    modifier = Modifier
-      .widthIn(min = 220.dp, max = 320.dp)
-      .heightIn(min = 120.dp)
-      .semantics(mergeDescendants = true) {},
-    shape = MaterialTheme.shapes.large,
-    color = MaterialTheme.colorScheme.surfaceContainer,
+  Column(
+    modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+    verticalArrangement = Arrangement.spacedBy(8.dp),
   ) {
-    Column(
-      modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-      verticalArrangement = Arrangement.spacedBy(8.dp),
-    ) {
-      Text(
-        text = displayName(
-          value = title.displayName,
-          fallback = R.string.title_name_fallback,
-        ),
-        style = MaterialTheme.typography.titleMedium,
-      )
-      Text(
-        text = pluralStringResource(
-          R.plurals.library_read_progress,
-          progress.chapterCount,
-          progress.readChapterCount,
-          progress.chapterCount,
-        ),
-        color = MaterialTheme.colorScheme.onSurfaceVariant,
-        style = MaterialTheme.typography.bodyMedium,
-      )
-      Text(
-        text = progress.resumeState.message(),
-        color = MaterialTheme.colorScheme.primary,
-        style = MaterialTheme.typography.labelLarge,
-      )
-    }
+    Text(
+      text = displayName(
+        value = title.displayName,
+        fallback = R.string.title_name_fallback,
+      ),
+      style = MaterialTheme.typography.titleMedium,
+    )
+    Text(
+      text = pluralStringResource(
+        R.plurals.library_read_progress,
+        progress.chapterCount,
+        progress.readChapterCount,
+        progress.chapterCount,
+      ),
+      color = MaterialTheme.colorScheme.onSurfaceVariant,
+      style = MaterialTheme.typography.bodyMedium,
+    )
+    Text(
+      text = progress.resumeState.message(),
+      color = MaterialTheme.colorScheme.primary,
+      style = MaterialTheme.typography.labelLarge,
+    )
   }
 }
 

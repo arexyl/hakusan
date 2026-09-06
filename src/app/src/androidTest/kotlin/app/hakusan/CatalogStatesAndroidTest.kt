@@ -18,7 +18,8 @@ import app.hakusan.sdk.ScreenTitleId
 import app.hakusan.sdk.ScreenTitleKey
 import app.hakusan.sdk.TitleDetailsScreen
 import app.hakusan.sdk.TitleDetailsScreenService
-import app.hakusan.ui.BrowsingViewModel
+import app.hakusan.ui.CatalogViewModel
+import app.hakusan.ui.TitleDetailsViewModel
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.hasProgressBarRangeInfo
@@ -240,6 +241,28 @@ class CatalogStatesAndroidTest {
   }
 
   @Test
+  fun recreationKeepsDetailsWithoutReload() {
+    val browse = ControlledBrowseService(catalog(SOURCE))
+    val details = ControlledDetailsService()
+    installModel(browse, details)
+
+    compose.onNodeWithContentDescription("Catalog").performClick()
+    compose.onNodeWithText(SOURCE.displayName).performClick()
+    awaitRequests(browse.requests, 1)
+    browse.complete(BrowseScreenResult.Success(BROWSE_WITH_TITLE))
+    compose.onNodeWithText(TITLE.displayName).performClick()
+    awaitRequests(details.requests, 1)
+    details.complete(DetailsScreenResult.Success(EMPTY_DETAILS))
+    compose.onNodeWithText("Details without chapters.").assertExists()
+
+    compose.activityRule.scenario.recreate()
+
+    waitForText("Details without chapters.")
+    compose.onNodeWithText("Loading title").assertDoesNotExist()
+    assertEquals(1, details.requests.size)
+  }
+
+  @Test
   fun lastSourceStaysReachableBehindIsland() {
     val sources = (1..20).map { index ->
       CatalogSourceItem(
@@ -280,12 +303,17 @@ class CatalogStatesAndroidTest {
     compose.activityRule.scenario.onActivity { activity ->
       ViewModelProvider(
         owner = activity,
-        factory = BrowsingViewModel.factory(
+        factory = CatalogViewModel.factory(
           browseService = { browse },
+        ),
+      )[CatalogViewModel::class.java]
+      ViewModelProvider(
+        owner = activity,
+        factory = TitleDetailsViewModel.factory(
           detailsService = { details },
           continueService = { UnusedContinueService },
         ),
-      )[BrowsingViewModel::class.java]
+      )[TitleDetailsViewModel::class.java]
     }
     compose.waitForIdle()
   }
@@ -380,7 +408,6 @@ class CatalogStatesAndroidTest {
       displayName = TITLE.displayName,
       description = "Details without chapters.",
       chapters = emptyList(),
-      isInLibrary = false,
       continueState = ContinueState.Unavailable(
         ContinueUnavailableReason.NoAvailableChapter,
       ),
@@ -402,7 +429,6 @@ class CatalogStatesAndroidTest {
       displayName = title.displayName,
       description = null,
       chapters = emptyList(),
-      isInLibrary = false,
       continueState = ContinueState.Unavailable(
         ContinueUnavailableReason.NoAvailableChapter,
       ),

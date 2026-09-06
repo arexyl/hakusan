@@ -5,39 +5,106 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.WindowInsetsSides
+import androidx.compose.foundation.layout.asPaddingValues
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.only
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
-import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.FloatingToolbarDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
-internal val FloatingIslandEdgeSpacing = 16.dp
+/**
+ * Places an overlay above full-height content without shrinking its viewport.
+ */
+@Composable
+internal fun FloatingOverlayHost(
+  overlay: (@Composable () -> Unit)?,
+  modifier: Modifier = Modifier,
+  content: @Composable (PaddingValues) -> Unit,
+) {
+  val density = LocalDensity.current
+  val overlayVisible = overlay != null
+  var overlayHeightPx by remember {
+    mutableIntStateOf(0)
+  }
+  val overlayHeight = with(density) {
+    overlayHeightPx.toDp()
+  }
+  val safeBottom = WindowInsets.safeDrawing
+    .only(WindowInsetsSides.Bottom)
+    .asPaddingValues()
+    .calculateBottomPadding()
+  val overlayClearance = if (overlayVisible) {
+    FloatingToolbarDefaults.ScreenOffset + overlayHeight
+  } else {
+    0.dp
+  }
+  val contentPadding = remember(safeBottom, overlayClearance) {
+    PaddingValues(
+      start = 20.dp,
+      top = 20.dp,
+      end = 20.dp,
+      bottom = 20.dp + safeBottom + overlayClearance,
+    )
+  }
+
+  Box(modifier = modifier.fillMaxSize()) {
+    content(contentPadding)
+    if (overlay != null) {
+      Box(
+        modifier = Modifier
+          .align(Alignment.BottomCenter)
+          .windowInsetsPadding(
+            WindowInsets.safeDrawing.only(
+              WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
+            ),
+          )
+          .padding(FloatingToolbarDefaults.ScreenOffset),
+        contentAlignment = Alignment.Center,
+      ) {
+        Box(
+          modifier = Modifier.onSizeChanged { size ->
+            overlayHeightPx = size.height
+          },
+          contentAlignment = Alignment.Center,
+        ) {
+          overlay()
+        }
+      }
+    }
+  }
+}
 
 @Composable
 internal fun ScreenFrame(
@@ -89,7 +156,6 @@ private fun ScreenHeader(
     if (onBack != null) {
       TextButton(
         onClick = onBack,
-        modifier = Modifier.heightIn(min = 48.dp),
       ) {
         Text(stringResource(R.string.navigate_back))
       }
@@ -124,24 +190,39 @@ internal fun SectionHeading(text: String) {
 @Composable
 internal fun LoadingContent(
   message: String,
-  contentBottomPadding: Dp,
+  contentPadding: PaddingValues,
   modifier: Modifier = Modifier,
+) {
+  CenteredScreenContent(
+    contentPadding = contentPadding,
+    modifier = modifier,
+  ) {
+    CircularProgressIndicator()
+    Text(
+      text = message,
+      modifier = Modifier.padding(top = 16.dp),
+      style = MaterialTheme.typography.bodyLarge,
+    )
+  }
+}
+
+@Composable
+private fun CenteredScreenContent(
+  contentPadding: PaddingValues,
+  modifier: Modifier = Modifier,
+  content: @Composable ColumnScope.() -> Unit,
 ) {
   LazyColumn(
     modifier = modifier.fillMaxSize(),
-    contentPadding = screenContentPadding(contentBottomPadding),
+    contentPadding = contentPadding,
     horizontalAlignment = Alignment.CenterHorizontally,
     verticalArrangement = Arrangement.Center,
   ) {
     item {
-      Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        CircularProgressIndicator(Modifier.size(40.dp))
-        Text(
-          text = message,
-          modifier = Modifier.padding(top = 16.dp),
-          style = MaterialTheme.typography.bodyLarge,
-        )
-      }
+      Column(
+        horizontalAlignment = Alignment.CenterHorizontally,
+        content = content,
+      )
     }
   }
 }
@@ -151,115 +232,66 @@ internal fun FailureContent(
   title: String,
   body: String,
   onRetry: () -> Unit,
-  contentBottomPadding: Dp,
+  contentPadding: PaddingValues,
   modifier: Modifier = Modifier,
 ) {
-  LazyColumn(
-    modifier = modifier.fillMaxSize(),
-    contentPadding = screenContentPadding(contentBottomPadding),
-    horizontalAlignment = Alignment.CenterHorizontally,
-    verticalArrangement = Arrangement.Center,
-  ) {
-    item {
-      Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(
-          text = title,
-          modifier = Modifier.semantics { heading() },
-          style = MaterialTheme.typography.titleLarge,
-        )
-        Text(
-          text = body,
-          modifier = Modifier.padding(top = 8.dp),
-          style = MaterialTheme.typography.bodyLarge,
-        )
-        Button(
-          onClick = onRetry,
-          modifier = Modifier
-            .padding(top = 20.dp)
-            .heightIn(min = 48.dp),
-        ) {
-          Text(stringResource(R.string.retry))
-        }
-      }
-    }
-  }
-}
-
-@Composable
-internal fun SupersededContent(
-  onRetry: () -> Unit,
-  contentBottomPadding: Dp,
-  modifier: Modifier = Modifier,
-) {
-  LazyColumn(
-    modifier = modifier.fillMaxSize(),
-    contentPadding = screenContentPadding(contentBottomPadding),
-    horizontalAlignment = Alignment.CenterHorizontally,
-    verticalArrangement = Arrangement.Center,
-  ) {
-    item {
-      Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(
-          text = stringResource(R.string.load_superseded_title),
-          modifier = Modifier.semantics { heading() },
-          style = MaterialTheme.typography.titleLarge,
-        )
-        Text(
-          text = stringResource(R.string.load_superseded_body),
-          modifier = Modifier.padding(top = 8.dp),
-          style = MaterialTheme.typography.bodyLarge,
-        )
-        Button(
-          onClick = onRetry,
-          modifier = Modifier
-            .padding(top = 20.dp)
-            .heightIn(min = 48.dp),
-        ) {
-          Text(stringResource(R.string.retry))
-        }
-      }
-    }
-  }
+  MessageContent(
+    title = title,
+    body = body,
+    onRetry = onRetry,
+    contentPadding = contentPadding,
+    modifier = modifier,
+  )
 }
 
 @Composable
 internal fun EmptyContent(
   title: String,
   body: String,
-  contentBottomPadding: Dp,
+  contentPadding: PaddingValues,
   modifier: Modifier = Modifier,
 ) {
-  LazyColumn(
-    modifier = modifier.fillMaxSize(),
-    contentPadding = screenContentPadding(contentBottomPadding),
-    horizontalAlignment = Alignment.CenterHorizontally,
-    verticalArrangement = Arrangement.Center,
+  MessageContent(
+    title = title,
+    body = body,
+    onRetry = null,
+    contentPadding = contentPadding,
+    modifier = modifier,
+  )
+}
+
+@Composable
+private fun MessageContent(
+  title: String,
+  body: String,
+  onRetry: (() -> Unit)?,
+  contentPadding: PaddingValues,
+  modifier: Modifier,
+) {
+  CenteredScreenContent(
+    contentPadding = contentPadding,
+    modifier = modifier,
   ) {
-    item {
-      Column(horizontalAlignment = Alignment.CenterHorizontally) {
-        Text(
-          text = title,
-          modifier = Modifier.semantics { heading() },
-          style = MaterialTheme.typography.titleLarge,
-        )
-        Text(
-          text = body,
-          modifier = Modifier.padding(top = 8.dp),
-          style = MaterialTheme.typography.bodyLarge,
-        )
+    Text(
+      text = title,
+      modifier = Modifier.semantics { heading() },
+      style = MaterialTheme.typography.titleLarge,
+    )
+    Text(
+      text = body,
+      modifier = Modifier.padding(top = 8.dp),
+      style = MaterialTheme.typography.bodyLarge,
+    )
+    if (onRetry != null) {
+      Button(
+        onClick = onRetry,
+        modifier = Modifier.padding(top = 20.dp),
+      ) {
+        Text(stringResource(R.string.retry))
       }
     }
   }
 }
-
-internal fun screenContentPadding(
-  bottomContentPadding: Dp,
-): PaddingValues = PaddingValues(
-  start = 20.dp,
-  top = 20.dp,
-  end = 20.dp,
-  bottom = 20.dp + bottomContentPadding,
-)
 
 @Composable
 internal fun displayName(

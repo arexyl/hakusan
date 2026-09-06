@@ -1,9 +1,10 @@
 package app.hakusan
 
 import android.os.Bundle
-import app.hakusan.ui.BrowsingViewModel
+import app.hakusan.ui.CatalogViewModel
 import app.hakusan.ui.HakusanApp
 import app.hakusan.ui.LibraryViewModel
+import app.hakusan.ui.TitleDetailsViewModel
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
@@ -15,7 +16,8 @@ class HakusanActivity : ComponentActivity() {
     enableEdgeToEdge()
     setContent {
       HakusanApp(
-        browsingModel = { browsingModel },
+        catalogModel = { catalogModel },
+        titleDetailsModel = { titleDetailsModel },
         libraryModel = { libraryModel },
         onExit = ::finish,
       )
@@ -25,15 +27,25 @@ class HakusanActivity : ComponentActivity() {
   private val graph: AppGraph
     get() = (application as HakusanApplication).graph
 
-  private val browsingModel: BrowsingViewModel by lazy(
+  private val catalogModel: CatalogViewModel by lazy(
     LazyThreadSafetyMode.NONE,
   ) {
     ViewModelProvider(
       owner = this,
-      factory = BrowsingViewModel.factory(
+      factory = CatalogViewModel.factory(
         browseService = {
           graph.browseService
         },
+      ),
+    )[CatalogViewModel::class.java]
+  }
+
+  private val titleDetailsModel: TitleDetailsViewModel by lazy(
+    LazyThreadSafetyMode.NONE,
+  ) {
+    ViewModelProvider(
+      owner = this,
+      factory = TitleDetailsViewModel.factory(
         detailsService = {
           graph.detailsService
         },
@@ -41,7 +53,7 @@ class HakusanActivity : ComponentActivity() {
           graph.continueService
         },
       ),
-    )[BrowsingViewModel::class.java]
+    )[TitleDetailsViewModel::class.java]
   }
 
   private val libraryModel: LibraryViewModel by lazy(

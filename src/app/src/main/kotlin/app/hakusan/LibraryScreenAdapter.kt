@@ -9,6 +9,8 @@ import app.hakusan.titles.TitleId
 import app.hakusan.titles.Titles
 import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
+import java.util.Collections
+import java.util.LinkedHashSet
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -22,6 +24,10 @@ internal class LibraryScreenAdapter(
     titles.observeLibrary()
       .map { state -> state.toLibraryScreen() }
 
+  override fun observeLibraryTitleIds(): Flow<Set<ScreenTitleId>> =
+    titles.observeLibraryTitleIds()
+      .map(::toOwnedScreenTitleIds)
+
   override suspend fun addToLibrary(
     titleId: ScreenTitleId,
   ): AddToLibraryScreenResult = when (
@@ -32,5 +38,15 @@ internal class LibraryScreenAdapter(
       AddToLibraryScreenResult.CategorySelectionRequired
 
     LibraryAddResult.TitleNotFound -> AddToLibraryScreenResult.TitleNotFound
+  }
+
+  private fun toOwnedScreenTitleIds(
+    titleIds: Set<TitleId>,
+  ): Set<ScreenTitleId> {
+    val result = LinkedHashSet<ScreenTitleId>(titleIds.size)
+    titleIds.forEach { titleId ->
+      result += ScreenTitleId(titleId.value)
+    }
+    return Collections.unmodifiableSet(result)
   }
 }
