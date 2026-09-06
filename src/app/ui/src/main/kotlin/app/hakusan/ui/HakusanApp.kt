@@ -23,11 +23,16 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Shape
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.Role
@@ -35,6 +40,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.heading
 import androidx.compose.ui.semantics.paneTitle
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.navigation3.runtime.NavEntry
 import androidx.navigation3.runtime.NavKey
@@ -43,12 +49,14 @@ import androidx.navigation3.ui.NavDisplay
 
 @Composable
 fun HakusanApp(
+  catalogPresentationModel: () -> CatalogPresentationModel,
   onExit: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   HakusanTheme {
     HakusanShell(
       navigationState = rememberHakusanNavigationState(),
+      catalogPresentationModel = catalogPresentationModel,
       onExit = onExit,
       modifier = modifier,
     )
@@ -58,15 +66,32 @@ fun HakusanApp(
 @Composable
 internal fun HakusanShell(
   navigationState: HakusanNavigationState,
+  catalogPresentationModel: () -> CatalogPresentationModel,
   onExit: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
   val libraryLabel = stringResource(R.string.destination_library)
-  val catalogLabel = stringResource(R.string.destination_catalog)
   val librarySaveableStateDecorator =
     rememberSaveableStateHolderNavEntryDecorator<NavKey>()
   val catalogSaveableStateDecorator =
     rememberSaveableStateHolderNavEntryDecorator<NavKey>()
+  var browsingIslandHeightPx by remember { mutableIntStateOf(0) }
+  val browsingContentBottomPadding = with(LocalDensity.current) {
+    browsingIslandHeightPx.toDp()
+  }
+  val navigateBack = {
+    val removedRoute = navigationState.pop()
+    if (removedRoute == null) {
+      onExit()
+    } else {
+      catalogPresentationModel().discard(removedRoute)
+    }
+  }
+  val navigateCatalogBack: (NavKey) -> Unit = { expectedRoute ->
+    navigationState.popCatalog(expectedRoute)?.let { removedRoute ->
+      catalogPresentationModel().discard(removedRoute)
+    }
+  }
   BackHandler(
     enabled = navigationState.currentBackStack.size <= 1,
     onBack = onExit,
@@ -82,11 +107,7 @@ internal fun HakusanShell(
       NavDisplay(
         backStack = navigationState.backStack(destination),
         modifier = Modifier.fillMaxSize(),
-        onBack = {
-          if (!navigationState.pop()) {
-            onExit()
-          }
-        },
+        onBack = navigateBack,
         entryDecorators = remember(
           destination,
           librarySaveableStateDecorator,
@@ -105,11 +126,36 @@ internal fun HakusanShell(
         entryProvider = { route ->
           when (route) {
             LibraryRoute -> NavEntry(route) {
-              DestinationLanding(libraryLabel)
+              DestinationLanding(
+                label = libraryLabel,
+                contentBottomPadding = browsingContentBottomPadding,
+              )
             }
 
             CatalogRoute -> NavEntry(route) {
-              DestinationLanding(catalogLabel)
+              CatalogDestination(
+                catalogPresentationModel = catalogPresentationModel,
+                onSourceSelected = navigationState::openCatalogSource,
+                contentBottomPadding = browsingContentBottomPadding,
+              )
+            }
+
+            is SourceBrowseRoute -> NavEntry(route) {
+              SourceBrowseDestination(
+                route = route,
+                catalogPresentationModel = catalogPresentationModel,
+                onTitleSelected = navigationState::openCatalogTitle,
+                onBack = { navigateCatalogBack(route) },
+                contentBottomPadding = browsingContentBottomPadding,
+              )
+            }
+
+            is TitleDetailsRoute -> NavEntry(route) {
+              TitleDetailsDestination(
+                route = route,
+                catalogPresentationModel = catalogPresentationModel,
+                onBack = { navigateCatalogBack(route) },
+              )
             }
 
             else -> error("Unknown Hakusan route: $route")
@@ -118,23 +164,31 @@ internal fun HakusanShell(
       )
     }
 
-    BrowsingIsland(
-      selectedDestination = navigationState.selectedDestination,
-      onDestinationSelected = navigationState::select,
-      modifier = Modifier
-        .align(Alignment.BottomCenter)
-        .windowInsetsPadding(
-          WindowInsets.safeDrawing.only(
-            WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
-          ),
-        )
-        .padding(16.dp),
-    )
+    if (navigationState.showsBrowsingIsland) {
+      BrowsingIsland(
+        selectedDestination = navigationState.selectedDestination,
+        onDestinationSelected = navigationState::select,
+        modifier = Modifier
+          .align(Alignment.BottomCenter)
+          .onSizeChanged { size ->
+            browsingIslandHeightPx = size.height
+          }
+          .windowInsetsPadding(
+            WindowInsets.safeDrawing.only(
+              WindowInsetsSides.Horizontal + WindowInsetsSides.Bottom,
+            ),
+          )
+          .padding(16.dp),
+      )
+    }
   }
 }
 
 @Composable
-private fun DestinationLanding(label: String) {
+private fun DestinationLanding(
+  label: String,
+  contentBottomPadding: Dp,
+) {
   Surface(
     modifier = Modifier.fillMaxSize(),
     color = MaterialTheme.colorScheme.background,
@@ -149,7 +203,7 @@ private fun DestinationLanding(label: String) {
           ),
         )
         .padding(horizontal = 24.dp, vertical = 32.dp)
-        .padding(bottom = 88.dp),
+        .padding(bottom = contentBottomPadding),
       contentAlignment = Alignment.TopStart,
     ) {
       Text(

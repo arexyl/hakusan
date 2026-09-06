@@ -11,6 +11,8 @@ import androidx.compose.runtime.setValue
 import androidx.navigation3.runtime.NavBackStack
 import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.rememberNavBackStack
+import app.hakusan.sdk.ScreenSourceId
+import app.hakusan.sdk.ScreenTitleKey
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -21,6 +23,32 @@ internal data object LibraryRoute : HakusanRoute
 
 @Serializable
 internal data object CatalogRoute : HakusanRoute
+
+@Serializable
+internal data class SourceBrowseRoute(
+  val sourceId: String,
+) : HakusanRoute {
+  init {
+    ScreenSourceId(sourceId)
+  }
+
+  fun toScreenSourceId(): ScreenSourceId = ScreenSourceId(sourceId)
+}
+
+@Serializable
+internal data class TitleDetailsRoute(
+  val sourceId: String,
+  val sourceTitleKey: String,
+) : HakusanRoute {
+  init {
+    toScreenTitleKey()
+  }
+
+  fun toScreenTitleKey(): ScreenTitleKey = ScreenTitleKey(
+    sourceId = ScreenSourceId(sourceId),
+    sourceTitleKey = sourceTitleKey,
+  )
+}
 
 internal enum class PrimaryDestination {
   LIBRARY,
@@ -38,6 +66,12 @@ internal class HakusanNavigationState(
   val currentBackStack: NavBackStack<NavKey>
     get() = backStack(selectedDestination)
 
+  val currentRoute: NavKey
+    get() = currentBackStack.last()
+
+  val showsBrowsingIsland: Boolean
+    get() = currentRoute !is TitleDetailsRoute
+
   fun backStack(destination: PrimaryDestination): NavBackStack<NavKey> =
     when (destination) {
       PrimaryDestination.LIBRARY -> libraryBackStack
@@ -48,13 +82,48 @@ internal class HakusanNavigationState(
     selectedDestination = destination
   }
 
-  fun pop(): Boolean {
+  fun openCatalogSource(sourceId: ScreenSourceId) {
+    if (
+      selectedDestination == PrimaryDestination.CATALOG &&
+      catalogBackStack.lastOrNull() == CatalogRoute
+    ) {
+      catalogBackStack.add(SourceBrowseRoute(sourceId.value))
+    }
+  }
+
+  fun openCatalogTitle(titleKey: ScreenTitleKey) {
+    val browseRoute = catalogBackStack.lastOrNull() as? SourceBrowseRoute
+      ?: return
+    require(titleKey.sourceId.value == browseRoute.sourceId) {
+      "A Catalog title must belong to the open source."
+    }
+    if (selectedDestination == PrimaryDestination.CATALOG) {
+      catalogBackStack.add(
+        TitleDetailsRoute(
+          sourceId = titleKey.sourceId.value,
+          sourceTitleKey = titleKey.sourceTitleKey,
+        ),
+      )
+    }
+  }
+
+  fun pop(): NavKey? {
     val backStack = currentBackStack
     if (backStack.size <= 1) {
-      return false
+      return null
     }
-    backStack.removeAt(backStack.lastIndex)
-    return true
+    return backStack.removeAt(backStack.lastIndex)
+  }
+
+  fun popCatalog(expectedRoute: NavKey): NavKey? {
+    if (
+      selectedDestination != PrimaryDestination.CATALOG ||
+      catalogBackStack.size <= 1 ||
+      catalogBackStack.lastOrNull() != expectedRoute
+    ) {
+      return null
+    }
+    return catalogBackStack.removeAt(catalogBackStack.lastIndex)
   }
 }
 

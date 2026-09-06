@@ -4,8 +4,10 @@ import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsNotSelected
 import androidx.compose.ui.test.assertIsSelected
 import androidx.compose.ui.test.junit4.v2.createAndroidComposeRule
+import androidx.compose.ui.test.onAllNodesWithContentDescription
 import androidx.compose.ui.test.onAllNodesWithText
 import androidx.compose.ui.test.onNodeWithContentDescription
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import org.junit.Assert.assertTrue
@@ -41,6 +43,60 @@ class HakusanActivityAndroidTest {
   }
 
   @Test
+  fun opensCanonicalChaptersAndNavigatesBackThroughCatalog() {
+    openDetails()
+
+    compose.onNodeWithText(
+      "Deterministic content for Hakusan checkpoint verification.",
+    ).assertExists()
+    compose.onNodeWithContentDescription("Catalog").assertDoesNotExist()
+    compose.onNodeWithContentDescription("Library").assertDoesNotExist()
+    compose.onNodeWithText("Continue").assertDoesNotExist()
+    compose.onNodeWithText("Like").assertDoesNotExist()
+
+    val openingTop = compose.onNodeWithContentDescription("Chapter 10")
+      .fetchSemanticsNode()
+      .boundsInRoot
+      .top
+    val middleTop = compose.onNodeWithContentDescription("Chapter 2")
+      .fetchSemanticsNode()
+      .boundsInRoot
+      .top
+    val finalTop = compose.onNodeWithContentDescription("Chapter 1")
+      .fetchSemanticsNode()
+      .boundsInRoot
+      .top
+    assertTrue(openingTop < middleTop)
+    assertTrue(middleTop < finalTop)
+
+    compose.onNodeWithText("Back").performClick()
+    compose.onNodeWithText("Canonical Order Fixture").assertExists()
+    compose.onNodeWithContentDescription("Catalog").assertIsSelected()
+
+    compose.onNodeWithText("Back").performClick()
+    compose.onNodeWithText("Sources").assertExists()
+    compose.onNodeWithText("Deterministic source").assertExists()
+  }
+
+  @Test
+  fun retainsNestedDetailsRouteAcrossActivityRecreation() {
+    openDetails()
+
+    compose.activityRule.scenario.recreate()
+
+    compose.onNodeWithText(
+      "Deterministic content for Hakusan checkpoint verification.",
+    ).assertExists()
+    waitForContentDescription("Chapter 10")
+    compose.activityRule.scenario.onActivity { activity ->
+      activity.onBackPressedDispatcher.onBackPressed()
+    }
+    compose.onNodeWithText("Canonical Order Fixture").assertExists()
+    compose.onNodeWithText("Back").performClick()
+    compose.onNodeWithText("Sources").assertExists()
+  }
+
+  @Test
   fun BackAtDestinationRootFinishesActivity() {
     lateinit var activityUnderTest: HakusanActivity
     compose.activityRule.scenario.onActivity { activity ->
@@ -52,5 +108,31 @@ class HakusanActivityAndroidTest {
     }
 
     assertTrue(activityUnderTest.isFinishing)
+  }
+
+  private fun openDetails() {
+    compose.onNodeWithContentDescription("Catalog").performClick()
+    compose.onNodeWithText("Deterministic source").performClick()
+    waitForText("Canonical Order Fixture")
+    compose.onNodeWithText("Canonical Order Fixture").performClick()
+    waitForContentDescription("Chapter 10")
+  }
+
+  private fun waitForText(text: String) {
+    compose.waitUntil(timeoutMillis = UI_TIMEOUT_MILLIS) {
+      compose.onAllNodesWithText(text).fetchSemanticsNodes().isNotEmpty()
+    }
+  }
+
+  private fun waitForContentDescription(description: String) {
+    compose.waitUntil(timeoutMillis = UI_TIMEOUT_MILLIS) {
+      compose.onAllNodesWithContentDescription(description)
+        .fetchSemanticsNodes()
+        .isNotEmpty()
+    }
+  }
+
+  private companion object {
+    const val UI_TIMEOUT_MILLIS = 30_000L
   }
 }

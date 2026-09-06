@@ -36,6 +36,7 @@ junit-platform-launcher = { module = "org.junit.platform:junit-platform-launcher
 kotlin-gradle = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
 kotlinx-coroutines-core = { module = "org.jetbrains.kotlinx:kotlinx-coroutines-core", version.ref = "kotlinx-coroutines" }
 kotlinx-serialization-core = { module = "org.jetbrains.kotlinx:kotlinx-serialization-core", version.ref = "kotlinx-serialization" }
+lifecycle-viewmodel = { module = "androidx.lifecycle:lifecycle-viewmodel" }
 navigation3-runtime = { module = "androidx.navigation3:navigation3-runtime", version.ref = "navigation3" }
 navigation3-ui = { module = "androidx.navigation3:navigation3-ui", version.ref = "navigation3" }
 room-compiler = { module = "androidx.room3:room3-compiler", version.ref = "room" }
