@@ -812,7 +812,7 @@ class LibraryStatesAndroidTest {
         displayName = TITLE_A.displayName,
         description = "Scrollable title details.",
         chapters = chapters,
-          continueState = ContinueState.Ready(
+        continueState = ContinueState.Ready(
           ContinueTarget(
             titleId = TITLE_A_ID,
             chapterId = first.id,

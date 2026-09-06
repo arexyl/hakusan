@@ -2,10 +2,11 @@ package app.hakusan.ui
 
 import app.hakusan.sdk.BrowseScreenFailure
 import app.hakusan.sdk.CatalogScreen
-import app.hakusan.sdk.CatalogSourceItem
 import app.hakusan.sdk.ScreenSourceId
 import app.hakusan.sdk.ScreenTitleKey
+import androidx.annotation.StringRes
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,20 +24,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 
 @Composable
 internal fun CatalogDestination(
   model: CatalogViewModel,
   onSourceSelected: (ScreenSourceId) -> Unit,
-  contentBottomPadding: Dp,
+  contentPadding: PaddingValues,
   modifier: Modifier = Modifier,
 ) {
   CatalogContent(
     catalog = model.catalog,
     onSourceSelected = onSourceSelected,
-    contentBottomPadding = contentBottomPadding,
+    contentPadding = contentPadding,
     modifier = modifier,
   )
 }
@@ -48,7 +48,7 @@ internal fun SourceBrowseDestination(
   model: CatalogViewModel,
   onTitleSelected: (ScreenTitleKey) -> Unit,
   onBack: () -> Unit,
-  contentBottomPadding: Dp,
+  contentPadding: PaddingValues,
   modifier: Modifier = Modifier,
 ) {
   val sourceId = remember(route) {
@@ -77,7 +77,7 @@ internal fun SourceBrowseDestination(
     onTitleSelected = onTitleSelected,
     onRetry = { model.retryBrowse(entryId) },
     onBack = onBack,
-    contentBottomPadding = contentBottomPadding,
+    contentPadding = contentPadding,
     modifier = modifier,
   )
 }
@@ -86,7 +86,7 @@ internal fun SourceBrowseDestination(
 private fun CatalogContent(
   catalog: CatalogScreen,
   onSourceSelected: (ScreenSourceId) -> Unit,
-  contentBottomPadding: Dp,
+  contentPadding: PaddingValues,
   modifier: Modifier = Modifier,
 ) {
   ScreenFrame(
@@ -97,12 +97,12 @@ private fun CatalogContent(
       EmptyContent(
         title = stringResource(R.string.catalog_empty_title),
         body = stringResource(R.string.catalog_empty_body),
-        contentBottomPadding = contentBottomPadding,
+        contentPadding = contentPadding,
       )
     } else {
       LazyColumn(
         modifier = Modifier.fillMaxSize(),
-        contentPadding = screenContentPadding(contentBottomPadding),
+        contentPadding = contentPadding,
         verticalArrangement = Arrangement.spacedBy(12.dp),
       ) {
         item {
@@ -114,8 +114,9 @@ private fun CatalogContent(
           items = catalog.sources,
           key = { source -> source.id.value },
         ) { source ->
-          SourceRow(
-            source = source,
+          CatalogListItem(
+            displayName = source.displayName,
+            fallback = R.string.source_name_fallback,
             onClick = { onSourceSelected(source.id) },
           )
         }
@@ -131,7 +132,7 @@ private fun SourceBrowseContent(
   onTitleSelected: (ScreenTitleKey) -> Unit,
   onRetry: () -> Unit,
   onBack: () -> Unit,
-  contentBottomPadding: Dp,
+  contentPadding: PaddingValues,
   modifier: Modifier = Modifier,
 ) {
   ScreenFrame(
@@ -145,14 +146,14 @@ private fun SourceBrowseContent(
     when (state) {
       SourceBrowseState.Loading -> LoadingContent(
         message = stringResource(R.string.browse_loading),
-        contentBottomPadding = contentBottomPadding,
+        contentPadding = contentPadding,
       )
 
       is SourceBrowseState.Failed -> FailureContent(
         title = stringResource(R.string.browse_failure_title),
         body = state.failure.message(),
         onRetry = onRetry,
-        contentBottomPadding = contentBottomPadding,
+        contentPadding = contentPadding,
       )
 
       is SourceBrowseState.Content -> {
@@ -161,12 +162,12 @@ private fun SourceBrowseContent(
           EmptyContent(
             title = stringResource(R.string.browse_empty_title),
             body = stringResource(R.string.browse_empty_body),
-            contentBottomPadding = contentBottomPadding,
+            contentPadding = contentPadding,
           )
         } else {
           LazyColumn(
             modifier = Modifier.fillMaxSize(),
-            contentPadding = screenContentPadding(contentBottomPadding),
+            contentPadding = contentPadding,
             verticalArrangement = Arrangement.spacedBy(12.dp),
           ) {
             items(
@@ -175,8 +176,9 @@ private fun SourceBrowseContent(
                 title.key.sourceId.value to title.key.sourceTitleKey
               },
             ) { title ->
-              TitleRow(
+              CatalogListItem(
                 displayName = title.displayName,
+                fallback = R.string.title_name_fallback,
                 onClick = { onTitleSelected(title.key) },
               )
             }
@@ -188,36 +190,9 @@ private fun SourceBrowseContent(
 }
 
 @Composable
-private fun SourceRow(
-  source: CatalogSourceItem,
-  onClick: () -> Unit,
-) {
-  Surface(
-    onClick = onClick,
-    modifier = Modifier
-      .fillMaxWidth()
-      .heightIn(min = 64.dp),
-    shape = MaterialTheme.shapes.large,
-    color = MaterialTheme.colorScheme.surfaceContainer,
-  ) {
-    Row(
-      modifier = Modifier.padding(horizontal = 20.dp, vertical = 16.dp),
-      verticalAlignment = Alignment.CenterVertically,
-    ) {
-      Text(
-        text = displayName(
-          value = source.displayName,
-          fallback = R.string.source_name_fallback,
-        ),
-        style = MaterialTheme.typography.titleMedium,
-      )
-    }
-  }
-}
-
-@Composable
-private fun TitleRow(
+private fun CatalogListItem(
   displayName: String,
+  @StringRes fallback: Int,
   onClick: () -> Unit,
 ) {
   Surface(
@@ -235,7 +210,7 @@ private fun TitleRow(
       Text(
         text = displayName(
           value = displayName,
-          fallback = R.string.title_name_fallback,
+          fallback = fallback,
         ),
         style = MaterialTheme.typography.titleMedium,
       )
