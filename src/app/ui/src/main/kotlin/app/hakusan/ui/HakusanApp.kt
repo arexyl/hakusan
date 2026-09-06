@@ -48,7 +48,8 @@ import androidx.navigation3.ui.NavDisplay
 
 @Composable
 fun HakusanApp(
-  browsingModel: () -> BrowsingViewModel,
+  catalogModel: () -> CatalogViewModel,
+  titleDetailsModel: () -> TitleDetailsViewModel,
   libraryModel: () -> LibraryViewModel,
   onExit: () -> Unit,
   modifier: Modifier = Modifier,
@@ -56,7 +57,8 @@ fun HakusanApp(
   HakusanTheme {
     AppShell(
       navigationState = rememberNavigationState(),
-      browsingModel = browsingModel,
+      catalogModel = catalogModel,
+      titleDetailsModel = titleDetailsModel,
       libraryModel = libraryModel,
       onExit = onExit,
       modifier = modifier,
@@ -67,7 +69,8 @@ fun HakusanApp(
 @Composable
 internal fun AppShell(
   navigationState: NavigationState,
-  browsingModel: () -> BrowsingViewModel,
+  catalogModel: () -> CatalogViewModel,
+  titleDetailsModel: () -> TitleDetailsViewModel,
   libraryModel: () -> LibraryViewModel,
   onExit: () -> Unit,
   modifier: Modifier = Modifier,
@@ -91,21 +94,42 @@ internal fun AppShell(
   val contentBottomPaddingState = rememberUpdatedState(
     contentBottomPadding,
   )
-  val navigateBack = {
-    val destination = navigationState.selectedDestination
-    val removedRoute = navigationState.pop()
-    if (removedRoute == null) {
-      onExit()
-    } else {
-      browsingModel().discard(destination, removedRoute)
-    }
+  val catalogOwner = remember {
+    lazy(LazyThreadSafetyMode.NONE) { catalogModel() }
   }
-  val navigateRouteBack: (PrimaryDestination, NavKey) -> Unit =
-    { destination, expectedRoute ->
-      navigationState.pop(destination, expectedRoute)?.let { removedRoute ->
-        browsingModel().discard(destination, removedRoute)
+  val titleDetailsOwner = remember {
+    lazy(LazyThreadSafetyMode.NONE) { titleDetailsModel() }
+  }
+  val libraryOwner = remember {
+    lazy(LazyThreadSafetyMode.NONE) { libraryModel() }
+  }
+  val discardEntry: (NavigationEntryHandle) -> Unit = { entry ->
+    when (entry) {
+      is NavigationEntryHandle.SourceBrowse -> {
+        if (catalogOwner.isInitialized()) {
+          catalogOwner.value.discard(entry.presentationId)
+        }
+      }
+
+      is NavigationEntryHandle.TitleDetails -> {
+        if (titleDetailsOwner.isInitialized()) {
+          titleDetailsOwner.value.discard(entry.presentationId)
+        }
       }
     }
+  }
+  val navigateBack = {
+    when (val result = navigationState.popCurrent()) {
+      CurrentPopResult.AtRoot -> onExit()
+      is CurrentPopResult.Popped -> discardEntry(result.entry)
+    }
+  }
+  val navigateEntryBack: (NavigationEntryHandle) -> Unit = { entry ->
+    when (val result = navigationState.popExpected(entry)) {
+      ExpectedPopResult.Rejected -> Unit
+      is ExpectedPopResult.Popped -> discardEntry(result.entry)
+    }
+  }
   BackHandler(
     enabled = navigationState.currentBackStack.size <= 1,
     onBack = onExit,
@@ -141,7 +165,7 @@ internal fun AppShell(
           when (route) {
             LibraryRoute -> NavEntry(route) {
               LibraryDestination(
-                libraryModel = libraryModel,
+                model = libraryOwner.value,
                 onTitleSelected = navigationState::openLibraryTitle,
                 contentBottomPadding = contentBottomPaddingState.value,
               )
@@ -149,32 +173,39 @@ internal fun AppShell(
 
             CatalogRoute -> NavEntry(route) {
               CatalogDestination(
-                browsingModel = browsingModel,
+                model = catalogOwner.value,
                 onSourceSelected = navigationState::openCatalogSource,
                 contentBottomPadding = contentBottomPaddingState.value,
               )
             }
 
-            is SourceBrowseRoute -> NavEntry(route) {
-              SourceBrowseDestination(
-                route = route,
-                browsingModel = browsingModel,
-                onTitleSelected = navigationState::openCatalogTitle,
-                onBack = {
-                  navigateRouteBack(PrimaryDestination.CATALOG, route)
-                },
-                contentBottomPadding = contentBottomPaddingState.value,
-              )
+            is SourceBrowseRoute -> {
+              val entry = navigationState.entry(destination, route)
+              NavEntry(route) {
+                SourceBrowseDestination(
+                  entryId = entry.presentationId,
+                  route = route,
+                  model = catalogOwner.value,
+                  onTitleSelected = { titleKey ->
+                    navigationState.openCatalogTitle(entry, titleKey)
+                  },
+                  onBack = { navigateEntryBack(entry) },
+                  contentBottomPadding = contentBottomPaddingState.value,
+                )
+              }
             }
 
-            is TitleDetailsRoute -> NavEntry(route) {
-              TitleDetailsDestination(
-                destination = destination,
-                route = route,
-                browsingModel = browsingModel,
-                libraryModel = libraryModel,
-                onBack = { navigateRouteBack(destination, route) },
-              )
+            is TitleDetailsRoute -> {
+              val entry = navigationState.entry(destination, route)
+              NavEntry(route) {
+                TitleDetailsDestination(
+                  entryId = entry.presentationId,
+                  route = route,
+                  model = titleDetailsOwner.value,
+                  libraryModel = libraryOwner.value,
+                  onBack = { navigateEntryBack(entry) },
+                )
+              }
             }
 
             else -> error("Unknown navigation route: $route")

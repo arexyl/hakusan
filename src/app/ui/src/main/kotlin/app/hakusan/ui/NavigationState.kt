@@ -13,6 +13,7 @@ import androidx.navigation3.runtime.NavKey
 import androidx.navigation3.runtime.rememberNavBackStack
 import app.hakusan.sdk.ScreenSourceId
 import app.hakusan.sdk.ScreenTitleKey
+import java.util.UUID
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -25,9 +26,16 @@ internal data object LibraryRoute : HakusanRoute
 internal data object CatalogRoute : HakusanRoute
 
 @Serializable
-internal data class SourceBrowseRoute(
+@ConsistentCopyVisibility
+internal data class SourceBrowseRoute private constructor(
   val sourceId: String,
+  private val presentationToken: String,
 ) : HakusanRoute {
+  internal constructor(sourceId: String) : this(
+    sourceId = sourceId,
+    presentationToken = newPresentationToken(),
+  )
+
   init {
     ScreenSourceId(sourceId)
   }
@@ -36,10 +44,21 @@ internal data class SourceBrowseRoute(
 }
 
 @Serializable
-internal data class TitleDetailsRoute(
+@ConsistentCopyVisibility
+internal data class TitleDetailsRoute private constructor(
   val sourceId: String,
   val sourceTitleKey: String,
+  private val presentationToken: String,
 ) : HakusanRoute {
+  internal constructor(
+    sourceId: String,
+    sourceTitleKey: String,
+  ) : this(
+    sourceId = sourceId,
+    sourceTitleKey = sourceTitleKey,
+    presentationToken = newPresentationToken(),
+  )
+
   init {
     toScreenTitleKey()
   }
@@ -55,6 +74,68 @@ internal enum class PrimaryDestination {
   CATALOG,
 }
 
+/** Opaque identity of one retained presentation entry. */
+internal class PresentationEntryId private constructor(
+  private val destination: PrimaryDestination,
+  private val route: HakusanRoute,
+) {
+  override fun equals(other: Any?): Boolean =
+    other is PresentationEntryId &&
+      destination == other.destination &&
+      route == other.route
+
+  override fun hashCode(): Int = 31 * destination.hashCode() + route.hashCode()
+
+  companion object {
+    fun create(
+      destination: PrimaryDestination,
+      route: HakusanRoute,
+    ): PresentationEntryId = PresentationEntryId(destination, route)
+  }
+}
+
+internal sealed class NavigationEntryHandle private constructor(
+  private val destination: PrimaryDestination,
+  route: HakusanRoute,
+) {
+  abstract val route: HakusanRoute
+
+  val presentationId: PresentationEntryId =
+    PresentationEntryId.create(destination, route)
+
+  fun matches(
+    destination: PrimaryDestination,
+    route: NavKey?,
+  ): Boolean =
+    this.destination == destination && this.route == route
+
+  class SourceBrowse internal constructor(
+    destination: PrimaryDestination,
+    override val route: SourceBrowseRoute,
+  ) : NavigationEntryHandle(destination, route)
+
+  class TitleDetails internal constructor(
+    destination: PrimaryDestination,
+    override val route: TitleDetailsRoute,
+  ) : NavigationEntryHandle(destination, route)
+}
+
+internal sealed interface CurrentPopResult {
+  data object AtRoot : CurrentPopResult
+
+  data class Popped(
+    val entry: NavigationEntryHandle,
+  ) : CurrentPopResult
+}
+
+internal sealed interface ExpectedPopResult {
+  data object Rejected : ExpectedPopResult
+
+  data class Popped(
+    val entry: NavigationEntryHandle,
+  ) : ExpectedPopResult
+}
+
 internal class NavigationState(
   selectedDestination: MutableState<PrimaryDestination>,
   private val libraryBackStack: NavBackStack<NavKey>,
@@ -66,8 +147,8 @@ internal class NavigationState(
   val currentBackStack: NavBackStack<NavKey>
     get() = backStack(selectedDestination)
 
-  val currentRoute: NavKey
-    get() = currentBackStack.last()
+  val currentRoute: HakusanRoute
+    get() = currentBackStack.last().toHakusanRoute()
 
   val showsBrowsingIsland: Boolean
     get() = currentRoute !is TitleDetailsRoute
@@ -81,6 +162,18 @@ internal class NavigationState(
   fun select(destination: PrimaryDestination) {
     selectedDestination = destination
   }
+
+  fun entry(
+    destination: PrimaryDestination,
+    route: SourceBrowseRoute,
+  ): NavigationEntryHandle.SourceBrowse =
+    NavigationEntryHandle.SourceBrowse(destination, route)
+
+  fun entry(
+    destination: PrimaryDestination,
+    route: TitleDetailsRoute,
+  ): NavigationEntryHandle.TitleDetails =
+    NavigationEntryHandle.TitleDetails(destination, route)
 
   fun openCatalogSource(sourceId: ScreenSourceId) {
     if (
@@ -105,43 +198,61 @@ internal class NavigationState(
     }
   }
 
-  fun openCatalogTitle(titleKey: ScreenTitleKey) {
-    val browseRoute = catalogBackStack.lastOrNull() as? SourceBrowseRoute
-      ?: return
+  fun openCatalogTitle(
+    owner: NavigationEntryHandle.SourceBrowse,
+    titleKey: ScreenTitleKey,
+  ) {
+    if (
+      selectedDestination != PrimaryDestination.CATALOG ||
+      !owner.matches(
+        destination = PrimaryDestination.CATALOG,
+        route = catalogBackStack.lastOrNull(),
+      )
+    ) {
+      return
+    }
+    val browseRoute = owner.route
     require(titleKey.sourceId.value == browseRoute.sourceId) {
       "A Catalog title must belong to the open source."
     }
-    if (selectedDestination == PrimaryDestination.CATALOG) {
-      catalogBackStack.add(
-        TitleDetailsRoute(
-          sourceId = titleKey.sourceId.value,
-          sourceTitleKey = titleKey.sourceTitleKey,
-        ),
-      )
-    }
+    catalogBackStack.add(
+      TitleDetailsRoute(
+        sourceId = titleKey.sourceId.value,
+        sourceTitleKey = titleKey.sourceTitleKey,
+      ),
+    )
   }
 
-  fun pop(): NavKey? {
+  fun popCurrent(): CurrentPopResult {
+    val destination = selectedDestination
     val backStack = currentBackStack
     if (backStack.size <= 1) {
-      return null
+      return CurrentPopResult.AtRoot
     }
-    return backStack.removeAt(backStack.lastIndex)
+    val entry = when (val route = backStack.last().toHakusanRoute()) {
+      is SourceBrowseRoute -> entry(destination, route)
+      is TitleDetailsRoute -> entry(destination, route)
+      CatalogRoute,
+      LibraryRoute,
+      -> error("A root route cannot be nested in a back stack.")
+    }
+    backStack.removeAt(backStack.lastIndex)
+    return CurrentPopResult.Popped(entry)
   }
 
-  fun pop(
-    destination: PrimaryDestination,
-    expectedRoute: NavKey,
-  ): NavKey? {
-    val backStack = backStack(destination)
+  fun popExpected(
+    expected: NavigationEntryHandle,
+  ): ExpectedPopResult {
+    val destination = selectedDestination
+    val backStack = currentBackStack
     if (
-      selectedDestination != destination ||
       backStack.size <= 1 ||
-      backStack.lastOrNull() != expectedRoute
+      !expected.matches(destination, backStack.lastOrNull())
     ) {
-      return null
+      return ExpectedPopResult.Rejected
     }
-    return backStack.removeAt(backStack.lastIndex)
+    backStack.removeAt(backStack.lastIndex)
+    return ExpectedPopResult.Popped(expected)
   }
 }
 
@@ -174,3 +285,11 @@ private val PrimaryDestinationSaver = Saver<PrimaryDestination, String>(
   save = { it.name },
   restore = PrimaryDestination::valueOf,
 )
+
+/** Creates saveable identity for one nested push, not a domain identifier. */
+private fun newPresentationToken(): String = UUID.randomUUID().toString()
+
+private fun NavKey.toHakusanRoute(): HakusanRoute =
+  checkNotNull(this as? HakusanRoute) {
+    "Unknown navigation route: $this"
+  }

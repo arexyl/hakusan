@@ -31,7 +31,8 @@ import app.hakusan.sdk.ScreenTitleId
 import app.hakusan.sdk.ScreenTitleKey
 import app.hakusan.sdk.TitleDetailsScreen
 import app.hakusan.sdk.TitleDetailsScreenService
-import app.hakusan.ui.BrowsingViewModel
+import app.hakusan.ui.CatalogViewModel
+import app.hakusan.ui.TitleDetailsViewModel
 import app.hakusan.ui.HakusanApp
 import app.hakusan.ui.LibraryViewModel
 import androidx.activity.compose.setContent
@@ -57,8 +58,10 @@ import java.util.UUID
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.receiveAsFlow
+import kotlinx.coroutines.isActive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
@@ -234,6 +237,28 @@ class LibraryStatesAndroidTest {
   }
 
   @Test
+  fun systemBackCancelsItsPendingDetailsLoad() {
+    val library = ControlledLibraryService()
+    val details = ControlledDetailsService()
+    installHost(library, details)
+    library.emit(EMPTY_LIBRARY)
+
+    compose.onNodeWithContentDescription("Catalog").performClick()
+    compose.onNodeWithText(SOURCE.displayName).performClick()
+    waitForText(TITLE_A.displayName)
+    compose.onNodeWithText(TITLE_A.displayName).performClick()
+    awaitCount(details.detailsRequests, 1)
+
+    compose.activityRule.scenario.onActivity { activity ->
+      activity.onBackPressedDispatcher.onBackPressed()
+    }
+
+    awaitCount(details.cancellations, 1)
+    compose.onNodeWithText(TITLE_A.displayName).assertExists()
+    compose.onNodeWithText("First title details.").assertDoesNotExist()
+  }
+
+  @Test
   fun continueUsesFreshTargetAndOffersRetry() {
     val library = ControlledLibraryService()
     val details = ControlledDetailsService()
@@ -388,16 +413,24 @@ class LibraryStatesAndroidTest {
   ) {
     val modelId = MODEL_ID.incrementAndGet()
     compose.activityRule.scenario.onActivity { activity ->
-      val browsingModel = ViewModelProvider(
+      val catalogModel = ViewModelProvider(
         owner = activity,
-        factory = BrowsingViewModel.factory(
+        factory = CatalogViewModel.factory(
           browseService = { browse },
+        ),
+      ).get(
+        "library-states-catalog-$modelId",
+        CatalogViewModel::class.java,
+      )
+      val titleDetailsModel = ViewModelProvider(
+        owner = activity,
+        factory = TitleDetailsViewModel.factory(
           detailsService = { details },
           continueService = { continueSelection },
         ),
       ).get(
-        "library-states-browsing-$modelId",
-        BrowsingViewModel::class.java,
+        "library-states-title-details-$modelId",
+        TitleDetailsViewModel::class.java,
       )
       val libraryModel = ViewModelProvider(
         owner = activity,
@@ -410,7 +443,8 @@ class LibraryStatesAndroidTest {
       )
       activity.setContent {
         HakusanApp(
-          browsingModel = { browsingModel },
+          catalogModel = { catalogModel },
+          titleDetailsModel = { titleDetailsModel },
           libraryModel = { libraryModel },
           onExit = activity::finish,
         )
@@ -486,12 +520,19 @@ class LibraryStatesAndroidTest {
       Channel<DetailsScreenResult>(Channel.UNLIMITED)
 
     val detailsRequests = CopyOnWriteArrayList<ScreenTitleKey>()
+    val cancellations = CopyOnWriteArrayList<ScreenTitleKey>()
 
     override suspend fun loadDetails(
       titleKey: ScreenTitleKey,
     ): DetailsScreenResult {
       detailsRequests += titleKey
-      return detailsCompletions.receive()
+      try {
+        return detailsCompletions.receive()
+      } finally {
+        if (!currentCoroutineContext().isActive) {
+          cancellations += titleKey
+        }
+      }
     }
 
     fun completeDetails(result: DetailsScreenResult) {

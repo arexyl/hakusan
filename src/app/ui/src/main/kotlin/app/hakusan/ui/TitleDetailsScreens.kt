@@ -54,41 +54,35 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 internal fun TitleDetailsDestination(
-  destination: PrimaryDestination,
+  entryId: PresentationEntryId,
   route: TitleDetailsRoute,
-  browsingModel: () -> BrowsingViewModel,
-  libraryModel: () -> LibraryViewModel,
+  model: TitleDetailsViewModel,
+  libraryModel: LibraryViewModel,
   onBack: () -> Unit,
   modifier: Modifier = Modifier,
 ) {
-  val browsing = remember { browsingModel() }
-  val library = remember { libraryModel() }
-  val ownerKey = remember(destination, route) {
-    DetailsOwnerKey(destination, route)
+  val titleKey = remember(route) {
+    route.toScreenTitleKey()
   }
-  val owner = remember(ownerKey, browsing) {
-    browsing.details(ownerKey)
+  val stateHolder = remember(model, entryId, titleKey) {
+    model.state(entryId, titleKey)
   }
-  val continueOwner = remember(ownerKey, browsing) {
-    browsing.continueAction(ownerKey)
-  }
-  val state = owner.state
-  val continueActionState = continueOwner.state
-  LaunchedEffect(browsing, ownerKey) {
-    browsing.ensureDetails(ownerKey)
+  val state = stateHolder.value
+  LaunchedEffect(model, entryId) {
+    model.ensureDetails(entryId)
   }
 
   val safeBottom = WindowInsets.safeDrawing
     .only(WindowInsetsSides.Bottom)
     .asPaddingValues()
     .calculateBottomPadding()
-  var islandHeightPx by remember(ownerKey) {
+  var islandHeightPx by remember(entryId) {
     mutableIntStateOf(0)
   }
   val islandHeight = with(LocalDensity.current) {
     islandHeightPx.toDp()
   }
-  val contentBottomPadding = if (state is ScreenLoadState.Loaded) {
+  val contentBottomPadding = if (state is TitleDetailsEntryState.Content) {
     safeBottom + FloatingIslandEdgeSpacing + islandHeight
   } else {
     safeBottom
@@ -96,16 +90,16 @@ internal fun TitleDetailsDestination(
   Box(modifier = modifier.fillMaxSize()) {
     TitleDetailsContent(
       state = state,
-      onRetry = { browsing.retryDetails(ownerKey) },
+      onRetry = { model.retryDetails(entryId) },
       onBack = onBack,
       contentBottomPadding = contentBottomPadding,
     )
 
-    if (state is ScreenLoadState.Loaded) {
-      val screen = state.content
+    if (state is TitleDetailsEntryState.Content) {
+      val screen = state.screen
       if (screen.isInLibrary) {
         SideEffect {
-          library.confirmMembership(screen.id)
+          libraryModel.confirmMembership(screen.id)
         }
       }
       TitleActionsIsland(
@@ -120,15 +114,15 @@ internal fun TitleDetailsDestination(
       ) {
         TitleActions(
           screen = screen,
-          isInLibrary = library.isInLibrary(
+          isInLibrary = libraryModel.isInLibrary(
             titleId = screen.id,
             snapshotMembership = screen.isInLibrary,
           ),
-          addState = library.addState(screen.id),
-          continueActionState = continueActionState,
-          onLike = { library.addToLibrary(screen.id) },
-          onContinue = { browsing.selectContinue(ownerKey) },
-          onRetryDetails = { browsing.retryDetails(ownerKey) },
+          addState = libraryModel.addState(screen.id),
+          continueActionState = state.continueAction,
+          onLike = { libraryModel.addToLibrary(screen.id) },
+          onContinue = { model.selectContinue(entryId) },
+          onRetryDetails = { model.retryDetails(entryId) },
           modifier = Modifier.onSizeChanged { size ->
             islandHeightPx = size.height
           },
@@ -140,15 +134,15 @@ internal fun TitleDetailsDestination(
 
 @Composable
 private fun TitleDetailsContent(
-  state: ScreenLoadState<TitleDetailsScreen, DetailsScreenFailure>,
+  state: TitleDetailsEntryState,
   onRetry: () -> Unit,
   onBack: () -> Unit,
   contentBottomPadding: Dp,
   modifier: Modifier = Modifier,
 ) {
   val title = when (state) {
-    is ScreenLoadState.Loaded -> displayName(
-      value = state.content.displayName,
+    is TitleDetailsEntryState.Content -> displayName(
+      value = state.screen.displayName,
       fallback = R.string.title_name_fallback,
     )
 
@@ -160,25 +154,25 @@ private fun TitleDetailsContent(
     modifier = modifier,
   ) {
     when (state) {
-      ScreenLoadState.Loading -> LoadingContent(
+      TitleDetailsEntryState.Loading -> LoadingContent(
         message = stringResource(R.string.details_loading),
         contentBottomPadding = contentBottomPadding,
       )
 
-      ScreenLoadState.Superseded -> SupersededContent(
+      TitleDetailsEntryState.Superseded -> SupersededContent(
         onRetry = onRetry,
         contentBottomPadding = contentBottomPadding,
       )
 
-      is ScreenLoadState.Failed -> FailureContent(
+      is TitleDetailsEntryState.Failed -> FailureContent(
         title = stringResource(R.string.details_failure_title),
         body = state.failure.message(),
         onRetry = onRetry,
         contentBottomPadding = contentBottomPadding,
       )
 
-      is ScreenLoadState.Loaded -> DetailsBody(
-        screen = state.content,
+      is TitleDetailsEntryState.Content -> DetailsBody(
+        screen = state.screen,
         contentBottomPadding = contentBottomPadding,
       )
     }

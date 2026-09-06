@@ -7,7 +7,8 @@ import androidx.navigation3.runtime.NavBackStack
 import androidx.navigation3.runtime.NavKey
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
-import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 
@@ -26,7 +27,7 @@ class NavigationStateTest {
       catalogBackStack = catalogBackStack,
     )
 
-    assertNull(state.pop())
+    assertSame(CurrentPopResult.AtRoot, state.popCurrent())
     assertEquals(listOf(CatalogRoute), catalogBackStack)
     assertEquals(
       listOf(LibraryRoute, retainedLibraryRoute),
@@ -35,7 +36,16 @@ class NavigationStateTest {
 
     state.select(PrimaryDestination.LIBRARY)
 
-    assertEquals(retainedLibraryRoute, state.pop())
+    val expectedEntry = state.entry(
+      destination = PrimaryDestination.LIBRARY,
+      route = retainedLibraryRoute,
+    )
+    val popped = state.popCurrent() as CurrentPopResult.Popped
+    assertEquals(retainedLibraryRoute, popped.entry.route)
+    assertEquals(
+      expectedEntry.presentationId,
+      popped.entry.presentationId,
+    )
     assertEquals(listOf(LibraryRoute), libraryBackStack)
   }
 
@@ -62,10 +72,7 @@ class NavigationStateTest {
     state.select(PrimaryDestination.LIBRARY)
     state.openLibraryTitle(titleKey)
 
-    val detailsRoute = TitleDetailsRoute(
-      sourceId = titleKey.sourceId.value,
-      sourceTitleKey = titleKey.sourceTitleKey,
-    )
+    val detailsRoute = libraryBackStack.last() as TitleDetailsRoute
     assertEquals(listOf(LibraryRoute, detailsRoute), libraryBackStack)
     assertEquals(titleKey, detailsRoute.toScreenTitleKey())
     assertFalse(state.showsBrowsingIsland)
@@ -90,13 +97,13 @@ class NavigationStateTest {
     )
 
     state.openCatalogSource(sourceId)
-    state.openCatalogTitle(titleKey)
-
-    val browseRoute = SourceBrowseRoute(sourceId.value)
-    val detailsRoute = TitleDetailsRoute(
-      sourceId = sourceId.value,
-      sourceTitleKey = titleKey.sourceTitleKey,
+    val browseRoute = catalogBackStack[1] as SourceBrowseRoute
+    val browseEntry = state.entry(
+      destination = PrimaryDestination.CATALOG,
+      route = browseRoute,
     )
+    state.openCatalogTitle(browseEntry, titleKey)
+    val detailsRoute = catalogBackStack[2] as TitleDetailsRoute
     assertEquals(
       listOf(CatalogRoute, browseRoute, detailsRoute),
       catalogBackStack,
@@ -107,11 +114,14 @@ class NavigationStateTest {
     state.select(PrimaryDestination.LIBRARY)
     assertEquals(listOf(LibraryRoute), state.currentBackStack)
     assertTrue(state.showsBrowsingIsland)
-    assertNull(state.pop())
-    assertNull(
-      state.pop(
-        destination = PrimaryDestination.CATALOG,
-        expectedRoute = detailsRoute,
+    assertSame(CurrentPopResult.AtRoot, state.popCurrent())
+    assertSame(
+      ExpectedPopResult.Rejected,
+      state.popExpected(
+        state.entry(
+          destination = PrimaryDestination.CATALOG,
+          route = detailsRoute,
+        ),
       ),
     )
     assertEquals(
@@ -120,9 +130,33 @@ class NavigationStateTest {
     )
 
     state.select(PrimaryDestination.CATALOG)
-    assertEquals(detailsRoute, state.pop())
+    val expectedDetailsEntry = state.entry(
+      destination = PrimaryDestination.CATALOG,
+      route = detailsRoute,
+    )
+    val poppedDetails = state.popCurrent() as CurrentPopResult.Popped
+    assertEquals(
+      detailsRoute,
+      poppedDetails.entry.route,
+    )
+    assertEquals(
+      expectedDetailsEntry.presentationId,
+      poppedDetails.entry.presentationId,
+    )
     assertTrue(state.showsBrowsingIsland)
-    assertEquals(browseRoute, state.pop())
+    val expectedBrowseEntry = state.entry(
+      destination = PrimaryDestination.CATALOG,
+      route = browseRoute,
+    )
+    val poppedBrowse = state.popCurrent() as CurrentPopResult.Popped
+    assertEquals(
+      browseRoute,
+      poppedBrowse.entry.route,
+    )
+    assertEquals(
+      expectedBrowseEntry.presentationId,
+      poppedBrowse.entry.presentationId,
+    )
     assertEquals(listOf(CatalogRoute), catalogBackStack)
   }
 
@@ -133,11 +167,6 @@ class NavigationStateTest {
       sourceId = sourceId,
       sourceTitleKey = "shared-title",
     )
-    val detailsRoute = TitleDetailsRoute(
-      sourceId = sourceId.value,
-      sourceTitleKey = titleKey.sourceTitleKey,
-    )
-    val browseRoute = SourceBrowseRoute(sourceId.value)
     val libraryBackStack = NavBackStack<NavKey>(LibraryRoute)
     val catalogBackStack = NavBackStack<NavKey>(CatalogRoute)
     val state = NavigationState(
@@ -147,60 +176,177 @@ class NavigationStateTest {
     )
 
     state.openLibraryTitle(titleKey)
+    val libraryDetailsRoute = libraryBackStack.last() as TitleDetailsRoute
     state.select(PrimaryDestination.CATALOG)
     state.openCatalogSource(sourceId)
-    state.openCatalogTitle(titleKey)
+    val browseRoute = catalogBackStack.last() as SourceBrowseRoute
+    val browseEntry = state.entry(
+      destination = PrimaryDestination.CATALOG,
+      route = browseRoute,
+    )
+    state.openCatalogTitle(browseEntry, titleKey)
+    val catalogDetailsRoute = catalogBackStack.last() as TitleDetailsRoute
 
-    assertEquals(listOf(LibraryRoute, detailsRoute), libraryBackStack)
     assertEquals(
-      listOf(CatalogRoute, browseRoute, detailsRoute),
+      listOf(LibraryRoute, libraryDetailsRoute),
+      libraryBackStack,
+    )
+    assertEquals(
+      listOf(CatalogRoute, browseRoute, catalogDetailsRoute),
       catalogBackStack,
     )
-
-    assertNull(
-      state.pop(
-        destination = PrimaryDestination.LIBRARY,
-        expectedRoute = detailsRoute,
-      ),
+    assertEquals(titleKey, libraryDetailsRoute.toScreenTitleKey())
+    assertEquals(titleKey, catalogDetailsRoute.toScreenTitleKey())
+    assertNotEquals(libraryDetailsRoute, catalogDetailsRoute)
+    val libraryDetails = state.entry(
+      destination = PrimaryDestination.LIBRARY,
+      route = libraryDetailsRoute,
     )
-    assertNull(
-      state.pop(
+    val catalogDetails = state.entry(
+      destination = PrimaryDestination.CATALOG,
+      route = catalogDetailsRoute,
+    )
+    assertNotEquals(
+      libraryDetails.presentationId,
+      catalogDetails.presentationId,
+    )
+    assertNotEquals(
+      catalogDetails.presentationId,
+      state.entry(
         destination = PrimaryDestination.CATALOG,
-        expectedRoute = browseRoute,
+        route = browseRoute,
+      ).presentationId,
+    )
+    assertEquals(
+      catalogDetails.presentationId,
+      state.entry(
+        destination = PrimaryDestination.CATALOG,
+        route = catalogDetailsRoute,
+      ).presentationId,
+    )
+
+    assertSame(
+      ExpectedPopResult.Rejected,
+      state.popExpected(libraryDetails),
+    )
+    assertSame(
+      ExpectedPopResult.Rejected,
+      state.popExpected(
+        state.entry(
+          destination = PrimaryDestination.CATALOG,
+          route = browseRoute,
+        ),
       ),
     )
     assertEquals(
-      detailsRoute,
-      state.pop(
-        destination = PrimaryDestination.CATALOG,
-        expectedRoute = detailsRoute,
-      ),
+      ExpectedPopResult.Popped(catalogDetails),
+      state.popExpected(catalogDetails),
     )
-    assertEquals(listOf(LibraryRoute, detailsRoute), libraryBackStack)
+    assertEquals(
+      listOf(LibraryRoute, libraryDetailsRoute),
+      libraryBackStack,
+    )
     assertEquals(listOf(CatalogRoute, browseRoute), catalogBackStack)
 
     state.select(PrimaryDestination.LIBRARY)
-    assertNull(
-      state.pop(
-        destination = PrimaryDestination.CATALOG,
-        expectedRoute = browseRoute,
+    assertSame(
+      ExpectedPopResult.Rejected,
+      state.popExpected(
+        state.entry(
+          destination = PrimaryDestination.CATALOG,
+          route = browseRoute,
+        ),
       ),
     )
     assertEquals(
-      detailsRoute,
-      state.pop(
-        destination = PrimaryDestination.LIBRARY,
-        expectedRoute = detailsRoute,
-      ),
+      ExpectedPopResult.Popped(libraryDetails),
+      state.popExpected(libraryDetails),
     )
     assertEquals(listOf(LibraryRoute), libraryBackStack)
     assertEquals(listOf(CatalogRoute, browseRoute), catalogBackStack)
-    assertNull(
-      state.pop(
-        destination = PrimaryDestination.LIBRARY,
-        expectedRoute = LibraryRoute,
-      ),
-    )
+    assertSame(CurrentPopResult.AtRoot, state.popCurrent())
     assertEquals(listOf(CatalogRoute, browseRoute), catalogBackStack)
+  }
+
+  @Test
+  fun `stale handles cannot affect reopened subjects`() {
+    val sourceId = ScreenSourceId("reopened-source")
+    val titleKey = ScreenTitleKey(sourceId, "reopened-title")
+    val catalogBackStack = NavBackStack<NavKey>(CatalogRoute)
+    val state = NavigationState(
+      selectedDestination = mutableStateOf(PrimaryDestination.CATALOG),
+      libraryBackStack = NavBackStack<NavKey>(LibraryRoute),
+      catalogBackStack = catalogBackStack,
+    )
+
+    state.openCatalogSource(sourceId)
+    val oldBrowseRoute = catalogBackStack.last() as SourceBrowseRoute
+    val oldBrowse = state.entry(
+      destination = PrimaryDestination.CATALOG,
+      route = oldBrowseRoute,
+    )
+    assertEquals(
+      ExpectedPopResult.Popped(oldBrowse),
+      state.popExpected(oldBrowse),
+    )
+
+    state.openCatalogSource(sourceId)
+    val newBrowseRoute = catalogBackStack.last() as SourceBrowseRoute
+    val newBrowse = state.entry(
+      destination = PrimaryDestination.CATALOG,
+      route = newBrowseRoute,
+    )
+    assertEquals(sourceId, newBrowseRoute.toScreenSourceId())
+    assertNotEquals(oldBrowse.presentationId, newBrowse.presentationId)
+    assertSame(ExpectedPopResult.Rejected, state.popExpected(oldBrowse))
+
+    state.openCatalogTitle(oldBrowse, titleKey)
+    assertEquals(newBrowseRoute, catalogBackStack.last())
+    state.openCatalogTitle(newBrowse, titleKey)
+    val oldDetailsRoute = catalogBackStack.last() as TitleDetailsRoute
+    val oldDetails = state.entry(
+      destination = PrimaryDestination.CATALOG,
+      route = oldDetailsRoute,
+    )
+    assertEquals(
+      ExpectedPopResult.Popped(oldDetails),
+      state.popExpected(oldDetails),
+    )
+
+    state.openCatalogTitle(newBrowse, titleKey)
+    val newDetailsRoute = catalogBackStack.last() as TitleDetailsRoute
+    val newDetails = state.entry(
+      destination = PrimaryDestination.CATALOG,
+      route = newDetailsRoute,
+    )
+    assertEquals(titleKey, newDetailsRoute.toScreenTitleKey())
+    assertNotEquals(oldDetails.presentationId, newDetails.presentationId)
+    assertSame(ExpectedPopResult.Rejected, state.popExpected(oldDetails))
+    assertEquals(newDetailsRoute, catalogBackStack.last())
+
+    assertEquals(
+      ExpectedPopResult.Popped(newDetails),
+      state.popExpected(newDetails),
+    )
+    assertEquals(
+      ExpectedPopResult.Popped(newBrowse),
+      state.popExpected(newBrowse),
+    )
+    val otherSourceId = ScreenSourceId("other-source")
+    state.openCatalogSource(otherSourceId)
+    val otherBrowseRoute = catalogBackStack.last() as SourceBrowseRoute
+    val otherBrowse = state.entry(
+      destination = PrimaryDestination.CATALOG,
+      route = otherBrowseRoute,
+    )
+    state.openCatalogTitle(newBrowse, titleKey)
+    assertEquals(otherBrowseRoute, catalogBackStack.last())
+
+    val otherTitleKey = ScreenTitleKey(otherSourceId, "other-title")
+    state.openCatalogTitle(otherBrowse, otherTitleKey)
+    assertEquals(
+      otherTitleKey,
+      (catalogBackStack.last() as TitleDetailsRoute).toScreenTitleKey(),
+    )
   }
 }

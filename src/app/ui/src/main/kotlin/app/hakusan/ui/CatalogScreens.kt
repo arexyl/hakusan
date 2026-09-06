@@ -1,6 +1,5 @@
 package app.hakusan.ui
 
-import app.hakusan.sdk.BrowseScreen
 import app.hakusan.sdk.BrowseScreenFailure
 import app.hakusan.sdk.CatalogScreen
 import app.hakusan.sdk.CatalogSourceItem
@@ -19,6 +18,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -28,12 +28,11 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 internal fun CatalogDestination(
-  browsingModel: () -> BrowsingViewModel,
+  model: CatalogViewModel,
   onSourceSelected: (ScreenSourceId) -> Unit,
   contentBottomPadding: Dp,
   modifier: Modifier = Modifier,
 ) {
-  val model = remember { browsingModel() }
   CatalogContent(
     catalog = model.catalog,
     onSourceSelected = onSourceSelected,
@@ -44,37 +43,39 @@ internal fun CatalogDestination(
 
 @Composable
 internal fun SourceBrowseDestination(
+  entryId: PresentationEntryId,
   route: SourceBrowseRoute,
-  browsingModel: () -> BrowsingViewModel,
+  model: CatalogViewModel,
   onTitleSelected: (ScreenTitleKey) -> Unit,
   onBack: () -> Unit,
   contentBottomPadding: Dp,
   modifier: Modifier = Modifier,
 ) {
-  val model = remember { browsingModel() }
-  val owner = remember(route, model) {
-    model.browse(route)
+  val sourceId = remember(route) {
+    route.toScreenSourceId()
   }
-  val state = owner.state
+  val stateHolder = remember(model, entryId, sourceId) {
+    model.browseState(entryId, sourceId)
+  }
+  val state by stateHolder
   val catalogSourceName = remember(model, route) {
-    val sourceId = route.toScreenSourceId()
     model.catalog.sources
       .singleOrNull { it.id == sourceId }
       ?.displayName
   }
-  LaunchedEffect(model, route) {
-    model.ensureBrowse(route)
+  LaunchedEffect(model, entryId) {
+    model.ensureBrowse(entryId)
   }
 
-  val sourceName = when (state) {
-    is ScreenLoadState.Loaded -> state.content.source.displayName
+  val sourceName = when (val current = state) {
+    is SourceBrowseState.Content -> current.screen.source.displayName
     else -> catalogSourceName ?: stringResource(R.string.source_fallback)
   }
   SourceBrowseContent(
     sourceName = sourceName,
     state = state,
     onTitleSelected = onTitleSelected,
-    onRetry = { model.retryBrowse(route) },
+    onRetry = { model.retryBrowse(entryId) },
     onBack = onBack,
     contentBottomPadding = contentBottomPadding,
     modifier = modifier,
@@ -126,7 +127,7 @@ private fun CatalogContent(
 @Composable
 private fun SourceBrowseContent(
   sourceName: String,
-  state: ScreenLoadState<BrowseScreen, BrowseScreenFailure>,
+  state: SourceBrowseState,
   onTitleSelected: (ScreenTitleKey) -> Unit,
   onRetry: () -> Unit,
   onBack: () -> Unit,
@@ -142,25 +143,20 @@ private fun SourceBrowseContent(
     modifier = modifier,
   ) {
     when (state) {
-      ScreenLoadState.Loading -> LoadingContent(
+      SourceBrowseState.Loading -> LoadingContent(
         message = stringResource(R.string.browse_loading),
         contentBottomPadding = contentBottomPadding,
       )
 
-      ScreenLoadState.Superseded -> SupersededContent(
-        onRetry = onRetry,
-        contentBottomPadding = contentBottomPadding,
-      )
-
-      is ScreenLoadState.Failed -> FailureContent(
+      is SourceBrowseState.Failed -> FailureContent(
         title = stringResource(R.string.browse_failure_title),
         body = state.failure.message(),
         onRetry = onRetry,
         contentBottomPadding = contentBottomPadding,
       )
 
-      is ScreenLoadState.Loaded -> {
-        val titles = state.content.titles
+      is SourceBrowseState.Content -> {
+        val titles = state.screen.titles
         if (titles.isEmpty()) {
           EmptyContent(
             title = stringResource(R.string.browse_empty_title),

@@ -5,9 +5,10 @@ import android.content.ContextWrapper
 import android.database.sqlite.SQLiteDatabase
 import app.hakusan.titles.TitlesStore
 import app.hakusan.titles.openTitlesStore
-import app.hakusan.ui.BrowsingViewModel
+import app.hakusan.ui.CatalogViewModel
 import app.hakusan.ui.HakusanApp
 import app.hakusan.ui.LibraryViewModel
+import app.hakusan.ui.TitleDetailsViewModel
 import androidx.activity.compose.setContent
 import androidx.compose.ui.test.assertHasClickAction
 import androidx.compose.ui.test.assertHasNoClickAction
@@ -88,10 +89,15 @@ class LibraryIntegrationAndroidTest {
       titles = storeRule.store.titles,
     )
     compose.activityRule.scenario.onActivity { activity ->
-      val browsingModel = ViewModelProvider(
+      val catalogModel = ViewModelProvider(
         owner = activity,
-        factory = BrowsingViewModel.factory(
+        factory = CatalogViewModel.factory(
           browseService = { graph.browseService },
+        ),
+      )[CATALOG_MODEL_KEY, CatalogViewModel::class.java]
+      val titleDetailsModel = ViewModelProvider(
+        owner = activity,
+        factory = TitleDetailsViewModel.factory(
           detailsService = {
             graph.detailsService
           },
@@ -99,7 +105,7 @@ class LibraryIntegrationAndroidTest {
             graph.continueService
           },
         ),
-      )[BROWSING_MODEL_KEY, BrowsingViewModel::class.java]
+      )[TITLE_DETAILS_MODEL_KEY, TitleDetailsViewModel::class.java]
       val libraryModel = ViewModelProvider(
         owner = activity,
         factory = LibraryViewModel.factory(
@@ -109,7 +115,8 @@ class LibraryIntegrationAndroidTest {
 
       activity.setContent {
         HakusanApp(
-          browsingModel = { browsingModel },
+          catalogModel = { catalogModel },
+          titleDetailsModel = { titleDetailsModel },
           libraryModel = { libraryModel },
           onExit = activity::finish,
         )
@@ -198,7 +205,9 @@ class LibraryIntegrationAndroidTest {
   }
 
   private companion object {
-    const val BROWSING_MODEL_KEY = "library-integration-browsing"
+    const val CATALOG_MODEL_KEY = "library-integration-catalog"
+    const val TITLE_DETAILS_MODEL_KEY =
+      "library-integration-title-details"
     const val LIBRARY_MODEL_KEY = "library-integration-library"
     const val DATABASE_NAME = "hakusan.db"
     const val UI_TIMEOUT_MILLIS = 30_000L

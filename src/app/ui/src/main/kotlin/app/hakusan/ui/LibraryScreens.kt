@@ -20,7 +20,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
@@ -32,12 +31,11 @@ import androidx.compose.ui.unit.dp
 
 @Composable
 internal fun LibraryDestination(
-  libraryModel: () -> LibraryViewModel,
+  model: LibraryViewModel,
   onTitleSelected: (ScreenTitleKey) -> Unit,
   contentBottomPadding: Dp,
   modifier: Modifier = Modifier,
 ) {
-  val model = remember { libraryModel() }
   LibraryContent(
     state = model.libraryState,
     onTitleSelected = onTitleSelected,
