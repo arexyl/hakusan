@@ -129,10 +129,9 @@ class LibraryStatesAndroidTest {
     compose.onNodeWithText("Back").performClick()
     compose.onNodeWithText("Reading now").assertExists()
     compose.onNodeWithText("Second title").assertExists()
-    compose.waitUntil(timeoutMillis = TEST_TIMEOUT_MILLIS) {
-      library.observations.get() == 2
-    }
-    assertEquals(2, library.observations.get())
+    library.emit(EMPTY_LIBRARY)
+    waitForText("Your Library is empty")
+    compose.onNodeWithText("Reading now").assertDoesNotExist()
   }
 
   @Test
@@ -506,13 +505,10 @@ class LibraryStatesAndroidTest {
       Channel<Set<ScreenTitleId>>(Channel.UNLIMITED)
     private val addCompletions =
       Channel<AddToLibraryScreenResult>(Channel.UNLIMITED)
-    val observations = AtomicInteger()
     val addRequests = CopyOnWriteArrayList<ScreenTitleId>()
 
-    override fun observeLibrary(): Flow<LibraryScreen> {
-      observations.incrementAndGet()
-      return screens.receiveAsFlow()
-    }
+    override fun observeLibrary(): Flow<LibraryScreen> =
+      screens.receiveAsFlow()
 
     override fun observeLibraryTitleIds(): Flow<Set<ScreenTitleId>> =
       libraryTitleIds.receiveAsFlow()
