@@ -50,7 +50,6 @@ dependencyLocking {
 dependencies {
   implementation(platform(libs.compose.bom))
   implementation(project(":app:sdk"))
-  implementation(project(":reader"))
   implementation(libs.activity.compose)
   implementation(libs.compose.animation)
   implementation(libs.compose.foundation)
@@ -63,6 +62,7 @@ dependencies {
   implementation(libs.navigation3.runtime)
   implementation(libs.navigation3.ui)
 
+  compileOnly(libs.androidx.annotation)
   debugImplementation(libs.compose.ui.tooling)
   debugImplementation(libs.compose.ui.tooling.preview)
   testImplementation(libs.junit.jupiter.api)

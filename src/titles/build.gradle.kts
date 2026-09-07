@@ -59,6 +59,7 @@ dependencies {
   implementation(libs.sqlite.framework)
   ksp(libs.room.compiler)
 
+  androidTestImplementation(libs.androidx.test.core)
   androidTestImplementation(libs.androidx.test.junit)
   androidTestRuntimeOnly(libs.androidx.test.runner)
   testImplementation(libs.junit.jupiter.api)

@@ -66,12 +66,12 @@ dependencies {
   implementation(project(":app:sdk"))
   implementation(project(":titles"))
   implementation(project(":extensions"))
-  implementation(project(":reader"))
   implementation(libs.activity.compose)
   implementation(libs.kotlinx.coroutines.core)
   implementation(libs.lifecycle.viewmodel)
 
   androidTestImplementation(platform(libs.compose.bom))
+  androidTestImplementation(libs.androidx.test.core)
   androidTestImplementation(libs.androidx.test.junit)
   androidTestImplementation(libs.compose.ui.test.junit4)
   androidTestRuntimeOnly(libs.androidx.test.runner)

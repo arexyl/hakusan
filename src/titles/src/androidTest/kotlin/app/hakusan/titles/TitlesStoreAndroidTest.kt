@@ -1,8 +1,8 @@
 package app.hakusan.titles
 
 import android.content.Context
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.After
@@ -15,10 +15,7 @@ import org.junit.runner.RunWith
 @RunWith(AndroidJUnit4::class)
 class TitlesStoreAndroidTest {
   private val context: Context
-    get() = InstrumentationRegistry
-      .getInstrumentation()
-      .targetContext
-      .applicationContext
+    get() = ApplicationProvider.getApplicationContext()
 
   @Before
   fun removePreviousDatabase() {

@@ -57,8 +57,8 @@ import app.hakusan.titles.TitleId
 import app.hakusan.titles.Titles
 import app.hakusan.titles.TitlesStore
 import app.hakusan.titles.openTitlesStore
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicInteger
@@ -86,9 +86,7 @@ class ScreenAdaptersAndroidTest {
 
   @Before
   fun openStore() {
-    val appContext = InstrumentationRegistry.getInstrumentation()
-      .targetContext
-      .applicationContext
+    val appContext = ApplicationProvider.getApplicationContext<Context>()
     databaseContext = IsolatedDatabaseContext(appContext)
     check(
       databaseContext.getDatabasePath(DATABASE_NAME) !=
