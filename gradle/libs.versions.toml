@@ -1,9 +1,7 @@
 [versions]
 activity = "1.13.0"
 agp = "9.4.0"
-# Keep direct source ownership aligned with the already resolved AndroidX graph.
-#noinspection GradleDependency
-androidx-annotation = "1.9.1"
+androidx-annotation = "1.10.0"
 androidx-test = "1.7.0"
 androidx-test-junit = "1.3.0"
 compose-bom = "2026.08.00"
@@ -12,9 +10,7 @@ junit = "6.1.3"
 kotlin = "2.4.10"
 kotlinx-coroutines = "1.11.0"
 kotlinx-serialization = "1.11.0"
-# Keep direct source ownership aligned with the Lifecycle atomic group.
-#noinspection GradleDependency
-lifecycle = "2.10.0"
+lifecycle = "2.11.0"
 material3 = "1.5.0-alpha27"
 ksp = "2.3.11"
 metro = "1.4.2"
