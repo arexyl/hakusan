@@ -20,8 +20,8 @@ import androidx.compose.ui.test.onNodeWithContentDescription
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.lifecycle.ViewModelProvider
+import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
 import java.io.File
 import org.junit.Rule
 import org.junit.Test
@@ -146,9 +146,7 @@ class LibraryIntegrationAndroidTest {
     private lateinit var databaseContext: IsolatedDatabaseContext
 
     override fun before() {
-      val appContext = InstrumentationRegistry.getInstrumentation()
-        .targetContext
-        .applicationContext
+      val appContext = ApplicationProvider.getApplicationContext<Context>()
       databaseContext = IsolatedDatabaseContext(appContext)
       check(
         databaseContext.getDatabasePath(DATABASE_NAME) !=

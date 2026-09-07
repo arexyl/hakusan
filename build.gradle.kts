@@ -24,7 +24,10 @@ plugins {
 layout.buildDirectory = layout.projectDirectory.dir("build/work/root")
 
 tasks.named<Delete>("clean") {
-  delete(layout.projectDirectory.dir("build/work"))
+  delete(
+    layout.projectDirectory.dir("build/work"),
+    layout.projectDirectory.dir("build/reports"),
+  )
 }
 
 tasks.named<UpdateDaemonJvm>("updateDaemonJvm") {
