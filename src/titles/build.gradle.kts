@@ -22,6 +22,10 @@ android {
   defaultConfig {
     minSdk = 33
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    ndk {
+      abiFilters += setOf("arm64-v8a", "x86_64")
+    }
   }
 
   testOptions {

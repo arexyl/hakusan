@@ -25,7 +25,17 @@ android {
   }
 
   buildTypes {
+    debug {
+      ndk {
+        abiFilters += setOf("arm64-v8a", "x86_64")
+      }
+    }
+
     release {
+      ndk {
+        abiFilters += "arm64-v8a"
+      }
+
       optimization {
         enable = true
       }
