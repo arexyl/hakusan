@@ -42,6 +42,10 @@ android {
     }
   }
 
+  lint {
+    fatal += "Aligned16KB"
+  }
+
   buildFeatures {
     compose = true
   }
