@@ -123,6 +123,9 @@ private const val LIBRARY_QUERY = """
     LEFT JOIN read_chapters
       ON read_chapters.chapter_storage_id = chapters.storage_id
     WHERE chapters.canonical_index IS NOT NULL
+      AND chapters.title_storage_id IN (
+        SELECT title_storage_id FROM title_categories
+      )
     GROUP BY chapters.title_storage_id
   )
   SELECT categories.id AS category_id,

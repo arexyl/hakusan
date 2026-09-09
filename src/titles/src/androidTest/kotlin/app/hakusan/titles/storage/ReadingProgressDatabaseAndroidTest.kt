@@ -5,6 +5,7 @@ import app.hakusan.titles.ActualPositionNotPersisted
 import app.hakusan.titles.ActualPositionResult
 import app.hakusan.titles.ActualPositionUpdate
 import app.hakusan.titles.CanonicalChapterSnapshot
+import app.hakusan.titles.CategoryId
 import app.hakusan.titles.Chapter
 import app.hakusan.titles.ChapterBoundaryCompletion
 import app.hakusan.titles.ChapterId
@@ -13,6 +14,7 @@ import app.hakusan.titles.ChapterReconciliationResult
 import app.hakusan.titles.CompletionResult
 import app.hakusan.titles.FinalChapterCompletion
 import app.hakusan.titles.LibraryAddResult
+import app.hakusan.titles.LibraryCategorySelection
 import app.hakusan.titles.LibraryResumeAvailability
 import app.hakusan.titles.ProgressEventRecency
 import app.hakusan.titles.ReadingContentUnitKind
@@ -1307,6 +1309,97 @@ class ReadingProgressDatabaseAndroidTest {
       unavailable.resumeAvailability,
     )
   }
+
+  @Test
+  fun libraryProgressPreservesMembershipAndCategoryBoundaries(): Unit =
+    runBlocking {
+      val memberAlias = SourceTitleAlias("source", "member")
+      val memberId = createTitle(memberAlias, addToLibrary = true)
+      val chapters = reconcile(
+        memberAlias,
+        "opening" to "Opening",
+        "omitted-read" to "Omitted read chapter",
+        "saved" to "Saved chapter",
+        "final" to "Final",
+      ).chapters
+      titles.completeChapterBoundary(
+        boundary(chapters[0], position(memberId, chapters[1], unitIndex = 0)),
+      )
+      titles.completeChapterBoundary(
+        boundary(chapters[1], position(memberId, chapters[2], unitIndex = 4)),
+      )
+      reconcile(memberAlias, "opening" to "Opening", "final" to "Final")
+
+      val dao = database.titlesDao()
+      val firstCategory = dao.loadCategories().single().id
+      val secondCategory = dao.insertCategory(CategoryEntity(name = "Second"))
+      val emptyCategory = dao.insertCategory(CategoryEntity(name = "Empty"))
+      val member = checkNotNull(dao.findTitleById(memberId.value))
+      dao.insertTitleCategories(
+        listOf(TitleCategoryEntity(member.storageId, secondCategory)),
+      )
+
+      val emptyId = createTitle(SourceTitleAlias("source", "empty-member"))
+      titles.addToLibrary(
+        emptyId,
+        LibraryCategorySelection.of(listOf(CategoryId(firstCategory))),
+      )
+      val nonmemberAlias = SourceTitleAlias("source", "nonmember")
+      val nonmemberId = createTitle(nonmemberAlias)
+      val nonmemberChapter = reconcile(nonmemberAlias, "only" to "Only")
+        .chapters.single()
+      titles.completeFinalChapter(
+        FinalChapterCompletion(nonmemberId, nonmemberChapter.id),
+      )
+
+      val beforeAdd = titles.observeLibrary().first()
+      assertEquals(setOf(memberId, emptyId), beforeAdd.titlesById.keys)
+      val memberProgress = beforeAdd.titlesById.getValue(memberId).progress
+      assertEquals(2, memberProgress.chapterCount)
+      assertEquals(1, memberProgress.readChapterCount)
+      assertEquals(
+        LibraryResumeAvailability.TEMPORARILY_UNAVAILABLE,
+        memberProgress.resumeAvailability,
+      )
+      val emptyProgress = beforeAdd.titlesById.getValue(emptyId).progress
+      assertEquals(0, emptyProgress.chapterCount)
+      assertEquals(0, emptyProgress.readChapterCount)
+      assertEquals(
+        LibraryResumeAvailability.NONE,
+        emptyProgress.resumeAvailability,
+      )
+      val shelves = beforeAdd.shelves.associateBy { it.category.id.value }
+      assertEquals(
+        setOf(memberId, emptyId),
+        shelves.getValue(firstCategory).titleIds,
+      )
+      assertEquals(setOf(memberId), shelves.getValue(secondCategory).titleIds)
+      assertTrue(shelves.getValue(emptyCategory).titleIds.isEmpty())
+      assertEquals(3, queryLong("SELECT COUNT(*) FROM read_chapters"))
+
+      val addObservationReady = CompletableDeferred<Unit>()
+      val observedAdd = async(start = CoroutineStart.UNDISPATCHED) {
+        withTimeout(TEST_TIMEOUT_MILLIS) {
+          titles.observeLibrary().first { library ->
+            addObservationReady.complete(Unit)
+            nonmemberId in library.titlesById
+          }
+        }
+      }
+      withTimeout(TEST_TIMEOUT_MILLIS) { addObservationReady.await() }
+      titles.addToLibrary(
+        nonmemberId,
+        LibraryCategorySelection.of(listOf(CategoryId(secondCategory))),
+      )
+      val addedProgress = observedAdd.await()
+        .titlesById.getValue(nonmemberId).progress
+      assertEquals(1, addedProgress.chapterCount)
+      assertEquals(1, addedProgress.readChapterCount)
+      assertEquals(
+        LibraryResumeAvailability.NONE,
+        addedProgress.resumeAvailability,
+      )
+    }
 
   @Test
   fun progressWritesDoNotInvalidateMembershipRows(): Unit = runBlocking {
