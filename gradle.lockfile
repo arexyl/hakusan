@@ -1,0 +1,22 @@
+# This is a Gradle generated file for dependency locking.
+# Manual edits can break the build and are not advised.
+# This file is expected to be part of source control.
+# To regenerate this file, run: ./gradlew :dependencies --write-locks
+com.facebook:ktfmt:0.64=ktfmtClasspath
+com.google.errorprone:error_prone_annotations:2.41.0=ktfmtClasspath
+com.google.googlejavaformat:google-java-format:1.23.0=ktfmtClasspath
+com.google.guava:failureaccess:1.0.3=ktfmtClasspath
+com.google.guava:guava:33.5.0-jre=ktfmtClasspath
+com.google.guava:listenablefuture:9999.0-empty-to-avoid-conflict-with-guava=ktfmtClasspath
+com.google.j2objc:j2objc-annotations:3.1=ktfmtClasspath
+net.java.dev.jna:jna:4.2.2=ktfmtClasspath
+org.ec4j.core:ec4j-core:1.2.0=ktfmtClasspath
+org.jetbrains.kotlin:kotlin-compiler-embeddable:2.3.20=ktfmtClasspath
+org.jetbrains.kotlin:kotlin-daemon-embeddable:2.3.20=ktfmtClasspath
+org.jetbrains.kotlin:kotlin-reflect:1.6.10=ktfmtClasspath
+org.jetbrains.kotlin:kotlin-script-runtime:2.3.20=ktfmtClasspath
+org.jetbrains.kotlin:kotlin-stdlib:2.3.20=ktfmtClasspath
+org.jetbrains.kotlinx:kotlinx-coroutines-core-jvm:1.8.0=ktfmtClasspath
+org.jetbrains:annotations:13.0=ktfmtClasspath
+org.jspecify:jspecify:1.0.0=ktfmtClasspath
+empty=

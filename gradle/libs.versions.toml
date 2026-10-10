@@ -2,12 +2,14 @@
 agp = "9.3.3"
 build-tools = "37.0.0"
 kotlin = "2.4.21"
+ktfmt = "0.64"
 sdk-compile = "37"
 sdk-min = "33"
 sdk-target = "37"
 
 [libraries]
 kotlin-gradle = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+ktfmt = { module = "com.facebook:ktfmt", version.ref = "ktfmt" }
 
 [plugins]
 android-application = { id = "com.android.application", version.ref = "agp" }
