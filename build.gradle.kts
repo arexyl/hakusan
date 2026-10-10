@@ -83,6 +83,30 @@ tasks.register<JavaExec>("ktfmtFormat") {
   runKtfmt()
 }
 
+val hostMatrixProjects =
+  listOf(":app", ":app:sdk", ":app:ui", ":titles", ":extensions", ":reader")
+
+val hostMatrixTasks =
+  listOf(
+    "testDebugUnitTest",
+    "lintDebug",
+    "lintRelease",
+    "assembleDebug",
+    "assembleRelease",
+  )
+
+tasks.register("hostMatrix") {
+  group = "verification"
+  description = "Runs the host verification matrix of every project."
+  dependsOn(":ktfmtCheck")
+
+  dependsOn(
+    hostMatrixProjects.flatMap { project ->
+      hostMatrixTasks.map { task -> "$project:$task" }
+    }
+  )
+}
+
 tasks.named<Delete>("clean") {
   delete(
     layout.projectDirectory.dir("build/work"),
