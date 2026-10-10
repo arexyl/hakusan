@@ -1,0 +1,14 @@
+[versions]
+agp = "9.3.3"
+build-tools = "37.0.0"
+kotlin = "2.4.21"
+sdk-compile = "37"
+sdk-min = "33"
+sdk-target = "37"
+
+[libraries]
+kotlin-gradle = { module = "org.jetbrains.kotlin:kotlin-gradle-plugin", version.ref = "kotlin" }
+
+[plugins]
+android-application = { id = "com.android.application", version.ref = "agp" }
+android-library = { id = "com.android.library", version.ref = "agp" }
