@@ -2,6 +2,7 @@ pluginManagement {
   repositories {
     exclusiveContent {
       forRepository { google() }
+
       filter {
         includeGroupAndSubgroups("androidx")
         includeGroupAndSubgroups("com.android")
@@ -9,15 +10,18 @@ pluginManagement {
         includeGroupAndSubgroups("com.google.testing.platform")
       }
     }
+
     mavenCentral()
   }
 }
 
 dependencyResolutionManagement {
   repositoriesMode = RepositoriesMode.FAIL_ON_PROJECT_REPOS
+
   repositories {
     exclusiveContent {
       forRepository { google() }
+
       filter {
         includeGroupAndSubgroups("androidx")
         includeGroupAndSubgroups("com.android")
@@ -25,6 +29,7 @@ dependencyResolutionManagement {
         includeGroupAndSubgroups("com.google.testing.platform")
       }
     }
+
     mavenCentral()
   }
 }
