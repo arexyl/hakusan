@@ -25,10 +25,26 @@ internal data class ReadChapterEntity(
   val chapterStorageId: Long
 )
 
-/** The provider granularity of a stored content unit. */
-internal enum class StoredContentUnitKind {
-  PAGE,
-  PROVIDER_SEGMENT,
+/**
+ * The provider granularity of a stored content unit.
+ *
+ * Each kind owns its stored text, which is part of the persisted schema. A
+ * renamed constant keeps the text, and every write of a resume row stores it.
+ */
+internal enum class StoredContentUnitKind(
+  /** The text that the `unit_kind` column stores for this kind. */
+  val storedText: String
+) {
+  PAGE("PAGE"),
+  PROVIDER_SEGMENT("PROVIDER_SEGMENT");
+
+  companion object {
+    /** Returns the kind whose stored text is [text], or null when none is. */
+    fun ofStoredTextOrNull(text: String): StoredContentUnitKind? =
+      entries.firstOrNull { kind ->
+        kind.storedText == text
+      }
+  }
 }
 
 /**
@@ -58,7 +74,12 @@ internal enum class StoredContentUnitKind {
 internal data class LibraryResumePositionEntity(
   @PrimaryKey @ColumnInfo(name = "title_storage_id") val titleStorageId: Long,
   @ColumnInfo(name = "chapter_storage_id") val chapterStorageId: Long,
-  @ColumnInfo(name = "unit_kind") val unitKind: StoredContentUnitKind,
+  /**
+   * The [StoredContentUnitKind.storedText] of the unit kind. Room materializes
+   * it as text, so an unknown value reaches the read boundary instead of
+   * failing inside Room's enum conversion.
+   */
+  @ColumnInfo(name = "unit_kind") val unitKind: String,
   /** The zero-based index in the provider-supplied unit sequence. */
   @ColumnInfo(name = "unit_index") val unitIndex: Int,
   /**

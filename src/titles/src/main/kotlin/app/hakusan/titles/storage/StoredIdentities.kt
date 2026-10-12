@@ -2,26 +2,34 @@ package app.hakusan.titles.storage
 
 import app.hakusan.titles.ChapterId
 import app.hakusan.titles.TitleId
-import java.util.UUID
-import kotlin.uuid.toJavaUuid
-import kotlin.uuid.toKotlinUuid
+import kotlin.uuid.Uuid
 
-// Room stores java.util.UUID as its 16-byte network-order value. These
-// conversions are the only crossing between identities and stored UUIDs.
+// A stored identity is the 16-byte network-order value of java.util.UUID BLOB
+// conversion: the most significant bits, then the least significant bits, both
+// big-endian. Entities hold these bytes raw, because Room's UUID conversion
+// does not check their length. The functions below are the only crossing
+// between identities and stored bytes, in either direction.
 
-internal fun TitleId.toStoredUuid(): UUID = uuid.toJavaUuid()
+/** Returns the stored bytes of this title identity. */
+internal fun TitleId.toStoredBytes(): ByteArray = uuid.toByteArray()
 
-internal fun ChapterId.toStoredUuid(): UUID = uuid.toJavaUuid()
-
-/**
- * Returns the title identity of a stored UUID, or null when the stored value is
- * not a UUIDv7. The read boundary reports null as a stored-state violation.
- */
-internal fun UUID.toTitleIdOrNull(): TitleId? = TitleId.ofOrNull(toKotlinUuid())
+/** Returns the stored bytes of this chapter identity. */
+internal fun ChapterId.toStoredBytes(): ByteArray = uuid.toByteArray()
 
 /**
- * Returns the chapter identity of a stored UUID, or null when the stored value
- * is not a UUIDv7. The read boundary reports null as a stored-state violation.
+ * Returns the title identity of stored bytes, or null when they are not a
+ * 16-byte UUIDv7. The read boundary reports null as a stored-state violation.
  */
-internal fun UUID.toChapterIdOrNull(): ChapterId? =
-  ChapterId.ofOrNull(toKotlinUuid())
+internal fun ByteArray.toTitleIdOrNull(): TitleId? =
+  toStoredUuidOrNull()?.let(TitleId::ofOrNull)
+
+/**
+ * Returns the chapter identity of stored bytes, or null when they are not a
+ * 16-byte UUIDv7. The read boundary reports null as a stored-state violation.
+ */
+internal fun ByteArray.toChapterIdOrNull(): ChapterId? =
+  toStoredUuidOrNull()?.let(ChapterId::ofOrNull)
+
+/** Returns the UUID of stored bytes, or null when they are not 16 bytes. */
+private fun ByteArray.toStoredUuidOrNull(): Uuid? =
+  if (size == Uuid.SIZE_BYTES) Uuid.fromByteArray(this) else null

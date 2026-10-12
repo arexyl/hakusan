@@ -9,6 +9,7 @@ import androidx.sqlite.driver.AndroidSQLiteDriver
 import androidx.sqlite.execSQL
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import app.hakusan.titles.storage.toStoredBytes
 import kotlinx.coroutines.runBlocking
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -158,11 +159,11 @@ class TitlesSchemaTest {
 
   @Test
   fun duplicateAliasesAndUuidsAreRejected() {
-    val titleUuid = uuidBytes()
+    val titleUuid = TitleId.generate().toStoredBytes()
 
     val title = insertTitle("source", "title", titleUuid)
 
-    val chapterUuid = uuidBytes()
+    val chapterUuid = ChapterId.generate().toStoredBytes()
 
     insertChapter(title, "chapter", chapterUuid)
 
@@ -247,7 +248,7 @@ class TitlesSchemaTest {
   private fun insertTitle(
     source: String,
     key: String,
-    uuid: ByteArray = uuidBytes(),
+    uuid: ByteArray = TitleId.generate().toStoredBytes(),
   ): Long =
     insert(
       "INSERT INTO titles (id, source_identity, source_title_key, " +
@@ -261,7 +262,7 @@ class TitlesSchemaTest {
   private fun insertChapter(
     title: Long,
     key: String,
-    uuid: ByteArray = uuidBytes(),
+    uuid: ByteArray = ChapterId.generate().toStoredBytes(),
   ): Long =
     insert(
       "INSERT INTO chapters (id, title_storage_id, source_chapter_key, " +
@@ -311,8 +312,6 @@ class TitlesSchemaTest {
         }
       }
     }
-
-  private fun uuidBytes(): ByteArray = TitleId.generate().uuid.toByteArray()
 
   private data class Column(val type: String, val notNull: Boolean)
 

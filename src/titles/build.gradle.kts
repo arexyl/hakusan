@@ -128,6 +128,7 @@ dependencyLocking {
 }
 
 dependencies {
+  implementation(libs.kotlinx.coroutines.core)
   implementation(libs.room.runtime)
   implementation(libs.sqlite.framework)
   ksp(libs.room.compiler)
@@ -138,6 +139,5 @@ dependencies {
 
   androidTestImplementation(libs.androidx.test.core)
   androidTestImplementation(libs.androidx.test.junit)
-  androidTestImplementation(libs.kotlinx.coroutines.core)
   androidTestRuntimeOnly(libs.androidx.test.runner)
 }

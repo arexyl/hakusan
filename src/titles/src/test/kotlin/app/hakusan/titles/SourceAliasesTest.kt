@@ -2,33 +2,19 @@ package app.hakusan.titles
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertAll
-import org.junit.jupiter.api.assertThrows
 
 class SourceAliasesTest {
   @Test
   fun aliasesRejectBlankComponents() {
-    val title = SourceTitleAlias("source", "title")
-
     assertAll(
       BLANKS.flatMap { blank ->
         listOf(
-          {
-            assertThrows<IllegalArgumentException> {
-              SourceTitleAlias(blank, "title")
-            }
-          },
-          {
-            assertThrows<IllegalArgumentException> {
-              SourceTitleAlias("source", blank)
-            }
-          },
-          {
-            assertThrows<IllegalArgumentException> {
-              SourceChapterAlias(title, blank)
-            }
-          },
+          { assertNull(SourceTitleAlias.ofOrNull(blank, "title")) },
+          { assertNull(SourceTitleAlias.ofOrNull("source", blank)) },
+          { assertNull(TitleLocalChapterKey.ofOrNull(blank)) },
         )
       }
     )
@@ -36,13 +22,13 @@ class SourceAliasesTest {
 
   @Test
   fun aliasesKeepExactText() {
-    val alias = SourceTitleAlias(" source/α ", " Title/Key ")
+    val alias = title(" source/α ", " Title/Key ")
 
-    val chapter = SourceChapterAlias(alias, "\tChapter ")
+    val chapter = chapter(alias, "\tChapter ")
 
     assertEquals(" source/α ", alias.sourceIdentity)
     assertEquals(" Title/Key ", alias.sourceTitleKey)
-    assertEquals("\tChapter ", chapter.sourceChapterKey)
+    assertEquals("\tChapter ", chapter.localKey.text)
     assertNotEquals(title("source", "key"), title("source", "Key"))
     assertNotEquals(title("source", "key"), title("source", " key"))
     assertNotEquals(title("source", COMPOSED), title("source", DECOMPOSED))
@@ -77,12 +63,13 @@ class SourceAliasesTest {
   }
 
   private fun title(source: String, key: String): SourceTitleAlias =
-    SourceTitleAlias(source, key)
+    checkNotNull(SourceTitleAlias.ofOrNull(source, key))
 
   private fun chapter(
     title: SourceTitleAlias,
     key: String,
-  ): SourceChapterAlias = SourceChapterAlias(title, key)
+  ): SourceChapterAlias =
+    SourceChapterAlias(title, checkNotNull(TitleLocalChapterKey.ofOrNull(key)))
 
   private companion object {
     const val COMPOSED = "é"
