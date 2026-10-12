@@ -201,6 +201,27 @@ class LibraryScreenTest {
   }
 
   @Test
+  fun codePointsBreakTitleCollationTiesBeforeTheUuid() {
+    // Each pair differs only in one canonically equivalent text. Code points
+    // put the decomposed text first, against the order of the UUIDs.
+    val pairs =
+      listOf(
+        title(2, decomposedCafe) to title(1, composedCafe),
+        title(2, "Same", description = decomposedCafe) to
+          title(1, "Same", description = composedCafe),
+        title(2, "Same", sourceName = decomposedCafe) to
+          title(1, "Same", sourceName = composedCafe),
+      )
+
+    pairs.forEach { (decomposed, composed) ->
+      assertEquals(
+        listOf(decomposed.id, composed.id),
+        orderedIds(listOf(composed, decomposed), Locale.ENGLISH),
+      )
+    }
+  }
+
+  @Test
   fun uuidBreaksRemainingTitleTiesInUnsignedOrder() {
     val low = title(1, "Same", id = titleId(1))
 

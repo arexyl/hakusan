@@ -111,11 +111,13 @@ private constructor(
     /**
      * Orders the unordered Library data by visible metadata only.
      *
-     * Titles compare by display name, then description, then source name, and
-     * shelves by name. Text compares under the locale-aware collation of
-     * [collationLocale] with canonical decomposition, and an absent description
-     * compares as empty text. A UUID breaks any remaining title tie, and the
-     * shelf identity breaks any remaining shelf tie. These tie-breaks only keep
+     * Titles compare by display name, then description, then source name under
+     * the locale-aware collation of [collationLocale] with canonical
+     * decomposition, and then by the same three in code-point order. Shelves
+     * compare by name, under that collation and then in code-point order. An
+     * absent description compares as empty text. A UUID breaks any remaining
+     * title tie, and the shelf identity breaks any remaining shelf tie, so only
+     * byte-identical metadata reaches them. These tie-breaks only keep
      * rendering stable and carry no product meaning. Input order never affects
      * the result.
      *
@@ -227,6 +229,18 @@ private fun titleOrder(collator: Collator): Comparator<LibraryTitleItem> =
   compareBy<LibraryTitleItem, String>(collator) { it.displayName }
     .thenBy(collator) { it.description.orEmpty() }
     .thenBy(collator) { it.sourceDisplayName }
+    .thenComparator { first, second ->
+      compareCodePoints(first.displayName, second.displayName)
+    }
+    .thenComparator { first, second ->
+      compareCodePoints(
+        first.description.orEmpty(),
+        second.description.orEmpty(),
+      )
+    }
+    .thenComparator { first, second ->
+      compareCodePoints(first.sourceDisplayName, second.sourceDisplayName)
+    }
     .thenComparator { first, second ->
       compareUuids(first.id.value, second.id.value)
     }
