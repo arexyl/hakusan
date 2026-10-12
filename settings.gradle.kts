@@ -6,7 +6,6 @@ pluginManagement {
       filter {
         includeGroupAndSubgroups("androidx")
         includeGroupAndSubgroups("com.android")
-        includeGroupAndSubgroups("com.google.android")
         includeGroupAndSubgroups("com.google.testing.platform")
       }
     }
@@ -25,7 +24,6 @@ dependencyResolutionManagement {
       filter {
         includeGroupAndSubgroups("androidx")
         includeGroupAndSubgroups("com.android")
-        includeGroupAndSubgroups("com.google.android")
         includeGroupAndSubgroups("com.google.testing.platform")
       }
     }

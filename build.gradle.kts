@@ -14,6 +14,8 @@ plugins {
   base
   alias(libs.plugins.android.application) apply false
   alias(libs.plugins.android.library) apply false
+  alias(libs.plugins.ksp) apply false
+  alias(libs.plugins.room) apply false
 }
 
 layout.buildDirectory = layout.projectDirectory.dir("build/work/root")
@@ -95,14 +97,22 @@ val hostMatrixTasks =
     "assembleRelease",
   )
 
+val hostMatrixAndroidTestProjects = listOf(":titles")
+
 tasks.register("hostMatrix") {
   group = "verification"
   description = "Runs the host verification matrix of every project."
-  dependsOn(":ktfmtCheck")
+  dependsOn(":ktfmtCheck", ":titles:verifyRoomSchema")
 
   dependsOn(
     hostMatrixProjects.flatMap { project ->
       hostMatrixTasks.map { task -> "$project:$task" }
+    }
+  )
+
+  dependsOn(
+    hostMatrixAndroidTestProjects.map { project ->
+      "$project:assembleDebugAndroidTest"
     }
   )
 }
