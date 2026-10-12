@@ -30,6 +30,15 @@ kotlin {
   }
 }
 
+tasks.withType<Test>().configureEach { useJUnitPlatform() }
+
 dependencyLocking {
   lockAllConfigurations()
+}
+
+dependencies {
+  testImplementation(libs.junit.jupiter.api)
+  testImplementation(libs.kotlinx.coroutines.core)
+  testRuntimeOnly(libs.junit.jupiter.engine)
+  testRuntimeOnly(libs.junit.platform.launcher)
 }
