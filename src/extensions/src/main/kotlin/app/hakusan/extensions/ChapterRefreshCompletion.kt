@@ -4,7 +4,7 @@ package app.hakusan.extensions
  * The outcome of one chapter refresh, bound to the [request] it answers.
  *
  * A backend reports only an expected backend failure. Validation failures come
- * only from [ChapterSnapshot.create].
+ * only from [ChapterSnapshot.create] and from [CorrelatedSource].
  */
 @ConsistentCopyVisibility
 public data class ChapterRefreshCompletion
@@ -33,5 +33,21 @@ private constructor(
       error: SourceFailure.Unavailable,
     ): ChapterRefreshCompletion =
       ChapterRefreshCompletion(request, SourceResult.Failure(error))
+
+    /**
+     * Completes [request] as answered by a completion that the backend bound to
+     * another request.
+     */
+    internal fun foreignRequest(
+      request: ChapterRefreshRequest
+    ): ChapterRefreshCompletion =
+      ChapterRefreshCompletion(
+        request,
+        SourceResult.Failure(
+          SourceFailure.InvalidChapterSnapshot(
+            ChapterSnapshotRejection.FOREIGN_REQUEST
+          )
+        ),
+      )
   }
 }

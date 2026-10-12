@@ -149,19 +149,92 @@ class CorrelatedSourceTest {
   }
 
   @Test
-  fun `a completion for another request stays arbitration`() {
+  fun `a completion bound to another request is invalid`() {
     val gate = ChapterRefreshGate(title)
 
     val stale = gate.issue()
 
     val current = gate.issue()
 
-    val completion =
-      ChapterRefreshCompletion.completed(
-        request = stale,
-        status = ChapterSequenceStatus.COMPLETE,
-        chapters = emptyList(),
+    val otherGate = ChapterRefreshGate(title).issue()
+
+    for (bound in listOf(stale, otherGate)) {
+      val correlated =
+        CorrelatedSource(
+          ScriptedBackend(
+            identity = source,
+            onRefresh = { completeEmpty(bound) },
+          )
+        )
+
+      val returned = completeWithoutSuspension {
+        correlated.refreshChapters(current)
+      }
+
+      assertEquals(current, returned.request)
+
+      assertEquals(
+        SourceFailure.InvalidChapterSnapshot(
+          ChapterSnapshotRejection.FOREIGN_REQUEST
+        ),
+        returned.result.failureValue(),
       )
+    }
+  }
+
+  @Test
+  fun `a misbound completion cannot displace the current request`() {
+    val gate = ChapterRefreshGate(title)
+
+    val superseded = gate.issue()
+
+    val current = gate.issue()
+
+    val genuine =
+      ChapterRefreshCompletion.completed(
+        request = current,
+        status = ChapterSequenceStatus.COMPLETE,
+        chapters = listOf(SourceChapter(chapter, "Newer")),
+      )
+
+    val correlated =
+      CorrelatedSource(
+        ScriptedBackend(
+          identity = source,
+          onRefresh = { request ->
+            if (request == superseded) completeEmpty(current) else genuine
+          },
+        )
+      )
+
+    val misbound = completeWithoutSuspension {
+      correlated.refreshChapters(superseded)
+    }
+
+    assertSame(
+      ChapterRefreshAcceptance.RejectedNotCurrent,
+      gate.accept(misbound),
+    )
+
+    val answered = completeWithoutSuspension {
+      correlated.refreshChapters(current)
+    }
+
+    assertEquals(
+      ChapterRefreshAcceptance.Accepted(genuine.result),
+      gate.accept(answered),
+    )
+  }
+
+  @Test
+  fun `supersession of the answered request stays arbitration`() {
+    val gate = ChapterRefreshGate(title)
+
+    val superseded = gate.issue()
+
+    gate.issue()
+
+    val completion = completeEmpty(superseded)
 
     val correlated =
       CorrelatedSource(
@@ -169,7 +242,7 @@ class CorrelatedSourceTest {
       )
 
     val returned = completeWithoutSuspension {
-      correlated.refreshChapters(current)
+      correlated.refreshChapters(superseded)
     }
 
     assertSame(completion, returned)
@@ -248,6 +321,15 @@ class CorrelatedSourceTest {
 
   private fun foreignTitle(): SourceTitleKey =
     SourceTitleKey(otherSource, "title")
+
+  private fun completeEmpty(
+    request: ChapterRefreshRequest
+  ): ChapterRefreshCompletion =
+    ChapterRefreshCompletion.completed(
+      request = request,
+      status = ChapterSequenceStatus.COMPLETE,
+      chapters = emptyList(),
+    )
 }
 
 private typealias BrowseOutcome =

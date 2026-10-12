@@ -86,6 +86,9 @@ public enum class ChapterSnapshotRejection {
   /** The same chapter identity occurs more than once. */
   DUPLICATE_CHAPTER,
 
+  /** The completion is bound to a request other than the answered one. */
+  FOREIGN_REQUEST,
+
   /** A chapter belongs to a title other than the requested one. */
   FOREIGN_TITLE,
 

@@ -9,12 +9,14 @@ package app.hakusan.extensions
  *   [BrowseResultRejection.FOREIGN_OWNER];
  * - details of another title become [TitleDetailsRejection.FOREIGN_TITLE];
  * - content of another chapter becomes
- *   [ChapterContentRejection.FOREIGN_CHAPTER].
+ *   [ChapterContentRejection.FOREIGN_CHAPTER];
+ * - a chapter-refresh completion bound to another request becomes
+ *   [ChapterSnapshotRejection.FOREIGN_REQUEST], bound to the answered request.
  *
- * A chapter-refresh completion is bound to its request by construction and
- * passes unchanged. A completion for another request stays arbitration, which
- * [ChapterRefreshGate] reports as
- * [ChapterRefreshAcceptance.RejectedNotCurrent].
+ * Without the last check, a completion bound to the current request of a
+ * concurrent call would pass [ChapterRefreshGate] and displace the newer
+ * snapshot. Supersession of the answered request itself stays arbitration,
+ * which the gate reports as [ChapterRefreshAcceptance.RejectedNotCurrent].
  *
  * A key that [identity] does not own violates a caller precondition and throws
  * [IllegalArgumentException] before the backend runs. Cancellation and
@@ -60,7 +62,7 @@ public class CorrelatedSource(private val backend: SourceBackend) {
   }
 
   /**
-   * Returns the completion that the backend bound to [request].
+   * Returns the completion of [request], which is always bound to [request].
    *
    * @throws IllegalArgumentException if [identity] does not own the requested
    *   title.
@@ -70,7 +72,13 @@ public class CorrelatedSource(private val backend: SourceBackend) {
   ): ChapterRefreshCompletion {
     requireOwned(request.title)
 
-    return backend.refreshChapters(request)
+    val completion = backend.refreshChapters(request)
+
+    if (completion.request != request) {
+      return ChapterRefreshCompletion.foreignRequest(request)
+    }
+
+    return completion
   }
 
   /**
