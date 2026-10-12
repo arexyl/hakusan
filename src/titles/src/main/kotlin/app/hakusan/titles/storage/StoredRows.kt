@@ -255,5 +255,11 @@ private fun positiveKey(key: Long, column: String): Long =
     violated(STORAGE_KEY, "A stored $column is not positive.")
   }
 
-private fun violated(kind: StoredStateViolationKind, message: String): Nothing =
-  throw StoredStateViolationException(kind, message)
+/**
+ * Raises the stored-state violation [kind]. The [message] names the violated
+ * rule only, never a stored value.
+ */
+internal fun violated(
+  kind: StoredStateViolationKind,
+  message: String,
+): Nothing = throw StoredStateViolationException(kind, message)

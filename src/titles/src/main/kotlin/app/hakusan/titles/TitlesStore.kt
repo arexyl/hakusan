@@ -3,16 +3,21 @@ package app.hakusan.titles
 import android.content.Context
 import androidx.room3.Room
 import androidx.sqlite.driver.AndroidSQLiteDriver
+import app.hakusan.titles.storage.RoomTitles
 import app.hakusan.titles.storage.TitlesDatabase
 
 /**
  * The file-backed store of titles, chapters, the Library, and reading progress.
  *
  * The application keeps one store for the process lifetime and closes it
- * explicitly. No other process opens its database.
+ * explicitly. No other process opens its database. The store exposes only the
+ * [Titles] domain surface; its Room database stays internal.
  */
 public class TitlesStore
 private constructor(internal val database: TitlesDatabase) : AutoCloseable {
+  /** The domain operations on this store. */
+  public val titles: Titles = RoomTitles(database)
+
   /** Releases the database resources of this store. */
   override fun close() {
     database.close()

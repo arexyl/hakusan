@@ -22,4 +22,7 @@ import androidx.room3.RoomDatabase
   version = 1,
   exportSchema = true,
 )
-internal abstract class TitlesDatabase : RoomDatabase()
+internal abstract class TitlesDatabase : RoomDatabase() {
+  /** Returns the persistence primitives of `:titles`. */
+  abstract fun titlesDao(): TitlesDao
+}

@@ -6,11 +6,12 @@ import kotlin.uuid.Uuid
  * The durable application identity of one title.
  *
  * It carries an RFC 9562 UUIDv7. The UUID is opaque: its timestamp and byte
- * order carry no product meaning, and it is no authorization secret.
+ * order carry no product meaning, and it is no authorization secret. Only
+ * `:titles` mints or decodes it.
  */
 @JvmInline
-internal value class TitleId private constructor(val uuid: Uuid) {
-  companion object {
+public value class TitleId private constructor(internal val uuid: Uuid) {
+  internal companion object {
     /** Mints a new title identity. */
     fun generate(): TitleId =
       checkNotNull(ofOrNull(ApplicationUuids.generate())) {
@@ -30,11 +31,12 @@ internal value class TitleId private constructor(val uuid: Uuid) {
  * The durable application identity of one chapter.
  *
  * It carries an RFC 9562 UUIDv7. The UUID is opaque: its timestamp and byte
- * order carry no product meaning, and it is no authorization secret.
+ * order carry no product meaning, and it is no authorization secret. Only
+ * `:titles` mints or decodes it.
  */
 @JvmInline
-internal value class ChapterId private constructor(val uuid: Uuid) {
-  companion object {
+public value class ChapterId private constructor(internal val uuid: Uuid) {
+  internal companion object {
     /** Mints a new chapter identity. */
     fun generate(): ChapterId =
       checkNotNull(ofOrNull(ApplicationUuids.generate())) {
