@@ -55,11 +55,21 @@ private constructor(
   public fun find(key: ReaderChapterKey): ReaderChapter? =
     indices[key]?.let(chapters::get)
 
-  /** Returns the canonical predecessor of [key], or null for the first. */
+  /**
+   * Returns the canonical predecessor of [key], or null for the first chapter.
+   *
+   * @throws IllegalArgumentException if [key] is not in the sequence. A null
+   *   result would merge an unknown key with the first chapter.
+   */
   public fun previous(key: ReaderChapterKey): ReaderChapter? =
     chapters.getOrNull(indexOf(key) - 1)
 
-  /** Returns the canonical successor of [key], or null for the final one. */
+  /**
+   * Returns the canonical successor of [key], or null for the final chapter.
+   *
+   * @throws IllegalArgumentException if [key] is not in the sequence. A null
+   *   result would let an unknown key pass as the final chapter.
+   */
   public fun next(key: ReaderChapterKey): ReaderChapter? =
     chapters.getOrNull(indexOf(key) + 1)
 
