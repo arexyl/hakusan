@@ -102,7 +102,7 @@ val hostMatrixAndroidTestProjects = listOf(":titles")
 tasks.register("hostMatrix") {
   group = "verification"
   description = "Runs the host verification matrix of every project."
-  dependsOn(":ktfmtCheck", ":titles:verifyRoomSchema")
+  dependsOn(":ktfmtCheck", ":reader:verifyFixtures", ":titles:verifyRoomSchema")
 
   dependsOn(
     hostMatrixProjects.flatMap { project ->

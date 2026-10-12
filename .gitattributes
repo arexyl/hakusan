@@ -2,3 +2,8 @@
 
 *.bat text eol=crlf
 *.jar binary
+
+share/reader/**/*.icc binary
+share/reader/**/*.jpg binary
+share/reader/**/*.png binary
+share/reader/**/*.webp binary
