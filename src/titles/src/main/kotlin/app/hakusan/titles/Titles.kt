@@ -44,4 +44,60 @@ public interface Titles {
   public suspend fun reconcileTitle(
     observation: AcceptedTitleObservation
   ): ProgressSnapshot
+
+  /**
+   * Adds the title [titleId] to the Library automatically, in one write
+   * transaction.
+   *
+   * A title that already belongs to a category stays unchanged, and the Add
+   * succeeds with its current membership. Otherwise the categories that are
+   * current inside the transaction decide, never a category name:
+   * - without a category, the Add creates an ordinary category named Default
+   *   and assigns the title to it in the same commit;
+   * - with one category, the Add assigns the title to it, whatever its name;
+   * - with several categories, the Add changes nothing and returns them, so the
+   *   caller can choose a nonempty selection for the explicit Add.
+   *
+   * Write transactions are serialized, so concurrent first Adds share one
+   * Default. Default is created only while no category exists, never recreated
+   * by name. Several categories share one title and one reading-progress
+   * record.
+   *
+   * The Add writes no resume position. It does not yet promote a temporary
+   * position to the persistent one, because no temporary store exists.
+   *
+   * @throws StoredStateViolationException if the stored state of the title or
+   *   of the categories violates an invariant of `:titles`, such as a
+   *   persistent resume position of a title outside the Library. Nothing
+   *   persists.
+   * @throws IllegalStateException if the database generated an identity for
+   *   Default that is not positive. It is a defect, and nothing persists.
+   */
+  public suspend fun addToLibrary(titleId: TitleId): LibraryAddResult
+
+  /**
+   * Adds the title [titleId] to the Library in the selected categories, in one
+   * write transaction.
+   *
+   * A title that already belongs to a category stays unchanged, and the Add
+   * succeeds with its current membership. The selection is then neither
+   * validated nor applied, so it never reassigns a member. Otherwise the
+   * selection is validated against the categories that are current inside the
+   * transaction. When every selected category exists, the title is assigned to
+   * all of them in one commit. When any selected category has disappeared, the
+   * whole Add is rejected with the missing identities, and nothing changes.
+   * Several categories share one title and one reading-progress record.
+   *
+   * The Add writes no resume position. It does not yet promote a temporary
+   * position to the persistent one, because no temporary store exists.
+   *
+   * @throws StoredStateViolationException if the stored state of the title or
+   *   of the categories violates an invariant of `:titles`, such as a
+   *   persistent resume position of a title outside the Library. Nothing
+   *   persists.
+   */
+  public suspend fun addToLibrary(
+    titleId: TitleId,
+    selection: LibraryCategorySelection,
+  ): ExplicitLibraryAddResult
 }

@@ -1,5 +1,6 @@
 package app.hakusan.titles.storage
 
+import app.hakusan.titles.CategoryId
 import app.hakusan.titles.ChapterId
 import app.hakusan.titles.SourceTitleAlias
 import app.hakusan.titles.StoredStateViolationException
@@ -123,12 +124,10 @@ private constructor(
   }
 }
 
-/**
- * A category row that passed the row-local checks. Its identity is positive.
- */
+/** A category row that passed the row-local checks. */
 @ConsistentCopyVisibility
 internal data class StoredCategory
-private constructor(val id: Long, val name: String) {
+private constructor(val id: CategoryId, val name: String) {
   companion object {
     /**
      * Checks [row] and returns its trusted value.
@@ -136,7 +135,7 @@ private constructor(val id: Long, val name: String) {
      * @throws StoredStateViolationException if a column violates its invariant.
      */
     fun of(row: CategoryEntity): StoredCategory {
-      val id = positiveKey(row.id, "categories.id")
+      val id = categoryId(row.id, "categories.id")
 
       return StoredCategory(id = id, name = row.name)
     }
@@ -146,7 +145,7 @@ private constructor(val id: Long, val name: String) {
 /** A category association that passed the row-local checks. */
 @ConsistentCopyVisibility
 internal data class StoredTitleCategory
-private constructor(val titleStorageId: Long, val categoryId: Long) {
+private constructor(val titleStorageId: Long, val categoryId: CategoryId) {
   companion object {
     /**
      * Checks [row] and returns its trusted value.
@@ -158,7 +157,7 @@ private constructor(val titleStorageId: Long, val categoryId: Long) {
         positiveKey(row.titleStorageId, "title_categories.title_storage_id")
 
       val categoryId =
-        positiveKey(row.categoryId, "title_categories.category_id")
+        categoryId(row.categoryId, "title_categories.category_id")
 
       return StoredTitleCategory(
         titleStorageId = titleStorageId,
@@ -254,6 +253,14 @@ private fun positiveKey(key: Long, column: String): Long =
   } else {
     violated(STORAGE_KEY, "A stored $column is not positive.")
   }
+
+/**
+ * Returns the category identity of [key], or raises a violation when it is not
+ * positive. A category identity is a database-generated key.
+ */
+private fun categoryId(key: Long, column: String): CategoryId =
+  CategoryId.ofOrNull(key)
+    ?: violated(STORAGE_KEY, "A stored $column is not positive.")
 
 /**
  * Raises the stored-state violation [kind]. The [message] names the violated

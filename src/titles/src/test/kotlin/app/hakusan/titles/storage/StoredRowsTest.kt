@@ -64,10 +64,10 @@ class StoredRowsTest {
         RESUME.copy(unitKind = "PROVIDER_SEGMENT", unitIndex = 0)
       )
 
-    assertEquals(CATEGORY.id, category.id)
+    assertEquals(CATEGORY.id, category.id.key)
     assertEquals(CATEGORY.name, category.name)
     assertEquals(ASSOCIATION.titleStorageId, association.titleStorageId)
-    assertEquals(ASSOCIATION.categoryId, association.categoryId)
+    assertEquals(ASSOCIATION.categoryId, association.categoryId.key)
     assertEquals(READ.chapterStorageId, read.chapterStorageId)
     assertEquals(RESUME.titleStorageId, resume.titleStorageId)
     assertEquals(RESUME.chapterStorageId, resume.chapterStorageId)

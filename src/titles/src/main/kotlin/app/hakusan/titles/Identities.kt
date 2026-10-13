@@ -51,3 +51,25 @@ public value class ChapterId private constructor(internal val uuid: Uuid) {
       if (uuid.isApplicationUuid()) ChapterId(uuid) else null
   }
 }
+
+/**
+ * The identity of one Library category.
+ *
+ * It is opaque and local to one database: the database generates it, and it
+ * keeps no meaning in another database, a backup, or after a restore. Only the
+ * storage of `:titles` mints it, so a consumer obtains it from a result of an
+ * Add operation. Its value carries no order. The database may reuse an identity
+ * after its category is deleted, so a held identity may then name a different
+ * category. Do not persist one or retain it across a restore.
+ */
+@JvmInline
+public value class CategoryId private constructor(internal val key: Long) {
+  internal companion object {
+    /**
+     * Returns the category identity that the generated [key] carries, or null
+     * when [key] is not positive. This is the one validation of the value.
+     */
+    fun ofOrNull(key: Long): CategoryId? =
+      if (key > 0) CategoryId(key) else null
+  }
+}

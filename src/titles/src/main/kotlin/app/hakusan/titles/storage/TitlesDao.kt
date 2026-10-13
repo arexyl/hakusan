@@ -28,6 +28,13 @@ internal interface TitlesDao {
   ): List<TitleEntity>
 
   /**
+   * Returns the title rows with the identity [id]. The unique identity index
+   * allows one row at most; the read boundary checks it anyway.
+   */
+  @Query("SELECT * FROM titles WHERE id = :id")
+  suspend fun findTitlesById(id: ByteArray): List<TitleEntity>
+
+  /**
    * Inserts [title] and returns its storage key, or -1 when a unique constraint
    * ignores the row. Call it only after an alias miss in the same write
    * transaction, so an ignored row means an identity collision.
@@ -120,4 +127,27 @@ internal interface TitlesDao {
   suspend fun loadResumePositions(
     titleStorageId: Long
   ): List<LibraryResumePositionEntity>
+
+  /** Returns the category associations of the title, in category order. */
+  @Query(
+    "SELECT * FROM title_categories " +
+      "WHERE title_storage_id = :titleStorageId ORDER BY category_id"
+  )
+  suspend fun loadTitleCategories(
+    titleStorageId: Long
+  ): List<TitleCategoryEntity>
+
+  /** Returns every stored category, in identity order. */
+  @Query("SELECT * FROM categories ORDER BY id")
+  suspend fun loadCategories(): List<CategoryEntity>
+
+  /**
+   * Inserts [category] with a generated identity and returns that identity. The
+   * row of [category] must carry the identity 0, which Room treats as unset.
+   */
+  @Insert suspend fun insertCategory(category: CategoryEntity): Long
+
+  /** Inserts [associations]. A row that conflicts fails the statement. */
+  @Insert
+  suspend fun insertTitleCategories(associations: List<TitleCategoryEntity>)
 }

@@ -114,9 +114,11 @@ private fun readChapterKeys(
 /**
  * Validates the resume rows of a title and returns its resume target.
  *
- * This is the one validator of persistent resume state. It runs the row-local
- * checks of every row, then title ownership, then the one-row rule, then
- * chapter ownership, then read-state consistency, then Library membership.
+ * This is the one validator of persistent resume state at the read boundary. It
+ * runs the row-local checks of every row, then title ownership, then the
+ * one-row rule, then chapter ownership, then read-state consistency, then
+ * Library membership. On the mutation side, `RoomTitles.enterLibrary` checks
+ * the Library rule before a title becomes a member.
  */
 private fun resumeTarget(
   titleStorageId: Long,
