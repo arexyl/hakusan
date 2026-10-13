@@ -100,8 +100,9 @@ public sealed interface ReaderNavigationResult<out Value> {
  * settles as [beginClose] does, without a paired call.
  *
  * A call that contradicts the pinned sequence or the resolved start is a caller
- * defect and throws [IllegalArgumentException]. The named rejections cover
- * requests whose validity depends on the navigation state.
+ * defect and throws [IllegalArgumentException], before it changes state or
+ * emits an event. The named rejections cover requests whose validity depends on
+ * the navigation state.
  */
 public class ReaderNavigation(
   private val gate: ReaderSessionGate,

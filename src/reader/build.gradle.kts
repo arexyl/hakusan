@@ -37,7 +37,35 @@ kotlin {
   }
 }
 
-tasks.withType<Test>().configureEach { useJUnitPlatform() }
+/**
+ * Passes the reviewed fixture manifest to the host tests as a runtime argument.
+ *
+ * The manifest is an input with a relative path sensitivity, so its absolute
+ * path never enters the cache key. The tests read the path from [PROPERTY].
+ */
+abstract class FixtureManifestArgument : CommandLineArgumentProvider {
+  /** The manifest of the reviewed fixture corpus. */
+  @get:InputFile
+  @get:PathSensitive(PathSensitivity.RELATIVE)
+  abstract val manifest: RegularFileProperty
+
+  override fun asArguments(): Iterable<String> =
+    listOf("-D$PROPERTY=${manifest.get().asFile.absolutePath}")
+
+  private companion object {
+    const val PROPERTY = "app.hakusan.reader.fixtureManifest"
+  }
+}
+
+tasks.withType<Test>().configureEach {
+  useJUnitPlatform()
+
+  jvmArgumentProviders.add(
+    objects.newInstance<FixtureManifestArgument>().apply {
+      manifest = layout.settingsDirectory.file("share/reader/manifest.json")
+    }
+  )
+}
 
 dependencyLocking {
   lockAllConfigurations()
@@ -47,6 +75,7 @@ dependencies {
   implementation(libs.kotlinx.coroutines.core)
 
   testImplementation(libs.junit.jupiter.api)
+  testImplementation(libs.kotlinx.serialization.json)
   testRuntimeOnly(libs.junit.jupiter.engine)
   testRuntimeOnly(libs.junit.platform.launcher)
 }
