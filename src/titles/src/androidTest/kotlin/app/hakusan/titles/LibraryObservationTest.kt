@@ -12,14 +12,10 @@ import java.util.Collections
 import java.util.concurrent.Executors
 import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.ExecutorCoroutineDispatcher
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.asCoroutineDispatcher
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.launch
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
@@ -110,7 +106,7 @@ class LibraryObservationTest {
 
       val (a, b) = title.chapterIds
 
-      val library = Emissions(this, titles.observeLibrary())
+      val library = ObservedValues(this, titles.observeLibrary())
 
       assertEquals(progress(2, 0, NONE), library.next().progressOf(title))
 
@@ -156,7 +152,7 @@ class LibraryObservationTest {
 
     record(title.titleId, a, 0)
 
-    val library = Emissions(this, titles.observeLibrary())
+    val library = ObservedValues(this, titles.observeLibrary())
 
     assertEquals(progress(2, 0, AVAILABLE), library.next().progressOf(title))
 
@@ -177,7 +173,7 @@ class LibraryObservationTest {
 
     val (a, b) = title.chapterIds
 
-    val members = Emissions(this, titles.observeLibraryTitleIds())
+    val members = ObservedValues(this, titles.observeLibraryTitleIds())
 
     assertEquals(setOf(title.titleId), members.next())
 
@@ -212,7 +208,8 @@ class LibraryObservationTest {
 
       val (a, b) = title.chapterIds
 
-      val rows = Emissions(this, database.titlesDao().observeLibraryTitles())
+      val rows =
+        ObservedValues(this, database.titlesDao().observeLibraryTitles())
 
       assertEquals(setOf(title.titleId), mapLibraryTitleIds(rows.next()))
 
@@ -445,23 +442,6 @@ class LibraryObservationTest {
   private fun singleThread(name: String): ExecutorCoroutineDispatcher =
     Executors.newSingleThreadExecutor { task -> Thread(task, name) }
       .asCoroutineDispatcher()
-
-  /**
-   * The values of [flow], collected in [scope] until [cancel]. Each [next]
-   * waits a bounded time for the next value, so the absence of a value is
-   * proven only by a later value that must come next, never by a sleep.
-   */
-  private class Emissions<T>(scope: CoroutineScope, flow: Flow<T>) {
-    private val values = Channel<T>(Channel.UNLIMITED)
-
-    private val collection: Job = scope.launch { flow.collect(values::send) }
-
-    suspend fun next(): T = withTimeout(TIMEOUT_MILLIS) { values.receive() }
-
-    fun cancel() {
-      collection.cancel()
-    }
-  }
 
   /** A dispatcher that records every thread on which it runs a block. */
   private class RecordingDispatcher(
