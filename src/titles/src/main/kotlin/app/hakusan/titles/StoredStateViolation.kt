@@ -81,9 +81,11 @@ public enum class StoredStateViolationKind {
 
   /**
    * Library membership is not exact: a title that a read reports in the Library
-   * without a category association, a title listed twice in one category, an
-   * empty category that carries title state, or rows of one title that carry
-   * conflicting Library state in one read.
+   * without a category association, a category association that names no title,
+   * a title listed twice in one category, an empty category that carries title
+   * state, or rows of one title that carry conflicting Library state in one
+   * read. This includes a Library chapter or read count that is negative,
+   * exceeds the range of [Int], or counts more read chapters than chapters.
    */
   MEMBERSHIP,
 }

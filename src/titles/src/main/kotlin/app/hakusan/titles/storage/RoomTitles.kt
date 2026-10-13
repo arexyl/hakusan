@@ -15,6 +15,7 @@ import app.hakusan.titles.FinalCompletionResult
 import app.hakusan.titles.LibraryAddResult
 import app.hakusan.titles.LibraryCategorySelection
 import app.hakusan.titles.LibraryMembership
+import app.hakusan.titles.LibrarySnapshot
 import app.hakusan.titles.ProgressSnapshot
 import app.hakusan.titles.ReadingPosition
 import app.hakusan.titles.StoredStateViolationKind.ALIAS
@@ -23,6 +24,9 @@ import app.hakusan.titles.StoredStateViolationKind.RESUME_STATE
 import app.hakusan.titles.TitleId
 import app.hakusan.titles.Titles
 import kotlin.time.Clock
+import kotlinx.coroutines.CoroutineDispatcher
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.flow.Flow
 
 /**
  * The Room implementation of [Titles].
@@ -32,12 +36,20 @@ import kotlin.time.Clock
  * mint identities. Only tests replace them, to force identity collisions.
  * [clock] times every change of a stored resume position. Only tests replace
  * it, to control that time.
+ *
+ * [observationDispatcher] builds the values of both observations, so a
+ * subscriber on another dispatcher never builds them. Only tests replace it, to
+ * observe where the work runs. The default is [Dispatchers.Default], because
+ * the work is CPU-bound mapping and comparison of materialized rows. Room runs
+ * each query on its own query context, so no blocking call runs on this
+ * dispatcher.
  */
 internal class RoomTitles(
   private val database: TitlesDatabase,
   private val newTitleId: () -> TitleId = { TitleId.generate() },
   private val newChapterId: () -> ChapterId = { ChapterId.generate() },
   private val clock: Clock = Clock.System,
+  private val observationDispatcher: CoroutineDispatcher = Dispatchers.Default,
 ) : Titles {
   private val dao = database.titlesDao()
 
@@ -339,6 +351,12 @@ internal class RoomTitles(
 
     return LibraryMembership.of(title.id, categoryIds)
   }
+
+  override fun observeLibrary(): Flow<LibrarySnapshot> =
+    dao.observeLibraryRows().toLibrarySnapshots(observationDispatcher)
+
+  override fun observeLibraryTitleIds(): Flow<Set<TitleId>> =
+    dao.observeLibraryTitles().toLibraryTitleIds(observationDispatcher)
 
   override suspend fun readProgress(titleId: TitleId): ProgressSnapshot? =
     database.withReadTransaction {

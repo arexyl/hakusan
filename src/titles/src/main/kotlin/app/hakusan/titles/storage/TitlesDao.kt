@@ -4,6 +4,7 @@ import androidx.room3.Dao
 import androidx.room3.Insert
 import androidx.room3.OnConflictStrategy
 import androidx.room3.Query
+import kotlinx.coroutines.flow.Flow
 
 /**
  * The narrow persistence primitives of `:titles`.
@@ -224,4 +225,18 @@ internal interface TitlesDao {
   /** Inserts [associations]. A row that conflicts fails the statement. */
   @Insert
   suspend fun insertTitleCategories(associations: List<TitleCategoryEntity>)
+
+  /**
+   * Observes the rows of [LIBRARY_QUERY]: the current rows, then the rows after
+   * each committed write to a table that the query reads.
+   */
+  @Query(LIBRARY_QUERY) fun observeLibraryRows(): Flow<List<LibraryRow>>
+
+  /**
+   * Observes every category association with the title that it names through
+   * [LIBRARY_TITLES_QUERY]: the current rows, then the rows after each
+   * committed write to titles or category associations.
+   */
+  @Query(LIBRARY_TITLES_QUERY)
+  fun observeLibraryTitles(): Flow<List<LibraryTitleRow>>
 }

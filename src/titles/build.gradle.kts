@@ -128,7 +128,7 @@ dependencyLocking {
 }
 
 dependencies {
-  implementation(libs.kotlinx.coroutines.core)
+  api(libs.kotlinx.coroutines.core)
   implementation(libs.room.runtime)
   implementation(libs.sqlite.framework)
   ksp(libs.room.compiler)

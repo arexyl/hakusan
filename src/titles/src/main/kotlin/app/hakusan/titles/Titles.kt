@@ -1,7 +1,9 @@
 package app.hakusan.titles
 
+import kotlinx.coroutines.flow.Flow
+
 /**
- * The domain operations of `:titles`.
+ * The domain operations and observations of `:titles`.
  *
  * Operations suspend. They own no scope and start no work that outlives the
  * call. The storage runs their statements on its own context, so the context of
@@ -12,6 +14,17 @@ package app.hakusan.titles
  * A cancellation can also surface after the transaction committed, while the
  * result returns to the context of the caller. A `CancellationException`
  * therefore does not prove that nothing persisted.
+ *
+ * Observations return cold flows. Each collection owns its observation: it
+ * reads the current state first, then reads again after each committed write to
+ * a table that the observation reads, and stops when the collector is canceled,
+ * without changing stored state. Every reading builds its value on the
+ * observation worker, a background dispatcher, so a collector on another
+ * dispatcher, such as the main thread, never builds it. Equal consecutive
+ * values are suppressed after mapping, so the collector receives only finished,
+ * changed values. A stored-state violation fails the collection with
+ * [StoredStateViolationException], never with an empty or partial value.
+ * Cancellation and unexpected storage failures propagate to the collector.
  */
 public interface Titles {
   /**
@@ -100,6 +113,39 @@ public interface Titles {
     titleId: TitleId,
     selection: LibraryCategorySelection,
   ): ExplicitLibraryAddResult
+
+  /**
+   * Observes the Library: every stored category with its titles, and each
+   * Library title once with its compact progress.
+   *
+   * Each snapshot comes from one statement, so its categories, membership,
+   * titles, canonical chapter counts, read counts, and resume availability are
+   * coherent. Progress covers only Library members, and a title in several
+   * categories counts its chapters and reads once. The snapshot carries no
+   * product order.
+   *
+   * Every committed write to a table that the snapshot reads runs the whole
+   * aggregation again, including every resume-position write, even when the
+   * resulting snapshot is equal and is not emitted.
+   *
+   * A collection fails with [StoredStateViolationException] when the stored
+   * Library state violates an invariant of `:titles`.
+   */
+  public fun observeLibrary(): Flow<LibrarySnapshot>
+
+  /**
+   * Observes the identities of the Library titles. The set is owned and carries
+   * no order.
+   *
+   * The observation reads only titles and their category associations, so
+   * chapter, read-status, and resume-position writes never make it emit. A
+   * change of title details reads the set again but emits nothing, because the
+   * set stays equal.
+   *
+   * A collection fails with [StoredStateViolationException] when a stored
+   * category association or Library title violates an invariant of `:titles`.
+   */
+  public fun observeLibraryTitleIds(): Flow<Set<TitleId>>
 
   /**
    * Reads the current progress of the title [titleId] in one read transaction,
