@@ -100,4 +100,79 @@ public interface Titles {
     titleId: TitleId,
     selection: LibraryCategorySelection,
   ): ExplicitLibraryAddResult
+
+  /**
+   * Reads the current progress of the title [titleId] in one read transaction,
+   * or returns null when no stored title has the identity.
+   *
+   * This is the explicit read for one-shot consumers, such as Continue. It
+   * validates every stored row it reads, so it also detects an existing
+   * violation that no mutation touched.
+   *
+   * @throws StoredStateViolationException if the stored state of the title
+   *   violates an invariant of `:titles`.
+   */
+  public suspend fun readProgress(titleId: TitleId): ProgressSnapshot?
+
+  /**
+   * Records the actual position of [update] in one write transaction.
+   *
+   * The checks run in order, and the first one that fails decides the result: a
+   * missing title, a chapter that is missing or belongs to another title, a
+   * reordered update, which never mutates, and a read chapter. A valid position
+   * of a Library title becomes its latest persistent position. A position of a
+   * title outside the Library is not persisted, because the temporary store
+   * does not exist yet. A chapter that the newest snapshot omits still takes a
+   * position, which then reads back as temporarily unavailable.
+   *
+   * A position equal in chapter, unit kind, and unit index to the stored one
+   * changes nothing, including the time of its last change.
+   *
+   * @throws StoredStateViolationException if a stored title or chapter row that
+   *   the update resolves violates an invariant of `:titles`. Nothing persists.
+   */
+  public suspend fun recordActualPosition(
+    update: ActualPositionUpdate
+  ): ActualPositionResult
+
+  /**
+   * Applies the chapter boundary [completion] in one idempotent write
+   * transaction.
+   *
+   * The title must exist, both chapters must belong to it, and the completed
+   * chapter must immediately precede the started chapter in the current
+   * canonical order; otherwise nothing changes. The boundary then marks the
+   * completed chapter read and deletes a position on it. It records the started
+   * position as the latest position under the rules of [recordActualPosition],
+   * so a reordered boundary keeps the newer latest position, and a read started
+   * chapter or a title outside the Library records none. Read status applies
+   * whether or not the title is in the Library. Repeating a boundary changes
+   * nothing, and it still attempts the read insertion.
+   *
+   * @throws StoredStateViolationException if a stored title or chapter row that
+   *   the boundary resolves violates an invariant of `:titles`. Nothing
+   *   persists.
+   */
+  public suspend fun completeChapterBoundary(
+    completion: ChapterBoundaryCompletion
+  ): ChapterBoundaryResult
+
+  /**
+   * Applies the final-chapter [completion] in one idempotent write transaction.
+   *
+   * The title must exist, the chapter must belong to it, and the chapter must
+   * be the final chapter of the current canonical order; otherwise nothing
+   * changes. The completion then marks the chapter read and deletes only a
+   * position on that chapter. It writes no position, so delivery order does not
+   * matter. Read status applies whether or not the title is in the Library.
+   * Repeating a completion changes nothing, and it still attempts the read
+   * insertion.
+   *
+   * @throws StoredStateViolationException if a stored title or chapter row that
+   *   the completion resolves violates an invariant of `:titles`. Nothing
+   *   persists.
+   */
+  public suspend fun completeFinalChapter(
+    completion: FinalChapterCompletion
+  ): FinalCompletionResult
 }

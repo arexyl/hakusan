@@ -118,7 +118,10 @@ private fun readChapterKeys(
  * runs the row-local checks of every row, then title ownership, then the
  * one-row rule, then chapter ownership, then read-state consistency, then
  * Library membership. On the mutation side, `RoomTitles.enterLibrary` checks
- * the Library rule before a title becomes a member.
+ * the Library rule before a title becomes a member,
+ * `RoomTitles.writeLibraryPosition` keeps the Library and read rules for every
+ * position it writes, and `RoomTitles.markChapterRead` deletes a position on
+ * the chapter it marks read.
  */
 private fun resumeTarget(
   titleStorageId: Long,

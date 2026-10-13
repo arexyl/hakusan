@@ -74,6 +74,27 @@ internal interface TitlesDao {
   suspend fun hasChapterWithId(id: ByteArray): Boolean
 
   /**
+   * Returns the chapter rows with the identity [id], of any title. The unique
+   * identity index allows one row at most; the read boundary checks it anyway.
+   */
+  @Query("SELECT * FROM chapters WHERE id = :id")
+  suspend fun findChaptersById(id: ByteArray): List<ChapterEntity>
+
+  /**
+   * Returns whether a chapter of the title [titleStorageId] has a canonical
+   * index greater than [canonicalIndex].
+   */
+  @Query(
+    "SELECT EXISTS (SELECT 1 FROM chapters " +
+      "WHERE title_storage_id = :titleStorageId " +
+      "AND canonical_index > :canonicalIndex)"
+  )
+  suspend fun hasChapterAfter(
+    titleStorageId: Long,
+    canonicalIndex: Int,
+  ): Boolean
+
+  /**
    * Clears the canonical index of the chapter [storageId] of the title
    * [titleStorageId]. Returns the row count.
    */
@@ -109,6 +130,20 @@ internal interface TitlesDao {
   )
   suspend fun loadReadChapters(titleStorageId: Long): List<ReadChapterEntity>
 
+  /** Returns whether the chapter [chapterStorageId] is read. */
+  @Query(
+    "SELECT EXISTS (SELECT 1 FROM read_chapters " +
+      "WHERE chapter_storage_id = :chapterStorageId)"
+  )
+  suspend fun isChapterRead(chapterStorageId: Long): Boolean
+
+  /**
+   * Inserts [read] unless the chapter is already read. The insertion is
+   * attempted in either case.
+   */
+  @Insert(onConflict = OnConflictStrategy.IGNORE)
+  suspend fun insertReadChapterOrIgnore(read: ReadChapterEntity)
+
   /** Returns whether the title has at least one category association. */
   @Query(
     "SELECT EXISTS (SELECT 1 FROM title_categories " +
@@ -127,6 +162,45 @@ internal interface TitlesDao {
   suspend fun loadResumePositions(
     titleStorageId: Long
   ): List<LibraryResumePositionEntity>
+
+  /**
+   * Stores the persistent resume position of the title [titleStorageId] with
+   * the time [updatedAt], unless the stored position already has the same
+   * chapter, unit kind, and unit index. An equal write changes no column, so
+   * the stored time stays.
+   */
+  @Query(
+    "INSERT INTO library_resume_positions (title_storage_id, " +
+      "chapter_storage_id, unit_kind, unit_index, updated_at) " +
+      "VALUES (:titleStorageId, :chapterStorageId, :unitKind, :unitIndex, " +
+      ":updatedAt) " +
+      "ON CONFLICT (title_storage_id) DO UPDATE SET " +
+      "chapter_storage_id = excluded.chapter_storage_id, " +
+      "unit_kind = excluded.unit_kind, " +
+      "unit_index = excluded.unit_index, " +
+      "updated_at = excluded.updated_at " +
+      "WHERE chapter_storage_id IS NOT excluded.chapter_storage_id " +
+      "OR unit_kind IS NOT excluded.unit_kind " +
+      "OR unit_index IS NOT excluded.unit_index"
+  )
+  suspend fun writeResumePosition(
+    titleStorageId: Long,
+    chapterStorageId: Long,
+    unitKind: String,
+    unitIndex: Int,
+    updatedAt: Long,
+  )
+
+  /**
+   * Deletes the persistent resume position of the title [titleStorageId] when
+   * it is on the chapter [chapterStorageId].
+   */
+  @Query(
+    "DELETE FROM library_resume_positions " +
+      "WHERE title_storage_id = :titleStorageId " +
+      "AND chapter_storage_id = :chapterStorageId"
+  )
+  suspend fun deleteResumePosition(titleStorageId: Long, chapterStorageId: Long)
 
   /** Returns the category associations of the title, in category order. */
   @Query(

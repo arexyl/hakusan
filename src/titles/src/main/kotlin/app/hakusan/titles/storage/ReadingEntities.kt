@@ -5,6 +5,7 @@ import androidx.room3.Entity
 import androidx.room3.ForeignKey
 import androidx.room3.Index
 import androidx.room3.PrimaryKey
+import app.hakusan.titles.ContentUnitKind
 
 /** Read status of one chapter, recorded by row presence. */
 @Entity(
@@ -43,6 +44,16 @@ internal enum class StoredContentUnitKind(
     fun ofStoredTextOrNull(text: String): StoredContentUnitKind? =
       entries.firstOrNull { kind ->
         kind.storedText == text
+      }
+
+    /**
+     * Returns the stored kind of the public [kind]. This is the one mapping
+     * that every write of a resume row uses.
+     */
+    fun of(kind: ContentUnitKind): StoredContentUnitKind =
+      when (kind) {
+        ContentUnitKind.PAGE -> PAGE
+        ContentUnitKind.PROVIDER_SEGMENT -> PROVIDER_SEGMENT
       }
   }
 }

@@ -1,19 +1,28 @@
 package app.hakusan.titles.storage
 
+import androidx.room3.withReadTransaction
 import androidx.room3.withWriteTransaction
 import app.hakusan.titles.AcceptedTitleObservation
+import app.hakusan.titles.ActualPositionResult
+import app.hakusan.titles.ActualPositionUpdate
 import app.hakusan.titles.CategoryId
+import app.hakusan.titles.ChapterBoundaryCompletion
+import app.hakusan.titles.ChapterBoundaryResult
 import app.hakusan.titles.ChapterId
 import app.hakusan.titles.ExplicitLibraryAddResult
+import app.hakusan.titles.FinalChapterCompletion
+import app.hakusan.titles.FinalCompletionResult
 import app.hakusan.titles.LibraryAddResult
 import app.hakusan.titles.LibraryCategorySelection
 import app.hakusan.titles.LibraryMembership
 import app.hakusan.titles.ProgressSnapshot
+import app.hakusan.titles.ReadingPosition
 import app.hakusan.titles.StoredStateViolationKind.ALIAS
 import app.hakusan.titles.StoredStateViolationKind.IDENTITY
 import app.hakusan.titles.StoredStateViolationKind.RESUME_STATE
 import app.hakusan.titles.TitleId
 import app.hakusan.titles.Titles
+import kotlin.time.Clock
 
 /**
  * The Room implementation of [Titles].
@@ -21,11 +30,14 @@ import app.hakusan.titles.Titles
  * Room write transactions are serialized and immediate, so a lookup inside a
  * transaction stays current until it commits. [newTitleId] and [newChapterId]
  * mint identities. Only tests replace them, to force identity collisions.
+ * [clock] times every change of a stored resume position. Only tests replace
+ * it, to control that time.
  */
 internal class RoomTitles(
   private val database: TitlesDatabase,
   private val newTitleId: () -> TitleId = { TitleId.generate() },
   private val newChapterId: () -> ChapterId = { ChapterId.generate() },
+  private val clock: Clock = Clock.System,
 ) : Titles {
   private val dao = database.titlesDao()
 
@@ -326,6 +338,263 @@ internal class RoomTitles(
     dao.insertTitleCategories(associations)
 
     return LibraryMembership.of(title.id, categoryIds)
+  }
+
+  override suspend fun readProgress(titleId: TitleId): ProgressSnapshot? =
+    database.withReadTransaction {
+      readProgressOf(titleId)
+    }
+
+  /**
+   * Reads the progress of [titleId], or returns null when no stored title has
+   * it. Call it inside a transaction.
+   */
+  private suspend fun readProgressOf(titleId: TitleId): ProgressSnapshot? {
+    val title = findTitle(titleId) ?: return null
+
+    return dao.readProgressSnapshot(title.storageId, title.id)
+  }
+
+  override suspend fun recordActualPosition(
+    update: ActualPositionUpdate
+  ): ActualPositionResult = database.withWriteTransaction {
+    applyActualPosition(update)
+  }
+
+  /** Applies [update]. Call it inside the transaction. */
+  private suspend fun applyActualPosition(
+    update: ActualPositionUpdate
+  ): ActualPositionResult {
+    val position = update.position
+
+    val title =
+      findTitle(position.titleId) ?: return ActualPositionResult.TitleNotFound
+
+    val chapter =
+      findChapter(title, position.chapterId)
+        ?: return ActualPositionResult.ChapterNotFound
+
+    val facts = readPositionFacts(title, chapter)
+
+    return when (val decision = decidePosition(update.recency, facts)) {
+      PositionDecision.Record -> {
+        writeLibraryPosition(title, chapter, position, facts)
+
+        ActualPositionResult.Persisted
+      }
+
+      is PositionDecision.Skip ->
+        ActualPositionResult.NotPersisted(decision.reason)
+    }
+  }
+
+  override suspend fun completeChapterBoundary(
+    completion: ChapterBoundaryCompletion
+  ): ChapterBoundaryResult = database.withWriteTransaction {
+    applyBoundary(completion)
+  }
+
+  /**
+   * Applies [completion]. Call it inside the transaction.
+   *
+   * Each chapter role resolves by its own identity, never by row order.
+   */
+  private suspend fun applyBoundary(
+    completion: ChapterBoundaryCompletion
+  ): ChapterBoundaryResult {
+    val position = completion.startedPosition
+
+    val title =
+      findTitle(position.titleId) ?: return ChapterBoundaryResult.TitleNotFound
+
+    val completed = findChapter(title, completion.completedChapterId)
+
+    val started = findChapter(title, position.chapterId)
+
+    if (completed == null || started == null) {
+      return ChapterBoundaryResult.ChapterNotFound
+    }
+
+    val facts = readPositionFacts(title, started)
+
+    val plan =
+      planBoundary(
+        completedIndex = completed.canonicalIndex,
+        startedIndex = started.canonicalIndex,
+        recency = completion.recency,
+        startedFacts = facts,
+      )
+
+    return when (plan) {
+      BoundaryPlan.AdjacencyChanged ->
+        ChapterBoundaryResult.CanonicalAdjacencyChanged
+
+      is BoundaryPlan.Apply -> {
+        markChapterRead(title, completed)
+
+        applyStartedPosition(
+          title,
+          started,
+          position,
+          facts,
+          plan.startedPosition,
+        )
+      }
+    }
+  }
+
+  /**
+   * Applies [decision] to the started [position] of a boundary, in the chapter
+   * [started] with the stored [facts], and returns the boundary result.
+   */
+  private suspend fun applyStartedPosition(
+    title: StoredTitle,
+    started: StoredChapter,
+    position: ReadingPosition,
+    facts: PositionFacts,
+    decision: PositionDecision,
+  ): ChapterBoundaryResult =
+    when (decision) {
+      PositionDecision.Record -> {
+        writeLibraryPosition(title, started, position, facts)
+
+        ChapterBoundaryResult.Completed
+      }
+
+      is PositionDecision.Skip ->
+        ChapterBoundaryResult.CompletedWithoutStartedPosition(decision.reason)
+    }
+
+  override suspend fun completeFinalChapter(
+    completion: FinalChapterCompletion
+  ): FinalCompletionResult = database.withWriteTransaction {
+    applyFinalCompletion(completion)
+  }
+
+  /** Applies [completion]. Call it inside the transaction. */
+  private suspend fun applyFinalCompletion(
+    completion: FinalChapterCompletion
+  ): FinalCompletionResult {
+    val title =
+      findTitle(completion.titleId)
+        ?: return FinalCompletionResult.TitleNotFound
+
+    val chapter =
+      findChapter(title, completion.chapterId)
+        ?: return FinalCompletionResult.ChapterNotFound
+
+    val index = chapter.canonicalIndex
+
+    val isFinal = index != null && !dao.hasChapterAfter(title.storageId, index)
+
+    if (!isFinal) {
+      return FinalCompletionResult.CanonicalFinalityChanged
+    }
+
+    markChapterRead(title, chapter)
+
+    return FinalCompletionResult.Completed
+  }
+
+  /**
+   * Returns the chapter of [title] with [chapterId], or null when no stored
+   * chapter has it or when it belongs to another title.
+   */
+  private suspend fun findChapter(
+    title: StoredTitle,
+    chapterId: ChapterId,
+  ): StoredChapter? {
+    val rows = dao.findChaptersById(chapterId.toStoredBytes())
+
+    val chapters = rows.map(StoredChapter::of)
+
+    if (chapters.size > 1) {
+      violated(IDENTITY, "Several stored chapters rows share one identity.")
+    }
+
+    val chapter = chapters.singleOrNull() ?: return null
+
+    if (chapter.id != chapterId) {
+      violated(IDENTITY, "A stored chapters row differs from its identity.")
+    }
+
+    return chapter.takeIf { chapter.titleStorageId == title.storageId }
+  }
+
+  /** Reads the facts that decide a position of [title] in [chapter]. */
+  private suspend fun readPositionFacts(
+    title: StoredTitle,
+    chapter: StoredChapter,
+  ): PositionFacts {
+    val isLibraryMember = dao.isLibraryMember(title.storageId)
+
+    val isChapterRead = dao.isChapterRead(chapter.storageId)
+
+    return PositionFacts(
+      isLibraryMember = isLibraryMember,
+      isChapterRead = isChapterRead,
+    )
+  }
+
+  /**
+   * Adds [chapter] of [title] to the read set and deletes a position of the
+   * title on it.
+   *
+   * This is the one mutator that marks a chapter read. A read chapter keeps no
+   * resume position, so both effects belong together. The insertion is
+   * attempted even when the chapter is already read, which keeps a repeated
+   * completion idempotent. The deleted row is not retained, so it is not read.
+   */
+  private suspend fun markChapterRead(
+    title: StoredTitle,
+    chapter: StoredChapter,
+  ) {
+    dao.insertReadChapterOrIgnore(ReadChapterEntity(chapter.storageId))
+    dao.deleteResumePosition(title.storageId, chapter.storageId)
+  }
+
+  /**
+   * Makes [position] in [chapter] the persistent resume position of [title],
+   * whose stored [facts] the transaction read.
+   *
+   * This is the one mutator that writes a resume position, and it keeps two
+   * rules: persistent resume state exists only for a Library title, and a read
+   * chapter keeps no position. [facts] are the membership and read state that
+   * this write transaction read for [chapter], so they are current here and are
+   * not read again. The rules are checked against them as a defect assertion: a
+   * caller writes only on [PositionDecision.Record] from [decidePosition] over
+   * the same facts, which already excludes both cases.
+   *
+   * A position equal in chapter, unit kind, and unit index to the stored one
+   * changes nothing, so its stored time stays. Otherwise the position takes the
+   * current time of [clock].
+   *
+   * @throws IllegalStateException if [facts] break either rule. It is a defect
+   *   of the caller, and nothing persists.
+   */
+  private suspend fun writeLibraryPosition(
+    title: StoredTitle,
+    chapter: StoredChapter,
+    position: ReadingPosition,
+    facts: PositionFacts,
+  ) {
+    check(facts.isLibraryMember) {
+      "A persistent resume position requires Library membership."
+    }
+
+    check(!facts.isChapterRead) { "A read chapter keeps no resume position." }
+
+    val unitKind = StoredContentUnitKind.of(position.unitKind)
+
+    val updatedAt = clock.now().toEpochMilliseconds()
+
+    dao.writeResumePosition(
+      titleStorageId = title.storageId,
+      chapterStorageId = chapter.storageId,
+      unitKind = unitKind.storedText,
+      unitIndex = position.unitIndex,
+      updatedAt = updatedAt,
+    )
   }
 
   /** The storage key and the identity of one reconciled title. */

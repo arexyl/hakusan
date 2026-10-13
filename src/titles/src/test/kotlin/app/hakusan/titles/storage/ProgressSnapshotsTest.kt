@@ -97,6 +97,26 @@ class ProgressSnapshotsTest {
   }
 
   @Test
+  fun everyWrittenUnitKindReadsBackAsItself() {
+    val kinds = ContentUnitKind.entries
+
+    val readBack = kinds.map { kind ->
+      val text = StoredContentUnitKind.of(kind).storedText
+
+      val snapshot =
+        map(
+          chapters = listOf(chapter(1, 0)),
+          isMember = true,
+          resume = listOf(resume(1, kind = text)),
+        )
+
+      snapshot.resumeTarget?.unitKind
+    }
+
+    assertEquals(kinds, readBack)
+  }
+
+  @Test
   fun snapshotChaptersAreOwned() {
     val snapshot = map(chapters = listOf(chapter(1, 0)))
 
