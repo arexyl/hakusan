@@ -3,6 +3,7 @@ package app.hakusan
 import app.hakusan.sdk.BrowseScreenService
 import app.hakusan.sdk.ContinueSelectionService
 import app.hakusan.sdk.LibraryScreenService
+import app.hakusan.sdk.TitleDetailsScreenService
 import app.hakusan.titles.Titles
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.BindingContainer
@@ -14,8 +15,8 @@ import dev.zacsweers.metro.Provides
  * The application composition.
  *
  * Its inputs are one validated source registry and the [Titles] surface of one
- * titles store. It keeps one scoped instance of each screen service and exposes
- * only the screen-facing services.
+ * titles store. It keeps one scoped instance of each screen service and of the
+ * whole-title load, and it exposes only the screen-facing services.
  */
 @DependencyGraph(
   AppScope::class,
@@ -24,6 +25,9 @@ import dev.zacsweers.metro.Provides
 internal interface AppGraph {
   /** The Catalog and the source browse loads. */
   val browseScreenService: BrowseScreenService
+
+  /** The reconciled title details, through the whole-title load. */
+  val titleDetailsScreenService: TitleDetailsScreenService
 
   /** The committed Library, its membership, and the automatic Add. */
   val libraryScreenService: LibraryScreenService
@@ -51,6 +55,8 @@ internal interface AppGraph {
 @BindingContainer
 internal interface ScreenServiceBindings {
   @Binds val BrowseScreenAdapter.bind: BrowseScreenService
+
+  @Binds val TitleDetailsScreenAdapter.bind: TitleDetailsScreenService
 
   @Binds val LibraryScreenAdapter.bind: LibraryScreenService
 

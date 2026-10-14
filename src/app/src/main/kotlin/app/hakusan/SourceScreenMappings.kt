@@ -19,6 +19,10 @@ internal fun ScreenSourceId.toSourceIdentity(): SourceIdentity =
 internal fun SourceTitleKey.toScreenTitleKey(): ScreenTitleKey =
   ScreenTitleKey(source.toScreenSourceId(), key)
 
+/** Returns the source title key that this screen key names exactly. */
+internal fun ScreenTitleKey.toSourceTitleKey(): SourceTitleKey =
+  SourceTitleKey(sourceId.toSourceIdentity(), sourceTitleKey)
+
 /** Returns this title observation as a browse item. */
 internal fun SourceTitle.toBrowseTitleItem(): BrowseTitleItem =
   BrowseTitleItem(key.toScreenTitleKey(), displayName)

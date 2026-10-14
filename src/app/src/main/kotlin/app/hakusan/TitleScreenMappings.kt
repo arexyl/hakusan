@@ -3,8 +3,10 @@ package app.hakusan
 import app.hakusan.extensions.SourceIdentity
 import app.hakusan.sdk.AddToLibraryScreenResult
 import app.hakusan.sdk.ContinueSelectionResult
+import app.hakusan.sdk.ContinueState
 import app.hakusan.sdk.ContinueTarget
 import app.hakusan.sdk.ContinueUnavailableReason
+import app.hakusan.sdk.DetailsChapterItem
 import app.hakusan.sdk.LibraryResumeState
 import app.hakusan.sdk.LibraryTitleProgress
 import app.hakusan.sdk.ScreenChapterId
@@ -15,9 +17,12 @@ import app.hakusan.sdk.ScreenReadingStart
 import app.hakusan.sdk.ScreenShelfId
 import app.hakusan.sdk.ScreenTitleId
 import app.hakusan.sdk.ScreenTitleKey
+import app.hakusan.sdk.TitleDetailsScreen
+import app.hakusan.titles.AcceptedTitleObservation
 import app.hakusan.titles.CategoryId
 import app.hakusan.titles.Chapter
 import app.hakusan.titles.ChapterId
+import app.hakusan.titles.ChapterReadingState
 import app.hakusan.titles.CompactProgress
 import app.hakusan.titles.ContentUnitKind
 import app.hakusan.titles.ContinueResolution
@@ -93,32 +98,81 @@ internal fun LibraryAddResult.toAddToLibraryScreenResult():
   }
 
 /**
+ * Returns the details screen of this progress, which a whole-title load read in
+ * the transaction that reconciled [observation].
+ *
+ * The title and its chapters take their identities from this progress and their
+ * keys from its exact alias. The name and the description are those of
+ * [observation], and [sourceDisplayName] names the source. The chapters keep
+ * the canonical order of this progress with their read flags. Continue resolves
+ * from this progress, like a Continue invocation on it.
+ */
+internal fun ProgressSnapshot.toTitleDetailsScreen(
+  observation: AcceptedTitleObservation,
+  sourceDisplayName: String,
+): TitleDetailsScreen {
+  val items = chapters.map { state -> detailsChapterItem(state) }
+
+  return TitleDetailsScreen.of(
+    id = titleId.toScreenTitleId(),
+    key = alias.toScreenTitleKey(),
+    sourceDisplayName = sourceDisplayName,
+    displayName = observation.displayName,
+    description = observation.description,
+    chapters = items,
+    continueState = toContinueState(),
+  )
+}
+
+/**
  * Returns the outcome of one Continue invocation on this progress.
  *
- * [resolveContinue] decides the target. This function only maps each case to
- * its screen outcome, with the exact identities and keys of this progress.
+ * It maps the Continue state of this progress: a ready target is selected, and
+ * an unavailable reason stays unavailable.
  */
 internal fun ProgressSnapshot.toContinueSelectionResult():
   ContinueSelectionResult =
+  when (val state = toContinueState()) {
+    is ContinueState.Ready -> ContinueSelectionResult.Selected(state.target)
+
+    is ContinueState.Unavailable ->
+      ContinueSelectionResult.Unavailable(state.reason)
+  }
+
+/** Returns the details item of the canonical chapter [state]. */
+private fun ProgressSnapshot.detailsChapterItem(
+  state: ChapterReadingState
+): DetailsChapterItem =
+  DetailsChapterItem(
+    id = state.chapter.id.toScreenChapterId(),
+    titleId = titleId.toScreenTitleId(),
+    key = chapterKey(state.chapter),
+    displayName = state.chapter.displayName,
+    isRead = state.isRead,
+  )
+
+/**
+ * Returns the Continue state of this progress.
+ *
+ * [resolveContinue] decides the target. This function only maps each case to
+ * its screen state, with the exact identities and keys of this progress.
+ */
+private fun ProgressSnapshot.toContinueState(): ContinueState =
   when (val resolution = resolveContinue()) {
     is ContinueResolution.Resume ->
-      ContinueSelectionResult.Selected(resumedTarget(resolution.target))
+      ContinueState.Ready(resumedTarget(resolution.target))
 
     is ContinueResolution.SavedTargetUnavailable ->
-      ContinueSelectionResult.Unavailable(
-        savedTargetUnavailable(resolution.target)
-      )
+      ContinueState.Unavailable(savedTargetUnavailable(resolution.target))
 
     is ContinueResolution.FirstUnread ->
-      ContinueSelectionResult.Selected(beginningTarget(resolution.chapter))
+      ContinueState.Ready(beginningTarget(resolution.chapter))
 
     is ContinueResolution.AllRead ->
-      ContinueSelectionResult.Selected(beginningTarget(resolution.chapter))
+      ContinueState.Ready(beginningTarget(resolution.chapter))
 
     ContinueResolution.NoAvailableChapter ->
-      ContinueSelectionResult.Unavailable(
-        ContinueUnavailableReason.NoAvailableChapter
-      )
+      ContinueState.Unavailable(ContinueUnavailableReason.NoAvailableChapter)
   }
 
 /** Returns the Continue target that resumes at the saved [target]. */

@@ -1,14 +1,22 @@
 package app.hakusan
 
+import app.hakusan.extensions.ChapterRefreshCompletion
+import app.hakusan.extensions.ChapterSequenceStatus
 import app.hakusan.extensions.SourceBrowseResult
 import app.hakusan.extensions.SourceIdentity
+import app.hakusan.extensions.SourceResult
 import app.hakusan.extensions.SourceTitle
+import app.hakusan.extensions.SourceTitleDetails
 import app.hakusan.extensions.SourceTitleKey
 import app.hakusan.sdk.BrowseScreenResult
 import app.hakusan.sdk.ContinueSelectionResult
+import app.hakusan.sdk.DetailsScreenResult
 import app.hakusan.sdk.ScreenSourceId
 import app.hakusan.sdk.ScreenTitleId
+import app.hakusan.sdk.ScreenTitleKey
+import app.hakusan.titles.AcceptedTitleObservation
 import app.hakusan.titles.TitleId
+import app.hakusan.titles.progressSnapshot
 import dev.zacsweers.metro.createGraphFactory
 import kotlin.uuid.Uuid
 import kotlin.uuid.toJavaUuid
@@ -45,6 +53,12 @@ class AppGraphTest {
     val graph = graph(registry)
 
     assertSame(graph.browseScreenService, graph.browseScreenService)
+
+    assertSame(
+      graph.titleDetailsScreenService,
+      graph.titleDetailsScreenService,
+    )
+
     assertSame(graph.libraryScreenService, graph.libraryScreenService)
     assertSame(graph.continueSelectionService, graph.continueSelectionService)
   }
@@ -56,6 +70,12 @@ class AppGraphTest {
     val second = graph(registry)
 
     assertNotSame(first.browseScreenService, second.browseScreenService)
+
+    assertNotSame(
+      first.titleDetailsScreenService,
+      second.titleDetailsScreenService,
+    )
+
     assertNotSame(first.libraryScreenService, second.libraryScreenService)
 
     assertNotSame(
@@ -129,6 +149,54 @@ class AppGraphTest {
 
     assertSame(ContinueSelectionResult.TitleNotFound, result)
     assertEquals(listOf(titleId), requested)
+  }
+
+  @Test
+  fun `the details service loads through the graph inputs`() {
+    val uuid = Uuid.fromLongs(0x7000L, Long.MIN_VALUE)
+
+    val titleId = checkNotNull(TitleId.ofOrNull(uuid))
+
+    val backend =
+      ScriptedBackend(
+        identity = source,
+        onDetails = { key ->
+          SourceResult.Success(SourceTitleDetails(SourceTitle(key, "T"), null))
+        },
+        onRefreshChapters = { request ->
+          ChapterRefreshCompletion.completed(
+            request,
+            ChapterSequenceStatus.COMPLETE,
+            emptyList(),
+          )
+        },
+      )
+
+    val reconciled = mutableListOf<AcceptedTitleObservation>()
+
+    val titles =
+      FakeTitles(
+        onReconcileTitle = { observation ->
+          reconciled += observation
+
+          progressSnapshot(titleId, observation.alias, emptyList())
+        }
+      )
+
+    val graph = graph(SourceRegistry.of(listOf(backend)), titles)
+
+    val result = runBlocking {
+      graph.titleDetailsScreenService.loadDetails(
+        ScreenTitleKey(ScreenSourceId("source"), "title")
+      )
+    }
+
+    val screen =
+      assertInstanceOf(DetailsScreenResult.Success::class.java, result).screen
+
+    assertEquals(ScreenTitleId(uuid.toJavaUuid()), screen.id)
+    assertEquals("Scripted", screen.sourceDisplayName)
+    assertEquals(listOf("title"), reconciled.map { it.alias.sourceTitleKey })
   }
 
   @Test
