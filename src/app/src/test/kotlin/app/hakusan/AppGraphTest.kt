@@ -5,6 +5,7 @@ import app.hakusan.extensions.SourceIdentity
 import app.hakusan.extensions.SourceTitle
 import app.hakusan.extensions.SourceTitleKey
 import app.hakusan.sdk.BrowseScreenResult
+import app.hakusan.sdk.ContinueSelectionResult
 import app.hakusan.sdk.ScreenSourceId
 import app.hakusan.sdk.ScreenTitleId
 import app.hakusan.titles.TitleId
@@ -45,6 +46,7 @@ class AppGraphTest {
 
     assertSame(graph.browseScreenService, graph.browseScreenService)
     assertSame(graph.libraryScreenService, graph.libraryScreenService)
+    assertSame(graph.continueSelectionService, graph.continueSelectionService)
   }
 
   @Test
@@ -55,6 +57,11 @@ class AppGraphTest {
 
     assertNotSame(first.browseScreenService, second.browseScreenService)
     assertNotSame(first.libraryScreenService, second.libraryScreenService)
+
+    assertNotSame(
+      first.continueSelectionService,
+      second.continueSelectionService,
+    )
   }
 
   @Test
@@ -94,6 +101,34 @@ class AppGraphTest {
     }
 
     assertEquals(setOf(ScreenTitleId(uuid.toJavaUuid())), ids)
+  }
+
+  @Test
+  fun `the Continue service reads the Titles that created the graph`() {
+    val uuid = Uuid.fromLongs(0x7000L, Long.MIN_VALUE)
+
+    val titleId = checkNotNull(TitleId.ofOrNull(uuid))
+
+    val requested = mutableListOf<TitleId>()
+
+    val titles =
+      FakeTitles(
+        onReadProgress = { id ->
+          requested += id
+          null
+        }
+      )
+
+    val graph = graph(registry, titles)
+
+    val result = runBlocking {
+      graph.continueSelectionService.selectContinue(
+        ScreenTitleId(uuid.toJavaUuid())
+      )
+    }
+
+    assertSame(ContinueSelectionResult.TitleNotFound, result)
+    assertEquals(listOf(titleId), requested)
   }
 
   @Test

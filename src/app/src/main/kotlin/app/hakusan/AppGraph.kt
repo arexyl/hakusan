@@ -1,6 +1,7 @@
 package app.hakusan
 
 import app.hakusan.sdk.BrowseScreenService
+import app.hakusan.sdk.ContinueSelectionService
 import app.hakusan.sdk.LibraryScreenService
 import app.hakusan.titles.Titles
 import dev.zacsweers.metro.AppScope
@@ -27,6 +28,9 @@ internal interface AppGraph {
   /** The committed Library, its membership, and the automatic Add. */
   val libraryScreenService: LibraryScreenService
 
+  /** The Continue resolution from current progress. */
+  val continueSelectionService: ContinueSelectionService
+
   /** Creates a graph from its inputs. */
   @DependencyGraph.Factory
   fun interface Factory {
@@ -49,4 +53,6 @@ internal interface ScreenServiceBindings {
   @Binds val BrowseScreenAdapter.bind: BrowseScreenService
 
   @Binds val LibraryScreenAdapter.bind: LibraryScreenService
+
+  @Binds val ContinueSelectionAdapter.bind: ContinueSelectionService
 }

@@ -2,17 +2,32 @@ package app.hakusan
 
 import app.hakusan.extensions.SourceIdentity
 import app.hakusan.sdk.AddToLibraryScreenResult
+import app.hakusan.sdk.ContinueSelectionResult
+import app.hakusan.sdk.ContinueTarget
+import app.hakusan.sdk.ContinueUnavailableReason
 import app.hakusan.sdk.LibraryResumeState
 import app.hakusan.sdk.LibraryTitleProgress
+import app.hakusan.sdk.ScreenChapterId
+import app.hakusan.sdk.ScreenChapterKey
+import app.hakusan.sdk.ScreenContentUnitKind
+import app.hakusan.sdk.ScreenReadingPosition
+import app.hakusan.sdk.ScreenReadingStart
 import app.hakusan.sdk.ScreenShelfId
 import app.hakusan.sdk.ScreenTitleId
 import app.hakusan.sdk.ScreenTitleKey
 import app.hakusan.titles.CategoryId
+import app.hakusan.titles.Chapter
+import app.hakusan.titles.ChapterId
 import app.hakusan.titles.CompactProgress
+import app.hakusan.titles.ContentUnitKind
+import app.hakusan.titles.ContinueResolution
 import app.hakusan.titles.LibraryAddResult
+import app.hakusan.titles.ProgressSnapshot
 import app.hakusan.titles.ResumeAvailability
+import app.hakusan.titles.ResumeTarget
 import app.hakusan.titles.SourceTitleAlias
 import app.hakusan.titles.TitleId
+import app.hakusan.titles.resolveContinue
 import kotlin.uuid.toJavaUuid
 import kotlin.uuid.toKotlinUuid
 
@@ -75,4 +90,99 @@ internal fun LibraryAddResult.toAddToLibraryScreenResult():
     is LibraryAddResult.CategorySelectionRequired ->
       AddToLibraryScreenResult.CategorySelectionRequired
     LibraryAddResult.TitleNotFound -> AddToLibraryScreenResult.TitleNotFound
+  }
+
+/**
+ * Returns the outcome of one Continue invocation on this progress.
+ *
+ * [resolveContinue] decides the target. This function only maps each case to
+ * its screen outcome, with the exact identities and keys of this progress.
+ */
+internal fun ProgressSnapshot.toContinueSelectionResult():
+  ContinueSelectionResult =
+  when (val resolution = resolveContinue()) {
+    is ContinueResolution.Resume ->
+      ContinueSelectionResult.Selected(resumedTarget(resolution.target))
+
+    is ContinueResolution.SavedTargetUnavailable ->
+      ContinueSelectionResult.Unavailable(
+        savedTargetUnavailable(resolution.target)
+      )
+
+    is ContinueResolution.FirstUnread ->
+      ContinueSelectionResult.Selected(beginningTarget(resolution.chapter))
+
+    is ContinueResolution.AllRead ->
+      ContinueSelectionResult.Selected(beginningTarget(resolution.chapter))
+
+    ContinueResolution.NoAvailableChapter ->
+      ContinueSelectionResult.Unavailable(
+        ContinueUnavailableReason.NoAvailableChapter
+      )
+  }
+
+/** Returns the Continue target that resumes at the saved [target]. */
+private fun ProgressSnapshot.resumedTarget(
+  target: ResumeTarget.Available
+): ContinueTarget {
+  val start = ScreenReadingStart.Resume(readingPosition(target))
+
+  return continueTarget(target.chapter, start)
+}
+
+/** Returns the Continue target that opens [chapter] at its beginning. */
+private fun ProgressSnapshot.beginningTarget(chapter: Chapter): ContinueTarget =
+  continueTarget(chapter, ScreenReadingStart.Beginning)
+
+/** Returns the Continue target that opens [chapter] at [start]. */
+private fun ProgressSnapshot.continueTarget(
+  chapter: Chapter,
+  start: ScreenReadingStart,
+): ContinueTarget =
+  ContinueTarget(
+    titleId = titleId.toScreenTitleId(),
+    chapterId = chapter.id.toScreenChapterId(),
+    chapterKey = chapterKey(chapter),
+    start = start,
+  )
+
+/**
+ * Returns the reason that keeps the saved [target] in an omitted chapter
+ * without opening another chapter.
+ */
+private fun ProgressSnapshot.savedTargetUnavailable(
+  target: ResumeTarget.TemporarilyUnavailable
+): ContinueUnavailableReason =
+  ContinueUnavailableReason.SavedTargetUnavailable(
+    chapterKey = chapterKey(target.chapter),
+    position = readingPosition(target),
+  )
+
+/** Returns the saved [target] of this title as a screen reading position. */
+private fun ProgressSnapshot.readingPosition(
+  target: ResumeTarget
+): ScreenReadingPosition =
+  ScreenReadingPosition(
+    titleId = titleId.toScreenTitleId(),
+    chapterId = target.chapter.id.toScreenChapterId(),
+    unitKind = target.unitKind.toScreenContentUnitKind(),
+    unitIndex = target.unitIndex,
+  )
+
+/**
+ * Returns the screen key of [chapter], qualified by the exact alias of this
+ * title.
+ */
+private fun ProgressSnapshot.chapterKey(chapter: Chapter): ScreenChapterKey =
+  ScreenChapterKey(alias.toScreenTitleKey(), chapter.localKey.text)
+
+/** Returns the screen identity of this chapter, with the same UUID. */
+private fun ChapterId.toScreenChapterId(): ScreenChapterId =
+  ScreenChapterId(uuid.toJavaUuid())
+
+/** Returns the screen kind of this unit kind. */
+private fun ContentUnitKind.toScreenContentUnitKind(): ScreenContentUnitKind =
+  when (this) {
+    ContentUnitKind.PAGE -> ScreenContentUnitKind.PAGE
+    ContentUnitKind.PROVIDER_SEGMENT -> ScreenContentUnitKind.PROVIDER_SEGMENT
   }
