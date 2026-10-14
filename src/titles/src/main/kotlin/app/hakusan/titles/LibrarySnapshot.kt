@@ -23,9 +23,9 @@ private constructor(
   internal companion object {
     /**
      * Returns the snapshot of validated [titles] and [shelves]. The read
-     * boundary is the only caller and has established every invariant: one
-     * shelf per category, and the titles of the shelves are exactly the keys of
-     * [titles].
+     * boundary and the test fixtures of `:titles` are the only callers, and
+     * each establishes every invariant: one shelf per category, and the titles
+     * of the shelves are exactly the keys of [titles].
      *
      * The snapshot takes ownership of both collections and wraps them without a
      * copy, so the caller must neither keep nor change them.
@@ -59,8 +59,9 @@ private constructor(
   internal companion object {
     /**
      * Returns the shelf of [category] with [titleIds], whose associations the
-     * read boundary validated. The shelf takes ownership of [titleIds] and
-     * wraps it without a copy, so the caller must neither keep nor change it.
+     * read boundary validated or the test fixtures built. The shelf takes
+     * ownership of [titleIds] and wraps it without a copy, so the caller must
+     * neither keep nor change it.
      */
     fun create(
       category: LibraryCategory,
@@ -74,8 +75,8 @@ private constructor(
  * One Library title in a [LibrarySnapshot], with its compact progress.
  *
  * The snapshot keys the title by its identity, so the title does not repeat it.
- * Only the read boundary of `:titles` creates a title, from validated stored
- * rows.
+ * Only the read boundary and the test fixtures of `:titles` create a title. The
+ * read boundary creates it from validated stored rows.
  */
 @ConsistentCopyVisibility
 public data class LibraryTitle
@@ -96,8 +97,8 @@ internal constructor(
  * Both counts cover the current canonical chapters only, the chapters of the
  * newest accepted snapshot. A read chapter that the newest snapshot omits
  * counts in neither. The read count never exceeds the chapter count. Only the
- * read boundary of `:titles` creates a value, after it validated both counts
- * and the resume availability.
+ * read boundary and the test fixtures of `:titles` create a value. The read
+ * boundary validates both counts and the resume availability first.
  */
 @ConsistentCopyVisibility
 public data class CompactProgress

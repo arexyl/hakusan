@@ -6,8 +6,9 @@ import java.util.Collections
  * One Library category: its identity and its current name.
  *
  * The name is mutable presentation metadata. It is neither unique nor an
- * identity, so two categories may share a name. Only the read boundary of
- * `:titles` creates a category, from a validated stored row.
+ * identity, so two categories may share a name. Only the read boundary and the
+ * test fixtures of `:titles` create a category. The read boundary creates it
+ * from a validated stored row.
  */
 @ConsistentCopyVisibility
 public data class LibraryCategory
@@ -118,8 +119,9 @@ public sealed interface LibraryAddResult {
   ) : LibraryAddResult {
     internal companion object {
       /**
-       * Returns the outcome for [categories], whose identities the read
-       * boundary already found unique.
+       * Returns the outcome for [categories]. The read boundary already found
+       * their identities unique, and the test fixtures build only unique
+       * identities.
        *
        * @throws IllegalArgumentException if [categories] has fewer than two
        *   categories.

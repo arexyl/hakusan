@@ -42,6 +42,10 @@ android {
     targetSdk = libs.versions.sdk.target.get().toInt()
   }
 
+  testFixtures {
+    enable = true
+  }
+
   compileOptions {
     sourceCompatibility = JavaVersion.VERSION_25
     targetCompatibility = JavaVersion.VERSION_25

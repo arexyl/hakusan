@@ -28,8 +28,9 @@ private constructor(
 ) {
   internal companion object {
     /**
-     * Returns the snapshot of already validated progress. The read boundary is
-     * the only caller and has established every invariant of the snapshot.
+     * Returns the snapshot of already validated progress. The read boundary and
+     * the test fixtures of `:titles` are the only callers, and each establishes
+     * every invariant of the snapshot.
      */
     fun create(
       titleId: TitleId,
@@ -49,8 +50,9 @@ private constructor(
 /**
  * One known chapter of a title, with its latest stored metadata.
  *
- * The enclosing snapshot owns the title identity. Only the read boundary of
- * `:titles` creates a chapter, from a validated stored row.
+ * The enclosing snapshot owns the title identity. Only the read boundary and
+ * the test fixtures of `:titles` create a chapter. The read boundary creates it
+ * from a validated stored row.
  */
 @ConsistentCopyVisibility
 public data class Chapter
@@ -64,8 +66,8 @@ internal constructor(
 )
 
 /**
- * One canonical chapter and its read status. Only the read boundary of
- * `:titles` creates it.
+ * One canonical chapter and its read status. Only the read boundary and the
+ * test fixtures of `:titles` create it.
  */
 @ConsistentCopyVisibility
 public data class ChapterReadingState
@@ -92,9 +94,10 @@ public enum class ContentUnitKind {
  * snapshot lists its chapter, and [TemporarilyUnavailable] while that snapshot
  * omits it. An unavailable target is kept, never replaced by another chapter.
  *
- * Only the read boundary of `:titles` creates a target, after it validated the
- * unit index, the read status, and the availability against the canonical
- * order. The constructors therefore stay internal.
+ * Only the read boundary and the test fixtures of `:titles` create a target.
+ * The read boundary validates the unit index, the read status, and the
+ * availability against the canonical order, and the test fixtures build only
+ * targets that it can produce. The constructors therefore stay internal.
  */
 public sealed interface ResumeTarget {
   /** The chapter of the position. */
