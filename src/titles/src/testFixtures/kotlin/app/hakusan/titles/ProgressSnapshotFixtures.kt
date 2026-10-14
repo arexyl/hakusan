@@ -18,7 +18,8 @@ public fun chapter(
   )
 
 /**
- * Returns the progress snapshot of [titleId] without a resume target.
+ * Returns the progress snapshot of [titleId], whose stored source alias is
+ * [alias], without a resume target.
  *
  * [chapters] is the canonical sequence in order, and [readChapters] are the
  * read chapters among them. [isInLibrary] states the Library membership.
@@ -28,6 +29,7 @@ public fun chapter(
  */
 public fun progressSnapshot(
   titleId: TitleId,
+  alias: SourceTitleAlias,
   chapters: List<Chapter>,
   readChapters: Set<Chapter> = emptySet(),
   isInLibrary: Boolean = false,
@@ -38,6 +40,7 @@ public fun progressSnapshot(
 
   return ProgressSnapshot.create(
     titleId = titleId,
+    alias = alias,
     isInLibrary = isInLibrary,
     chapters = states,
     resumeTarget = null,
@@ -45,8 +48,9 @@ public fun progressSnapshot(
 }
 
 /**
- * Returns the progress snapshot of the Library title [titleId], whose resume
- * target is the unit [unitIndex] of the kind [unitKind] in [resumeChapter].
+ * Returns the progress snapshot of the Library title [titleId], whose stored
+ * source alias is [alias] and whose resume target is the unit [unitIndex] of
+ * the kind [unitKind] in [resumeChapter].
  *
  * [chapters] is the canonical sequence in order, and [readChapters] are the
  * read chapters among them. The target is available when [chapters] lists
@@ -60,6 +64,7 @@ public fun progressSnapshot(
  */
 public fun progressSnapshot(
   titleId: TitleId,
+  alias: SourceTitleAlias,
   chapters: List<Chapter>,
   readChapters: Set<Chapter> = emptySet(),
   resumeChapter: Chapter,
@@ -88,6 +93,7 @@ public fun progressSnapshot(
 
   return ProgressSnapshot.create(
     titleId = titleId,
+    alias = alias,
     isInLibrary = true,
     chapters = states,
     resumeTarget = target,

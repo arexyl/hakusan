@@ -5,17 +5,24 @@ import java.util.Collections
 /**
  * The coherent reading progress of one title, read in one transaction.
  *
- * The snapshot is owned: later changes to storage never change it. Read status,
- * the resume target, and Library membership are independent facts. A chapter
- * without a read flag may still have been read before the newest snapshot
- * omitted it, and the absence of a resume target does not mean that a chapter
- * is unread.
+ * The snapshot is owned: later changes to storage never change it. It carries
+ * the exact source alias of the title, read in the same transaction as the rest
+ * of the snapshot, so its identity and its alias belong to one title. Read
+ * status, the resume target, and Library membership are independent facts. A
+ * chapter without a read flag may still have been read before the newest
+ * snapshot omitted it, and the absence of a resume target does not mean that a
+ * chapter is unread.
  */
 @ConsistentCopyVisibility
 public data class ProgressSnapshot
 private constructor(
   /** The identity of the title. */
   public val titleId: TitleId,
+  /**
+   * The exact stored source alias of the title, with its whitespace, case, and
+   * Unicode composition.
+   */
+  public val alias: SourceTitleAlias,
   /** Whether the title belongs to at least one Library category. */
   public val isInLibrary: Boolean,
   /**
@@ -34,12 +41,14 @@ private constructor(
      */
     fun create(
       titleId: TitleId,
+      alias: SourceTitleAlias,
       isInLibrary: Boolean,
       chapters: List<ChapterReadingState>,
       resumeTarget: ResumeTarget?,
     ): ProgressSnapshot =
       ProgressSnapshot(
         titleId = titleId,
+        alias = alias,
         isInLibrary = isInLibrary,
         chapters = Collections.unmodifiableList(ArrayList(chapters)),
         resumeTarget = resumeTarget,

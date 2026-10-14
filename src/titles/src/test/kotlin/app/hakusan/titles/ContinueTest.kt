@@ -127,6 +127,7 @@ class ContinueTest {
   ): ProgressSnapshot =
     ProgressSnapshot.create(
       titleId = TITLE_ID,
+      alias = ALIAS,
       isInLibrary = target != null,
       chapters = states,
       resumeTarget = target,
@@ -134,5 +135,7 @@ class ContinueTest {
 
   private companion object {
     val TITLE_ID = TitleId.generate()
+
+    val ALIAS = SourceTitleAlias.of("source", "title")
   }
 }

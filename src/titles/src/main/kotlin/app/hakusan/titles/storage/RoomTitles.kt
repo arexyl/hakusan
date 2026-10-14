@@ -18,6 +18,7 @@ import app.hakusan.titles.LibraryMembership
 import app.hakusan.titles.LibrarySnapshot
 import app.hakusan.titles.ProgressSnapshot
 import app.hakusan.titles.ReadingPosition
+import app.hakusan.titles.SourceTitleAlias
 import app.hakusan.titles.StoredStateViolationKind.ALIAS
 import app.hakusan.titles.StoredStateViolationKind.IDENTITY
 import app.hakusan.titles.StoredStateViolationKind.RESUME_STATE
@@ -84,12 +85,13 @@ internal class RoomTitles(
 
     applyPlan(title.storageId, plan)
 
-    dao.readProgressSnapshot(title.storageId, title.id)
+    dao.readProgressSnapshot(title.storageId, title.id, title.alias)
   }
 
   /**
    * Resolves the title of [observation] by its exact alias, stores its details,
-   * and returns its keys. An unknown alias inserts a new title.
+   * and returns its keys with the stored alias. An unknown alias inserts a new
+   * title.
    */
   private suspend fun reconcileDetails(
     observation: AcceptedTitleObservation
@@ -125,7 +127,7 @@ internal class RoomTitles(
       check(count == 1) { "A reconciled title disappeared in its transaction." }
     }
 
-    return TitleKeys(current.storageId, current.id)
+    return TitleKeys(current.storageId, current.id, current.alias)
   }
 
   /**
@@ -152,7 +154,7 @@ internal class RoomTitles(
       val storageId = dao.insertTitleOrIgnore(row)
 
       if (storageId > 0) {
-        return TitleKeys(storageId, id)
+        return TitleKeys(storageId, id, observation.alias)
       }
     }
 
@@ -388,7 +390,7 @@ internal class RoomTitles(
   private suspend fun readProgressOf(titleId: TitleId): ProgressSnapshot? {
     val title = findTitle(titleId) ?: return null
 
-    return dao.readProgressSnapshot(title.storageId, title.id)
+    return dao.readProgressSnapshot(title.storageId, title.id, title.alias)
   }
 
   override suspend fun recordActualPosition(
@@ -633,8 +635,15 @@ internal class RoomTitles(
     )
   }
 
-  /** The storage key and the identity of one reconciled title. */
-  private data class TitleKeys(val storageId: Long, val id: TitleId)
+  /**
+   * The storage key, the identity, and the exact stored source alias of one
+   * reconciled title.
+   */
+  private data class TitleKeys(
+    val storageId: Long,
+    val id: TitleId,
+    val alias: SourceTitleAlias,
+  )
 
   internal companion object {
     /** The number of generated identities tried before a collision fails. */

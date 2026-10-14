@@ -3,6 +3,7 @@ package app.hakusan.titles.storage
 import app.hakusan.titles.ChapterId
 import app.hakusan.titles.ContentUnitKind
 import app.hakusan.titles.ResumeTarget
+import app.hakusan.titles.SourceTitleAlias
 import app.hakusan.titles.StoredStateViolationException
 import app.hakusan.titles.StoredStateViolationKind
 import app.hakusan.titles.StoredStateViolationKind.ALIAS
@@ -48,6 +49,33 @@ class ProgressSnapshotsTest {
       rows[1].id.toChapterIdOrNull(),
       snapshot.chapters.first().chapter.id,
     )
+  }
+
+  @Test
+  fun snapshotCarriesTheStoredAliasExactly() {
+    val rows =
+      listOf(
+        title(" Source\t", "Caf\u00e9 "),
+        title(" Source\t", "Cafe\u0301 "),
+        title(" SOURCE\t", "Caf\u00e9 "),
+      )
+
+    val aliases = rows.map { row ->
+      val title = StoredTitle.of(row)
+
+      map(chapters = listOf(chapter(1, 0)), alias = title.alias).alias
+    }
+
+    assertEquals(
+      listOf(
+        SourceTitleAlias.of(" Source\t", "Caf\u00e9 "),
+        SourceTitleAlias.of(" Source\t", "Cafe\u0301 "),
+        SourceTitleAlias.of(" SOURCE\t", "Caf\u00e9 "),
+      ),
+      aliases,
+    )
+
+    assertEquals(rows.size, aliases.toSet().size)
   }
 
   @Test
@@ -276,14 +304,30 @@ class ProgressSnapshotsTest {
     read: List<ReadChapterEntity> = emptyList(),
     isMember: Boolean = false,
     resume: List<LibraryResumePositionEntity> = emptyList(),
+    alias: SourceTitleAlias = TITLE_ALIAS,
   ) =
     mapProgressSnapshot(
       titleId = TITLE_ID,
+      alias = alias,
       titleStorageId = TITLE_KEY,
       chapterRows = chapters,
       readRows = read,
       isLibraryMember = isMember,
       resumeRows = resume,
+    )
+
+  /** The stored row of the title with the source alias components. */
+  private fun title(
+    sourceIdentity: String,
+    sourceTitleKey: String,
+  ): TitleEntity =
+    TitleEntity(
+      storageId = TITLE_KEY,
+      id = TITLE_ID.toStoredBytes(),
+      sourceIdentity = sourceIdentity,
+      sourceTitleKey = sourceTitleKey,
+      displayName = "Title",
+      description = null,
     )
 
   private fun chapter(
@@ -324,5 +368,7 @@ class ProgressSnapshotsTest {
     const val OTHER_TITLE = 32L
 
     val TITLE_ID = TitleId.generate()
+
+    val TITLE_ALIAS = SourceTitleAlias.of("source", "title")
   }
 }

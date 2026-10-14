@@ -17,8 +17,8 @@ import org.junit.runner.RunWith
 
 /**
  * The explicit one-shot progress read on an in-memory Room database: its
- * agreement with reconciliation, a missing title, and stored-state violations
- * that no mutation touched.
+ * agreement with reconciliation, the exact title alias, a missing title, and
+ * stored-state violations that no mutation touched.
  */
 @RunWith(AndroidJUnit4::class)
 class ProgressReadTest {
@@ -82,7 +82,41 @@ class ProgressReadTest {
 
     assertEquals(memberReconciled, memberRead)
     assertEquals(outsideReconciled, outsideRead)
+    assertEquals(SourceTitleAlias.of("source", "member"), memberRead?.alias)
+    assertEquals(SourceTitleAlias.of("source", "outside"), outsideRead?.alias)
     assertEquals(c, memberRead?.resumeTarget?.chapter?.id)
+  }
+
+  @Test
+  fun progressCarriesTheExactObservedAlias(): Unit = runBlocking {
+    val aliases =
+      listOf(
+        SourceTitleAlias.of(" Source\t", "Caf\u00e9 "),
+        SourceTitleAlias.of(" Source\t", "Cafe\u0301 "),
+        SourceTitleAlias.of(" SOURCE\t", "Caf\u00e9 "),
+        SourceTitleAlias.of("other", "Caf\u00e9 "),
+      )
+
+    val inserted = aliases.map { alias ->
+      titles.reconcileTitle(observation(alias, "1"))
+    }
+
+    val known = aliases.map { alias ->
+      titles.reconcileTitle(observation(alias, "1")).alias
+    }
+
+    val read = inserted.map { snapshot ->
+      titles.readProgress(snapshot.titleId)?.alias
+    }
+
+    assertEquals(aliases, inserted.map(ProgressSnapshot::alias))
+    assertEquals(aliases, known)
+    assertEquals(aliases, read)
+
+    assertEquals(
+      aliases.size,
+      inserted.map(ProgressSnapshot::titleId).toSet().size,
+    )
   }
 
   @Test
@@ -169,9 +203,13 @@ class ProgressReadTest {
   private fun observation(
     key: String,
     vararg chapters: String,
-  ): AcceptedTitleObservation {
-    val alias = SourceTitleAlias.of("source", key)
+  ): AcceptedTitleObservation =
+    observation(SourceTitleAlias.of("source", key), *chapters)
 
+  private fun observation(
+    alias: SourceTitleAlias,
+    vararg chapters: String,
+  ): AcceptedTitleObservation {
     val accepted = chapters.map { chapter ->
       AcceptedChapter(
         SourceChapterAlias(alias, TitleLocalChapterKey.of(chapter)),

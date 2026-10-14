@@ -5,6 +5,7 @@ import app.hakusan.titles.ChapterReadingState
 import app.hakusan.titles.ContentUnitKind
 import app.hakusan.titles.ProgressSnapshot
 import app.hakusan.titles.ResumeTarget
+import app.hakusan.titles.SourceTitleAlias
 import app.hakusan.titles.StoredStateViolationException
 import app.hakusan.titles.StoredStateViolationKind.IDENTITY
 import app.hakusan.titles.StoredStateViolationKind.OWNERSHIP
@@ -13,7 +14,8 @@ import app.hakusan.titles.TitleId
 
 /**
  * Reads the progress snapshot of the title [titleStorageId], whose identity is
- * [titleId]. Call it inside a transaction, so the rows form one state.
+ * [titleId] and whose stored source alias is [alias]. Call it inside the
+ * transaction that resolved the title, so the rows form one state.
  *
  * Library membership is the existence of a category association, read without
  * its rows. The Library read validates the association rows themselves.
@@ -24,6 +26,7 @@ import app.hakusan.titles.TitleId
 internal suspend fun TitlesDao.readProgressSnapshot(
   titleStorageId: Long,
   titleId: TitleId,
+  alias: SourceTitleAlias,
 ): ProgressSnapshot {
   val chapters = loadChapters(titleStorageId)
 
@@ -35,6 +38,7 @@ internal suspend fun TitlesDao.readProgressSnapshot(
 
   return mapProgressSnapshot(
     titleId = titleId,
+    alias = alias,
     titleStorageId = titleStorageId,
     chapterRows = chapters,
     readRows = readChapters,
@@ -55,6 +59,7 @@ internal suspend fun TitlesDao.readProgressSnapshot(
  */
 internal fun mapProgressSnapshot(
   titleId: TitleId,
+  alias: SourceTitleAlias,
   titleStorageId: Long,
   chapterRows: List<ChapterEntity>,
   readRows: List<ReadChapterEntity>,
@@ -81,6 +86,7 @@ internal fun mapProgressSnapshot(
 
   return ProgressSnapshot.create(
     titleId = titleId,
+    alias = alias,
     isInLibrary = isLibraryMember,
     chapters = states,
     resumeTarget = resumeTarget,

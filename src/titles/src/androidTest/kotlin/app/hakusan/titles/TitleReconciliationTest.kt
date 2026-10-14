@@ -72,6 +72,8 @@ class TitleReconciliationTest {
 
     assertEquals(first, repeated)
     assertEquals(first.titleId, renamed.titleId)
+    assertEquals(SourceTitleAlias.of("source", "title"), first.alias)
+    assertEquals(first.alias, renamed.alias)
     assertEquals(chapterIds(first), chapterIds(renamed))
     assertEquals(listOf(listOf("Renamed", "NULL")), titleDetails())
   }
@@ -90,6 +92,8 @@ class TitleReconciliationTest {
 
     assertNotEquals(first.titleId, second.titleId)
     assertNotEquals(chapterIds(first), chapterIds(second))
+    assertEquals(SourceTitleAlias.of("first", "title"), first.alias)
+    assertEquals(SourceTitleAlias.of("second", "title"), second.alias)
     assertEquals(2L, count("titles"))
     assertEquals(2L, count("chapters"))
   }

@@ -14,14 +14,21 @@ import org.junit.jupiter.api.assertThrows
 class ProgressSnapshotFixturesTest {
   @Test
   fun snapshotWithoutTargetMatchesTheReadBoundary() {
-    val outside = progressSnapshot(TITLE_ID, listOf(A, B, C), setOf(B))
+    val outside = progressSnapshot(TITLE_ID, ALIAS, listOf(A, B, C), setOf(B))
 
     val member =
-      progressSnapshot(TITLE_ID, listOf(A, B, C), setOf(B), isInLibrary = true)
+      progressSnapshot(
+        TITLE_ID,
+        ALIAS,
+        listOf(A, B, C),
+        setOf(B),
+        isInLibrary = true,
+      )
 
     val rows = listOf(row(A, 0), row(B, 1), row(C, 2))
 
     assertAll(
+      { assertEquals(ALIAS, outside.alias) },
       {
         assertEquals(
           read(rows, reads = listOf(B), isMember = false),
@@ -37,7 +44,7 @@ class ProgressSnapshotFixturesTest {
       {
         assertEquals(
           read(emptyList(), isMember = false),
-          progressSnapshot(TITLE_ID, emptyList()),
+          progressSnapshot(TITLE_ID, ALIAS, emptyList()),
         )
       },
     )
@@ -48,6 +55,7 @@ class ProgressSnapshotFixturesTest {
     val snapshot =
       progressSnapshot(
         titleId = TITLE_ID,
+        alias = ALIAS,
         chapters = listOf(A, B),
         readChapters = setOf(A),
         resumeChapter = B,
@@ -72,6 +80,7 @@ class ProgressSnapshotFixturesTest {
     val snapshot =
       progressSnapshot(
         titleId = TITLE_ID,
+        alias = ALIAS,
         chapters = listOf(A),
         readChapters = setOf(A),
         resumeChapter = C,
@@ -102,12 +111,12 @@ class ProgressSnapshotFixturesTest {
     val sameKey = chapter(chapterId(9), A.localKey.text, "Other")
 
     assertAll(
-      rejects { progressSnapshot(TITLE_ID, listOf(A, sameId)) },
-      rejects { progressSnapshot(TITLE_ID, listOf(A, sameKey)) },
+      rejects { progressSnapshot(TITLE_ID, ALIAS, listOf(A, sameId)) },
+      rejects { progressSnapshot(TITLE_ID, ALIAS, listOf(A, sameKey)) },
       rejects { resumeOn(sameId, chapters = listOf(A)) },
       rejects { resumeOn(sameKey, chapters = listOf(A)) },
       rejects {
-        progressSnapshot(TITLE_ID, listOf(A), readChapters = setOf(B))
+        progressSnapshot(TITLE_ID, ALIAS, listOf(A), readChapters = setOf(B))
       },
       rejects { resumeOn(A, chapters = listOf(A), read = setOf(A)) },
       rejects { resumeOn(A, chapters = listOf(A), unitIndex = -1) },
@@ -123,6 +132,7 @@ class ProgressSnapshotFixturesTest {
   ): ProgressSnapshot =
     progressSnapshot(
       titleId = TITLE_ID,
+      alias = ALIAS,
       chapters = chapters,
       readChapters = read,
       resumeChapter = chapter,
@@ -143,6 +153,7 @@ class ProgressSnapshotFixturesTest {
   ): ProgressSnapshot =
     mapProgressSnapshot(
       titleId = TITLE_ID,
+      alias = ALIAS,
       titleStorageId = TITLE_KEY,
       chapterRows = chapters,
       readRows = reads.map { chapter -> ReadChapterEntity(storageId(chapter)) },
@@ -180,6 +191,8 @@ class ProgressSnapshotFixturesTest {
     const val TITLE_KEY = 31L
 
     val TITLE_ID = TitleId.generate()
+
+    val ALIAS = SourceTitleAlias.of(" Source ", "Cafe\u0301 Title")
 
     val A = chapter(chapterId(1), "a", "Chapter A")
     val B = chapter(chapterId(2), "b", "Chapter B")

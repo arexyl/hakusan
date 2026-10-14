@@ -9,9 +9,10 @@ import app.hakusan.titles.storage.TitlesDatabase
 /**
  * The file-backed store of titles, chapters, the Library, and reading progress.
  *
- * The application keeps one store for the process lifetime and closes it
- * explicitly. No other process opens its database. The store exposes only the
- * [Titles] domain surface; its Room database stays internal.
+ * The application keeps one store, which lives until the process ends. A store
+ * that a test opens is closed explicitly by that test. No other process opens
+ * its database. The store exposes only the [Titles] domain surface; its Room
+ * database stays internal.
  */
 public class TitlesStore
 private constructor(internal val database: TitlesDatabase) : AutoCloseable {

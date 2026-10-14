@@ -31,7 +31,9 @@ import kotlinx.coroutines.flow.Flow
 public interface Titles {
   /**
    * Reconciles one accepted [observation] of a title in one write transaction
-   * and returns the progress of the title read in the same transaction.
+   * and returns the progress of the title read in the same transaction. The
+   * progress carries the exact stored source alias of the title, which equals
+   * the alias of [observation].
    *
    * The exact alias of the observation resolves the title. A known title keeps
    * its identity, Library membership, and reading state, and its display name
@@ -154,6 +156,8 @@ public interface Titles {
    * Reads the current progress of the title [titleId] in one read transaction,
    * or returns null when no stored title has the identity.
    *
+   * The progress carries the exact stored source alias of the title, read in
+   * the same transaction, so the identity and the alias belong to one title.
    * This is the explicit read for one-shot consumers, such as Continue. It
    * validates every stored row it reads, so it also detects an existing
    * violation that no mutation touched.
