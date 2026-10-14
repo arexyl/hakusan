@@ -23,6 +23,7 @@ import app.hakusan.titles.StoredStateViolationKind.IDENTITY
 import app.hakusan.titles.StoredStateViolationKind.RESUME_STATE
 import app.hakusan.titles.TitleId
 import app.hakusan.titles.Titles
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Clock
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
@@ -53,9 +54,26 @@ internal class RoomTitles(
 ) : Titles {
   private val dao = database.titlesDao()
 
+  /**
+   * Runs [block] in one write transaction.
+   *
+   * Room refreshes the observations only after a write transaction returns
+   * normally, so a cancellation that reaches the caller after the commit skips
+   * that refresh. This function requests it before it rethrows the
+   * cancellation. After a rollback the refresh finds no change.
+   */
+  private suspend fun <R> writeTransaction(block: suspend () -> R): R =
+    try {
+      database.withWriteTransaction { block() }
+    } catch (cancellation: CancellationException) {
+      database.invalidationTracker.refreshAsync()
+
+      throw cancellation
+    }
+
   override suspend fun reconcileTitle(
     observation: AcceptedTitleObservation
-  ): ProgressSnapshot = database.withWriteTransaction {
+  ): ProgressSnapshot = writeTransaction {
     val title = reconcileDetails(observation)
 
     val rows = dao.loadChapters(title.storageId)
@@ -210,14 +228,14 @@ internal class RoomTitles(
   }
 
   override suspend fun addToLibrary(titleId: TitleId): LibraryAddResult =
-    database.withWriteTransaction {
+    writeTransaction {
       addAutomatically(titleId)
     }
 
   override suspend fun addToLibrary(
     titleId: TitleId,
     selection: LibraryCategorySelection,
-  ): ExplicitLibraryAddResult = database.withWriteTransaction {
+  ): ExplicitLibraryAddResult = writeTransaction {
     addExplicitly(titleId, selection)
   }
 
@@ -375,7 +393,7 @@ internal class RoomTitles(
 
   override suspend fun recordActualPosition(
     update: ActualPositionUpdate
-  ): ActualPositionResult = database.withWriteTransaction {
+  ): ActualPositionResult = writeTransaction {
     applyActualPosition(update)
   }
 
@@ -408,7 +426,7 @@ internal class RoomTitles(
 
   override suspend fun completeChapterBoundary(
     completion: ChapterBoundaryCompletion
-  ): ChapterBoundaryResult = database.withWriteTransaction {
+  ): ChapterBoundaryResult = writeTransaction {
     applyBoundary(completion)
   }
 
@@ -485,7 +503,7 @@ internal class RoomTitles(
 
   override suspend fun completeFinalChapter(
     completion: FinalChapterCompletion
-  ): FinalCompletionResult = database.withWriteTransaction {
+  ): FinalCompletionResult = writeTransaction {
     applyFinalCompletion(completion)
   }
 

@@ -11,13 +11,8 @@ import androidx.sqlite.driver.AndroidSQLiteDriver
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.hakusan.titles.storage.RoomTitles
 import app.hakusan.titles.storage.TitlesDatabase
-import java.util.concurrent.atomic.AtomicReference
-import kotlin.coroutines.CoroutineContext
 import kotlinx.coroutines.CompletableDeferred
-import kotlinx.coroutines.CoroutineDispatcher
-import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.launch
@@ -496,41 +491,6 @@ class LibraryAddTest {
 
   private fun SQLiteStatement.columns(): List<String> =
     List(getColumnCount()) { column -> getText(column) }
-
-  /**
-   * The query dispatcher of a database, which runs its work on [Dispatchers.IO]
-   * and can hold one write transaction before it starts.
-   *
-   * Room hands each transaction to this dispatcher as a runnable through an
-   * executor view, and uses that view for nothing else. The view dispatches
-   * with an empty context, so a dispatch without a [Job] is a transaction,
-   * while the dispatch of a coroutine always carries one.
-   */
-  private class TransactionGate : CoroutineDispatcher() {
-    private val hold = AtomicReference<CompletableDeferred<Runnable>?>()
-
-    /**
-     * Holds the next transaction instead of running it, and returns the
-     * deferred that receives it. The caller then runs the transaction.
-     */
-    fun holdNextTransaction(): Deferred<Runnable> {
-      val transaction = CompletableDeferred<Runnable>()
-
-      check(hold.compareAndSet(null, transaction))
-
-      return transaction
-    }
-
-    override fun dispatch(context: CoroutineContext, block: Runnable) {
-      val transaction = if (context[Job] == null) hold.getAndSet(null) else null
-
-      if (transaction == null) {
-        Dispatchers.IO.dispatch(context, block)
-      } else {
-        transaction.complete(block)
-      }
-    }
-  }
 
   private companion object {
     const val TIMEOUT_MILLIS = 10_000L

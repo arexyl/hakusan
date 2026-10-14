@@ -13,7 +13,9 @@ import kotlinx.coroutines.flow.Flow
  *
  * A cancellation can also surface after the transaction committed, while the
  * result returns to the context of the caller. A `CancellationException`
- * therefore does not prove that nothing persisted.
+ * therefore does not prove that nothing persisted. An operation throws it only
+ * after its transaction ended, or when the transaction can no longer begin. The
+ * observations still read again after such a commit.
  *
  * Observations return cold flows. Each collection owns its observation: it
  * reads the current state first, then reads again after each committed write to
@@ -41,8 +43,9 @@ public interface Titles {
    * resume position without a canonical place. No title or chapter is deleted.
    *
    * This operation does not arbitrate refresh generations. Per title, the
-   * caller completes each accept-to-reconcile handoff before it accepts a later
-   * snapshot, so an older accepted snapshot never overwrites a newer one.
+   * caller ends each accept-to-reconcile handoff, by a return or a throw,
+   * before it accepts a later snapshot, so an older accepted snapshot never
+   * overwrites a newer one.
    *
    * A planned chapter write that conflicts with a unique index is a defect of
    * the planner. An insert reports it as [IllegalStateException], and an update
