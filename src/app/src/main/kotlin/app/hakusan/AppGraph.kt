@@ -1,6 +1,7 @@
 package app.hakusan
 
 import app.hakusan.sdk.BrowseScreenService
+import app.hakusan.sdk.LibraryScreenService
 import app.hakusan.titles.Titles
 import dev.zacsweers.metro.AppScope
 import dev.zacsweers.metro.BindingContainer
@@ -23,6 +24,9 @@ internal interface AppGraph {
   /** The Catalog and the source browse loads. */
   val browseScreenService: BrowseScreenService
 
+  /** The committed Library, its membership, and the automatic Add. */
+  val libraryScreenService: LibraryScreenService
+
   /** Creates a graph from its inputs. */
   @DependencyGraph.Factory
   fun interface Factory {
@@ -43,4 +47,6 @@ internal interface AppGraph {
 @BindingContainer
 internal interface ScreenServiceBindings {
   @Binds val BrowseScreenAdapter.bind: BrowseScreenService
+
+  @Binds val LibraryScreenAdapter.bind: LibraryScreenService
 }

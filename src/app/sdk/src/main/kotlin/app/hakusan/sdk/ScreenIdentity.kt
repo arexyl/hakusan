@@ -80,7 +80,8 @@ public value class ScreenChapterId(public val value: UUID) {
 /**
  * The opaque screen key of one Library shelf.
  *
- * It names one stored category and defines no order.
+ * It names one stored category and defines no order. It is valid only for the
+ * current database, so never save it in a route, saved state, or another store.
  *
  * @throws IllegalArgumentException if [value] is not positive.
  */

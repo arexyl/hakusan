@@ -3,12 +3,16 @@ package app.hakusan
 import androidx.test.core.app.ApplicationProvider
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.hakusan.debug.source.DeterministicFixture
+import app.hakusan.sdk.AddToLibraryScreenResult
 import app.hakusan.sdk.BrowseScreen
 import app.hakusan.sdk.BrowseScreenResult
 import app.hakusan.sdk.BrowseTitleItem
 import app.hakusan.sdk.CatalogSourceItem
 import app.hakusan.sdk.ScreenSourceId
+import app.hakusan.sdk.ScreenTitleId
 import app.hakusan.sdk.ScreenTitleKey
+import java.util.UUID
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertSame
@@ -61,5 +65,39 @@ class ApplicationCompositionTest {
     val screen = BrowseScreen.of(source, listOf(item))
 
     assertEquals(BrowseScreenResult.Success(screen), result)
+  }
+
+  @Test
+  fun libraryEmitsFromTheStore(): Unit = runBlocking {
+    val service = application.graph.libraryScreenService
+
+    val screen = service.observeLibrary().first()
+
+    val fixtureSource = DeterministicFixture.identity.toScreenSourceId()
+
+    // A fresh install stores no Library title, so the loop checks source names
+    // only once a test of the same run has added a title.
+    for (title in screen.titlesById.values) {
+      val expected =
+        if (title.key.sourceId == fixtureSource) {
+          DeterministicFixture.displayName
+        } else {
+          ""
+        }
+
+      assertEquals(expected, title.sourceDisplayName)
+    }
+  }
+
+  @Test
+  fun addingAnUnknownTitleFindsNoTitle(): Unit = runBlocking {
+    val service = application.graph.libraryScreenService
+
+    // A UUIDv7 with a zero timestamp, which the store never mints.
+    val unknown = ScreenTitleId(UUID(0x7000L, Long.MIN_VALUE))
+
+    val result = service.addToLibrary(unknown)
+
+    assertEquals(AddToLibraryScreenResult.TitleNotFound, result)
   }
 }

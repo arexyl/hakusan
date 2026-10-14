@@ -6,7 +6,13 @@ import app.hakusan.extensions.SourceTitle
 import app.hakusan.extensions.SourceTitleKey
 import app.hakusan.sdk.BrowseScreenResult
 import app.hakusan.sdk.ScreenSourceId
+import app.hakusan.sdk.ScreenTitleId
+import app.hakusan.titles.TitleId
 import dev.zacsweers.metro.createGraphFactory
+import kotlin.uuid.Uuid
+import kotlin.uuid.toJavaUuid
+import kotlinx.coroutines.flow.flowOf
+import kotlinx.coroutines.flow.single
 import kotlinx.coroutines.runBlocking
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertInstanceOf
@@ -38,6 +44,7 @@ class AppGraphTest {
     val graph = graph(registry)
 
     assertSame(graph.browseScreenService, graph.browseScreenService)
+    assertSame(graph.libraryScreenService, graph.libraryScreenService)
   }
 
   @Test
@@ -47,6 +54,7 @@ class AppGraphTest {
     val second = graph(registry)
 
     assertNotSame(first.browseScreenService, second.browseScreenService)
+    assertNotSame(first.libraryScreenService, second.libraryScreenService)
   }
 
   @Test
@@ -71,6 +79,24 @@ class AppGraphTest {
   }
 
   @Test
+  fun `the Library service reads the Titles that created the graph`() {
+    val uuid = Uuid.fromLongs(0x7000L, Long.MIN_VALUE)
+
+    val titleId = checkNotNull(TitleId.ofOrNull(uuid))
+
+    val titles =
+      FakeTitles(onObserveLibraryTitleIds = { flowOf(setOf(titleId)) })
+
+    val graph = graph(registry, titles)
+
+    val ids = runBlocking {
+      graph.libraryScreenService.observeLibraryTitleIds().single()
+    }
+
+    assertEquals(setOf(ScreenTitleId(uuid.toJavaUuid())), ids)
+  }
+
+  @Test
   fun `the graph exposes only screen services`() {
     val accessors =
       AppGraph::class.java.methods.filter { it.parameterCount == 0 }
@@ -85,7 +111,9 @@ class AppGraphTest {
     }
   }
 
-  /** Creates a graph whose Titles fail on every call. */
-  private fun graph(registry: SourceRegistry): AppGraph =
-    createGraphFactory<AppGraph.Factory>().create(registry, FakeTitles())
+  /** Creates a graph whose [titles] fail on every call by default. */
+  private fun graph(
+    registry: SourceRegistry,
+    titles: FakeTitles = FakeTitles(),
+  ): AppGraph = createGraphFactory<AppGraph.Factory>().create(registry, titles)
 }
