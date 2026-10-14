@@ -18,6 +18,18 @@ class IdentitiesTest {
   }
 
   @Test
+  fun identitiesRoundTripThroughTheirValues() {
+    val title = TitleId.generate()
+
+    val chapter = ChapterId.generate()
+
+    assertAll(
+      { assertEquals(title, TitleId.ofOrNull(title.uuid)) },
+      { assertEquals(chapter, ChapterId.ofOrNull(chapter.uuid)) },
+    )
+  }
+
+  @Test
   fun identitiesRejectOtherVersions() {
     val uuids = OTHER_VERSIONS.map(Uuid::parse)
 
