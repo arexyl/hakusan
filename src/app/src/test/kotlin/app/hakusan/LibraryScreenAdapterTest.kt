@@ -27,16 +27,24 @@ import app.hakusan.titles.librarySnapshot
 import app.hakusan.titles.libraryTitle
 import java.util.Locale
 import java.util.UUID
+import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.random.Random
+import kotlin.time.Duration.Companion.seconds
 import kotlin.uuid.Uuid
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
 import kotlinx.coroutines.flow.flow
 import kotlinx.coroutines.flow.flowOf
 import kotlinx.coroutines.flow.single
 import kotlinx.coroutines.flow.toList
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotEquals
+import org.junit.jupiter.api.Assertions.assertNotSame
 import org.junit.jupiter.api.Assertions.assertSame
 import org.junit.jupiter.api.Assertions.assertThrows
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -341,6 +349,136 @@ class LibraryScreenAdapterTest {
   }
 
   @Test
+  fun `each Library screen is built and ordered on the worker`() {
+    val category = libraryCategory(categoryId(1), "Shelf")
+
+    val snapshot =
+      librarySnapshot(
+        titles =
+          mapOf(
+            titleId(1) to title("zebra", "zebra"),
+            titleId(2) to title("öl", "öl"),
+          ),
+        shelves = mapOf(category to setOf(titleId(1), titleId(2))),
+      )
+
+    val german = Locale.forLanguageTag("de")
+
+    val swedish = Locale.forLanguageTag("sv")
+
+    val emissionThreads = CopyOnWriteArrayList<Thread>()
+
+    val emitted = CountDownLatch(1)
+
+    val titles =
+      FakeTitles(
+        onObserveLibrary = {
+          flow {
+            emissionThreads += Thread.currentThread()
+            Locale.setDefault(german)
+            emit(snapshot)
+            emissionThreads += Thread.currentThread()
+            Locale.setDefault(swedish)
+            emit(snapshot)
+            emitted.countDown()
+          }
+        }
+      )
+
+    // runBlocking runs its coroutines on the calling thread.
+    val collectingThread = Thread.currentThread()
+
+    val original = Locale.getDefault()
+
+    val screens =
+      try {
+        runBlocking {
+          withTimeout(5.seconds) {
+            val collected =
+              async(start = CoroutineStart.UNDISPATCHED) {
+                adapter(titles).observeLibrary().toList()
+              }
+
+            // Blocks the collecting thread until the observation has emitted
+            // twice and left the Swedish locale in place. A mapping on this
+            // thread would then order both screens under that locale.
+            assertTrue(emitted.await(5, TimeUnit.SECONDS))
+
+            collected.await()
+          }
+        }
+      } finally {
+        Locale.setDefault(original)
+      }
+
+    assertEquals(2, emissionThreads.size)
+
+    for (thread in emissionThreads) {
+      assertNotSame(collectingThread, thread)
+    }
+
+    val items = listOf(libraryItem(1, "zebra"), libraryItem(2, "öl"))
+
+    val shelf =
+      LibraryShelfMembers(
+        ScreenShelfId(1),
+        "Shelf",
+        items.mapTo(HashSet()) { it.id },
+      )
+
+    val expected =
+      listOf(german, swedish).map { locale ->
+        LibraryScreen.of(items, listOf(shelf), locale)
+      }
+
+    assertEquals(expected, screens)
+  }
+
+  @Test
+  fun `membership is mapped on the worker in emission order`() {
+    val emissionThreads = CopyOnWriteArrayList<Thread>()
+
+    val mappingThreads = CopyOnWriteArrayList<Thread>()
+
+    val sequences = listOf(setOf(1, 2), emptySet(), setOf(3))
+
+    val titles =
+      FakeTitles(
+        onObserveLibraryTitleIds = {
+          flow {
+            for (ids in sequences) {
+              val titleIds = ids.mapTo(HashSet(), ::titleId)
+
+              emissionThreads += Thread.currentThread()
+              emit(ThreadRecordingSet(titleIds, mappingThreads))
+            }
+          }
+        }
+      )
+
+    // runBlocking runs its coroutines on the calling thread.
+    val collectingThread = Thread.currentThread()
+
+    val emitted = runBlocking {
+      withTimeout(5.seconds) {
+        adapter(titles).observeLibraryTitleIds().toList()
+      }
+    }
+
+    assertEquals(emissionThreads, mappingThreads)
+
+    for (thread in mappingThreads) {
+      assertNotSame(collectingThread, thread)
+    }
+
+    val expected = sequences.map { ids ->
+      ids.mapTo(HashSet()) { ScreenTitleId(applicationUuid(it)) }
+    }
+
+    assertEquals(expected, emitted)
+  }
+
+  @Test
   fun `membership comes from its narrow observation as unmodifiable sets`() {
     val titles =
       FakeTitles(
@@ -413,7 +551,7 @@ class LibraryScreenAdapterTest {
   }
 
   @Test
-  fun `cancellation and defects propagate unchanged`() {
+  fun `cancellation and defects propagate without conversion`() {
     for (thrown in
       listOf(CancellationException("Cancelled"), IllegalStateException())) {
       val titles =
@@ -425,19 +563,27 @@ class LibraryScreenAdapterTest {
 
       val adapter = adapter(titles)
 
-      val calls: List<suspend () -> Unit> =
+      val observations: List<suspend () -> Unit> =
         listOf(
           { adapter.observeLibrary().toList() },
           { adapter.observeLibraryTitleIds().toList() },
-          { adapter.addToLibrary(ScreenTitleId(applicationUuid(1))) },
         )
 
-      for (call in calls) {
+      for (observation in observations) {
         val propagated =
-          assertThrows(Throwable::class.java) { runBlocking { call() } }
+          assertThrows(Throwable::class.java) { runBlocking { observation() } }
 
-        assertSame(thrown, propagated)
+        assertPropagatedAcrossWorker(thrown, propagated)
       }
+
+      val propagated =
+        assertThrows(Throwable::class.java) {
+          runBlocking {
+            adapter.addToLibrary(ScreenTitleId(applicationUuid(1)))
+          }
+        }
+
+      assertSame(thrown, propagated)
     }
   }
 
@@ -449,6 +595,48 @@ class LibraryScreenAdapterTest {
 
     return runBlocking { adapter(titles).observeLibrary().single() }
   }
+}
+
+/**
+ * A title identity set that records the thread of each iteration. The adapter
+ * maps a membership set by iterating it.
+ */
+private class ThreadRecordingSet(
+  private val titleIds: Set<TitleId>,
+  private val threads: MutableList<Thread>,
+) : AbstractSet<TitleId>() {
+  override val size: Int
+    get() = titleIds.size
+
+  override fun iterator(): Iterator<TitleId> {
+    threads += Thread.currentThread()
+
+    return titleIds.iterator()
+  }
+}
+
+/**
+ * Asserts that [propagated] is [thrown] itself, or the copy of it that
+ * kotlinx.coroutines stack trace recovery makes when [thrown] crosses the
+ * worker of an observation. Recovery runs in kotlinx.coroutines debug mode,
+ * which host tests turn on through assertions. The copy keeps the class and the
+ * message, has the original as its cause, and carries the coroutine boundary
+ * frame in its stack trace. A wrapper made by the adapter fails.
+ */
+private fun assertPropagatedAcrossWorker(
+  thrown: Throwable,
+  propagated: Throwable,
+) {
+  if (propagated === thrown) {
+    return
+  }
+
+  assertSame(thrown.javaClass, propagated.javaClass)
+  assertEquals(thrown.message, propagated.message)
+  assertSame(thrown, propagated.cause)
+  assertTrue(
+    propagated.stackTrace.any { it.className == COROUTINE_BOUNDARY_FRAME }
+  )
 }
 
 /** Returns the snapshot that [titles] and [shelves] build in their order. */
@@ -470,6 +658,20 @@ private fun title(
     description = description,
   )
 
+/**
+ * Returns the screen item that the adapter maps from title number [sequence]
+ * when [title] builds it with [key] as its key and name.
+ */
+private fun libraryItem(sequence: Int, key: String): LibraryTitleItem =
+  LibraryTitleItem(
+    id = ScreenTitleId(applicationUuid(sequence)),
+    key = ScreenTitleKey(ScreenSourceId("source"), key),
+    displayName = key,
+    description = null,
+    sourceDisplayName = "Source name",
+    progress = LibraryTitleProgress(0, 0, LibraryResumeState.NONE),
+  )
+
 private fun alias(key: String): SourceTitleAlias =
   SourceTitleAlias.of("source", key)
 
@@ -489,3 +691,6 @@ private fun variantLowBits(sequence: Int): Long =
 
 /** The high bits of a UUIDv7 with a zero timestamp and zero random bits. */
 private const val VERSION_7_HIGH_BITS = 0x7000L
+
+/** The class of the frame that marks a recovered coroutine boundary. */
+private const val COROUTINE_BOUNDARY_FRAME = "_COROUTINE._BOUNDARY"

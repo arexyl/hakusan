@@ -17,7 +17,9 @@ import dev.zacsweers.metro.Inject
 import dev.zacsweers.metro.SingleIn
 import java.util.Collections
 import java.util.Locale
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.map
 
 /**
@@ -27,8 +29,13 @@ import kotlinx.coroutines.flow.map
  * the process default locale at that emission. Every stored category becomes a
  * shelf, including an empty one. The source name of a title is the Catalog name
  * that the [registry] captured, or empty text when its source is not
- * registered. The flows of [titles] already run on their own worker, so the
- * adapter adds no thread hop.
+ * registered.
+ *
+ * The screen mapping of both observations, including that ordering, runs on a
+ * worker of [Dispatchers.Default], so subscribers receive finished screens and
+ * ID sets. The observations of [titles] already run on that dispatcher in
+ * production, and [flowOn] with an equal dispatcher collects them without a
+ * dispatch, so the mapping adds no thread hop there.
  */
 @Inject
 @SingleIn(AppScope::class)
@@ -37,10 +44,13 @@ internal class LibraryScreenAdapter(
   private val titles: Titles,
 ) : LibraryScreenService {
   override fun observeLibrary(): Flow<LibraryScreen> =
-    titles.observeLibrary().map(::toLibraryScreen)
+    titles.observeLibrary().map(::toLibraryScreen).flowOn(Dispatchers.Default)
 
   override fun observeLibraryTitleIds(): Flow<Set<ScreenTitleId>> =
-    titles.observeLibraryTitleIds().map(::toScreenTitleIds)
+    titles
+      .observeLibraryTitleIds()
+      .map(::toScreenTitleIds)
+      .flowOn(Dispatchers.Default)
 
   override suspend fun addToLibrary(
     titleId: ScreenTitleId
