@@ -9,6 +9,7 @@ kotlinx-coroutines = "1.11.0"
 kotlinx-serialization = "1.11.0"
 ksp = "2.3.12"
 ktfmt = "0.64"
+metro = "1.4.5"
 room = "3.0.3"
 sdk-compile = "37"
 sdk-min = "33"
@@ -35,4 +36,5 @@ sqlite-framework = { module = "androidx.sqlite:sqlite-framework", version.ref = 
 android-application = { id = "com.android.application", version.ref = "agp" }
 android-library = { id = "com.android.library", version.ref = "agp" }
 ksp = { id = "com.google.devtools.ksp", version.ref = "ksp" }
+metro = { id = "dev.zacsweers.metro", version.ref = "metro" }
 room = { id = "androidx.room3", version.ref = "room" }

@@ -1,0 +1,65 @@
+package app.hakusan
+
+import androidx.test.core.app.ApplicationProvider
+import androidx.test.ext.junit.runners.AndroidJUnit4
+import app.hakusan.debug.source.DeterministicFixture
+import app.hakusan.sdk.BrowseScreen
+import app.hakusan.sdk.BrowseScreenResult
+import app.hakusan.sdk.BrowseTitleItem
+import app.hakusan.sdk.CatalogSourceItem
+import app.hakusan.sdk.ScreenSourceId
+import app.hakusan.sdk.ScreenTitleKey
+import kotlinx.coroutines.runBlocking
+import org.junit.Assert.assertEquals
+import org.junit.Assert.assertSame
+import org.junit.Test
+import org.junit.runner.RunWith
+
+/**
+ * The composition of the Debug application through the graph of its
+ * [HakusanApplication], with the real titles store of the process.
+ *
+ * The store is the installed application's `hakusan.db`, so every assertion
+ * holds whatever the database already holds.
+ */
+@RunWith(AndroidJUnit4::class)
+class ApplicationCompositionTest {
+  private val application: HakusanApplication =
+    ApplicationProvider.getApplicationContext()
+
+  private val debugSource = ScreenSourceId("app.hakusan.debug.source")
+
+  @Test
+  fun processKeepsOneGraph() {
+    assertSame(application.graph, application.graph)
+  }
+
+  @Test
+  fun catalogListsTheDebugSource() {
+    val catalog = application.graph.browseScreenService.catalog()
+
+    assertEquals(listOf(debugSource), catalog.sources.map { it.id })
+  }
+
+  @Test
+  fun browseReturnsTheFixtureTitle(): Unit = runBlocking {
+    val service = application.graph.browseScreenService
+
+    val result = service.loadBrowse(debugSource)
+
+    val source =
+      CatalogSourceItem(debugSource, DeterministicFixture.displayName)
+
+    val title = DeterministicFixture.title
+
+    val item =
+      BrowseTitleItem(
+        ScreenTitleKey(debugSource, title.key.key),
+        title.displayName,
+      )
+
+    val screen = BrowseScreen.of(source, listOf(item))
+
+    assertEquals(BrowseScreenResult.Success(screen), result)
+  }
+}

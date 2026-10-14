@@ -2,6 +2,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
   alias(libs.plugins.android.application)
+  alias(libs.plugins.metro)
 }
 
 layout.buildDirectory = layout.settingsDirectory.dir("build/work/app")
@@ -17,6 +18,7 @@ android {
     targetSdk = libs.versions.sdk.target.get().toInt()
     versionCode = 1
     versionName = "0.0.0"
+    testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }
 
   buildTypes {
@@ -55,6 +57,8 @@ kotlin {
   }
 }
 
+tasks.withType<Test>().configureEach { useJUnitPlatform() }
+
 dependencyLocking {
   lockAllConfigurations()
 }
@@ -65,4 +69,14 @@ dependencies {
   implementation(project(":extensions"))
   implementation(project(":reader"))
   implementation(project(":titles"))
+  implementation(libs.kotlinx.coroutines.core)
+
+  testImplementation(libs.junit.jupiter.api)
+  testImplementation(testFixtures(project(":titles")))
+  testRuntimeOnly(libs.junit.jupiter.engine)
+  testRuntimeOnly(libs.junit.platform.launcher)
+
+  androidTestImplementation(libs.androidx.test.core)
+  androidTestImplementation(libs.androidx.test.junit)
+  androidTestRuntimeOnly(libs.androidx.test.runner)
 }

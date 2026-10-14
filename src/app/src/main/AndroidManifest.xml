@@ -1,2 +1,17 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android" />
+<manifest
+  xmlns:android="http://schemas.android.com/apk/res/android"
+  xmlns:tools="http://schemas.android.com/tools">
+  <application
+    android:name=".HakusanApplication"
+    android:allowBackup="false"
+    android:dataExtractionRules="@xml/data_extraction_rules">
+    <!-- No other process opens the database, so Room's multi-instance
+         invalidation stays off. Room is not on the compile classpath of
+         this project, so lint cannot resolve the removed class. -->
+    <service
+      android:name="androidx.room3.MultiInstanceInvalidationService"
+      tools:ignore="MissingClass"
+      tools:node="remove" />
+  </application>
+</manifest>
