@@ -26,6 +26,13 @@ android {
     sourceCompatibility = JavaVersion.VERSION_25
     targetCompatibility = JavaVersion.VERSION_25
   }
+
+  sourceSets {
+    named("main") {
+      kotlin.directories +=
+        layout.settingsDirectory.dir("share/bindings/kotlin").asFile.path
+    }
+  }
 }
 
 kotlin {
@@ -57,12 +64,39 @@ abstract class FixtureManifestArgument : CommandLineArgumentProvider {
   }
 }
 
+/**
+ * Passes the Bindings cross-check table to the host tests as a runtime
+ * argument.
+ *
+ * The table is an input with a relative path sensitivity, so its absolute path
+ * never enters the cache key. The tests read the path from [PROPERTY].
+ */
+abstract class BindingsTableArgument : CommandLineArgumentProvider {
+  /** The cross-check table of the native ABI. */
+  @get:InputFile
+  @get:PathSensitive(PathSensitivity.RELATIVE)
+  abstract val table: RegularFileProperty
+
+  override fun asArguments(): Iterable<String> =
+    listOf("-D$PROPERTY=${table.get().asFile.absolutePath}")
+
+  private companion object {
+    const val PROPERTY = "app.hakusan.reader.bindingsTable"
+  }
+}
+
 tasks.withType<Test>().configureEach {
   useJUnitPlatform()
 
   jvmArgumentProviders.add(
     objects.newInstance<FixtureManifestArgument>().apply {
       manifest = layout.settingsDirectory.file("share/reader/manifest.json")
+    }
+  )
+
+  jvmArgumentProviders.add(
+    objects.newInstance<BindingsTableArgument>().apply {
+      table = layout.settingsDirectory.file("share/bindings/abi.tsv")
     }
   )
 }
@@ -79,6 +113,70 @@ dependencies {
   testRuntimeOnly(libs.junit.jupiter.engine)
   testRuntimeOnly(libs.junit.platform.launcher)
 }
+
+/**
+ * Fails when the Bindings checkout lacks a file of the native ABI.
+ *
+ * An uninitialized submodule leaves `share/bindings` empty, and the compiler
+ * would then compile nothing from it. The task reads the checkout when it runs,
+ * so a reused Configuration Cache entry never hides a missing file.
+ */
+abstract class CheckBindings : DefaultTask() {
+  /** The Bindings checkout. The failure names missing files relative to it. */
+  @get:Internal abstract val checkout: DirectoryProperty
+
+  /** The files of the native ABI. A missing file is a recorded input state. */
+  @get:InputFiles
+  @get:PathSensitive(PathSensitivity.RELATIVE)
+  abstract val required: ConfigurableFileCollection
+
+  /** A summary that the task writes only when every file exists. */
+  @get:OutputFile abstract val report: RegularFileProperty
+
+  @TaskAction
+  fun check() {
+    report.get().asFile.delete()
+
+    val root = checkout.get().asFile
+
+    val missing =
+      required.files
+        .filterNot { it.isFile }
+        .map { it.relativeTo(root).invariantSeparatorsPath }
+        .sorted()
+
+    if (missing.isNotEmpty()) {
+      throw GradleException(
+        "share/bindings lacks the native ABI files " +
+          "${missing.joinToString(", ")}. Check out its recorded commit " +
+          "with: git submodule update --init --checkout share/bindings"
+      )
+    }
+
+    report.get().asFile.writeText("Found ${required.files.size} ABI files.\n")
+  }
+}
+
+val checkBindings =
+  tasks.register<CheckBindings>("checkBindings") {
+    group = "verification"
+    description = "Fails when share/bindings lacks the native ABI files."
+    checkout = layout.settingsDirectory.dir("share/bindings")
+
+    required.from(
+      listOf(
+          ".editorconfig",
+          "abi.tsv",
+          "include/san.h",
+          "kotlin/app/hakusan/reader/san/SanAbi.kt",
+        )
+        .map { checkout.file(it) }
+    )
+
+    report = layout.buildDirectory.file("checkBindings/report.txt")
+  }
+
+tasks.named("preBuild") { dependsOn(checkBindings) }
 
 /**
  * Checks the reviewed fixture corpus and its pinned tool scripts against the

@@ -54,6 +54,7 @@ dependencies {
 
 val ktfmtSources =
   fileTree("src") { include("**/*.kt", "**/*.kts") } +
+    fileTree("share/bindings/kotlin") { include("**/*.kt") } +
     files("build.gradle.kts", "settings.gradle.kts")
 
 fun JavaExec.runKtfmt(vararg mode: String) {
@@ -66,6 +67,12 @@ fun JavaExec.runKtfmt(vararg mode: String) {
   jvmArgs("--sun-misc-unsafe-memory-access=allow")
   inputs.files(sources).withPathSensitivity(PathSensitivity.RELATIVE)
   inputs.file(".editorconfig").withPathSensitivity(PathSensitivity.RELATIVE)
+
+  inputs
+    .file("share/bindings/.editorconfig")
+    .withPathSensitivity(PathSensitivity.RELATIVE)
+
+  dependsOn(":reader:checkBindings")
 
   argumentProviders.add(
     CommandLineArgumentProvider {
