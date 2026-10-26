@@ -980,18 +980,33 @@ def verify_color(entry, data, root, temporary):
                     "Color transport oracle changed")
 
 
+def verify_pins(manifest):
+    """Require the pinned tool scripts to equal the regular .py files beside
+    this one whose names do not start with a dot, each with its digest."""
+    pins = manifest["provenance"]["source_sha256"]
+
+    directory = Path(__file__).resolve().parent
+
+    scripts = {path.name for path in directory.glob("*.py")
+               if path.is_file() and not path.name.startswith(".")}
+
+    for name in sorted(pins):
+        require(name in scripts, "Missing tool script: " + name)
+
+    for name in sorted(scripts):
+        require(name in pins, "Unpinned tool script: " + name)
+
+    for name in sorted(pins):
+        require(sha((directory / name).read_bytes()) == pins[name],
+                "Generator source changed: " + name)
+
+
 def verify_corpus(root, references):
     manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"),
                           object_pairs_hook=unique_object)
 
     require(manifest["schema_version"] == 1, "Unknown manifest schema")
-
-    for name, digest in manifest["provenance"]["source_sha256"].items():
-        require(name in ("generate.py", "verify.py", "color_reference.py"),
-                "Unexpected generator source")
-
-        require(sha(Path(__file__).with_name(name).read_bytes()) == digest,
-                "Generator source changed: " + name)
+    verify_pins(manifest)
 
     entries = manifest["artifacts"]
 

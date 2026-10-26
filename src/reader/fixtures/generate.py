@@ -18,6 +18,11 @@ ROOT = Path(__file__).resolve().parents[3]
 WORK = ROOT / "build/work/reader/fixtures"
 DEFAULT_OUTPUT = WORK / "corpus"
 
+# The manifest pins each tool script by name and digest. List every one, so
+# that only reviewed files are pinned. The verifier fails on any other Python
+# file in this directory whose name does not start with a dot.
+TOOL_SCRIPTS = ("color_reference.py", "generate.py", "verify.py")
+
 TOOLS = {
     "cjpeg": "/opt/homebrew/bin/cjpeg",
     "djpeg": "/opt/homebrew/bin/djpeg",
@@ -2182,14 +2187,14 @@ class Corpus:
                  category="unsupported-variant",
                  format="webp", expected="unsupported-variant")
 
-    def finish(self):
+    def finish(self, tool_scripts):
         sources = {}
 
-        for name in ("generate.py", "verify.py", "color_reference.py"):
+        for name in tool_scripts:
             path = Path(__file__).with_name(name)
 
-            if path.exists():
-                sources[name] = sha(path.read_bytes())
+            require(path.is_file(), "Missing tool script: " + name)
+            sources[name] = sha(path.read_bytes())
 
         manifest = {
             "schema_version": 1,
@@ -2263,7 +2268,7 @@ def main():
         base = corpus.metadata()
 
         corpus.faults(base)
-        corpus.finish()
+        corpus.finish(TOOL_SCRIPTS)
 
 
 if __name__ == "__main__":

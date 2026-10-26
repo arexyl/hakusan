@@ -20,7 +20,7 @@ To check the reviewed corpus itself, including the reference decodes and a byte-
 /usr/bin/python3 -I -B src/reader/fixtures/verify.py --root share/reader --references --regenerate
 ```
 
-The build never runs these tools. Instead, `./gradlew :reader:verifyFixtures` checks the size and SHA-256 of every artifact and the SHA-256 of every pinned tool script against `share/reader/manifest.json`, and fails on a missing, extra, or changed file. It needs no Python and runs in the host matrix.
+The build never runs these tools. Instead, `./gradlew :reader:verifyFixtures` checks the size and SHA-256 of every artifact and the SHA-256 of every pinned tool script against `share/reader/manifest.json`, and fails on a missing, extra, or changed file. It needs no Python and runs in the host matrix. List every tool script in `TOOL_SCRIPTS` in `generate.py`; the manifest pins exactly that list. `verify.py` fails when a pinned script is missing or changed, or when this directory holds another `.py` file whose name does not start with a dot. Keep every tool in this directory: neither check looks into subdirectories.
 
 Keep authoritative encoded specimens and their manifest in `share/reader/`. Keep temporary PPM/PAM rasters and codec output in `build/work/reader/fixtures/`. The generator deletes its temporary directory on completion or failure. It retains no uncompressed masters.
 

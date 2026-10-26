@@ -22928,8 +22928,8 @@
     },
     "source_sha256": {
       "color_reference.py": "9bc66e4c3849a708876c1a18c95b14be752ca662d39c03605bf054f27614bcc5",
-      "generate.py": "64c7b3ed23cc1cf4c9fd2160a61aebf6ec00bf8a8c1f725a8984f12d60ee7467",
-      "verify.py": "e8177b46154832f16abb642492d435aa20fd69249a33a8218152d3aa91a36f18"
+      "generate.py": "361405dc393eac0577e1b66138d003b0c9ff44c337c4dffd789eb7dd9963a995",
+      "verify.py": "7631111718f7bf154e75731af5a2c234ad26a6c9a4c4c0bd823be3572b6918c7"
     },
     "tools": {
       "cjpeg": "libjpeg-turbo version 3.2.0 (build 20260630)",
