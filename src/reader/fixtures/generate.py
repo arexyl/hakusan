@@ -1272,921 +1272,6 @@ class Corpus:
                                "nearest_rank_p99_max": 8,
                                "scope": "opaque RGB patch samples"}}
 
-    def timed(self):
-        for name, width, height, hold in (
-            ("ordinary", 1600, 2400, 1536),
-            ("large", 4096, 6144, 3840),
-            ("long", 1440, 40000, 1536),
-        ):
-            print("Generate " + name, flush=True)
-
-            master = Composite(width, height)
-
-            folder = "journey" if name != "large" else "qualification/timed"
-            relative = folder + "/" + name + ".png"
-            path = self.output / relative
-            ppm = self.work / "master.ppm"
-
-            rows = (master.row(y) for y in range(height))
-
-            if name != "long":
-                # The JPEG and WebP variants encode the same raster.
-                rows = tee(rows, ppm, width, height)
-
-            info = png(path, width, height, rows, metadata=[(b"sRGB", b"\0")],
-                       hold_rows=hold, encoder=PNG_TIMED)
-
-            size = path.stat().st_size
-
-            low, high = PNG_TIMED["bits_per_pixel_band"]
-
-            require(low * width * height <= size * 8 <= high * width * height,
-                    "Timed PNG density is outside its band: " + name)
-
-            info["bits_per_pixel"] = round(size * 8 / (width * height), 4)
-
-            common = {"category": "timed", "width": width, "height": height,
-                      "master": master.description(), "expected": "success"}
-
-            common["master"]["rgb_sha256"] = info["serialized_samples_sha256"]
-
-            self.add(relative, format="png", variant="rgb8-srgb",
-                     **common, **info)
-
-            if name == "long":
-                continue
-
-            sites = master.patch_sites(16)
-
-            for variant, tool, flags, suffix in (
-                ("jpeg-baseline-420", "cjpeg", JPEG + ["-baseline"], ".jpg"),
-                ("jpeg-progressive-420", "cjpeg", JPEG + ["-progressive"],
-                 "-progressive.jpg"),
-                ("webp-lossy", "cwebp", WEBP, ".webp"),
-                ("webp-lossless", "cwebp", WEBP + ["-lossless"],
-                 "-lossless.webp"),
-            ):
-                relative = folder + "/" + name + suffix
-
-                if name == "ordinary" and "-" in suffix:
-                    relative = "qualification/timed/" + name + suffix
-
-                destination = self.output / relative
-
-                destination.parent.mkdir(parents=True, exist_ok=True)
-
-                if tool == "cjpeg":
-                    run(tool, [*flags, "-outfile", destination, ppm])
-                else:
-                    run(tool, [*flags, ppm, "-o", destination])
-
-                kind = "jpeg" if tool == "cjpeg" else "webp"
-
-                reference = self.reference(destination, kind, width, height,
-                                           sites)
-
-                if variant == "webp-lossless":
-                    require(reference["rgb_sha256"]
-                            == common["master"]["rgb_sha256"],
-                            "Lossless WebP differs from the master")
-
-                    reference["comparison"] = {"max_channel_error": 0,
-                                               "scope": "all RGB pixels"}
-
-                self.add(relative, **common, format=kind, variant=variant,
-                         encoder={"tool": tool, "flags": flags},
-                         reference=reference)
-
-            ppm.unlink()
-
-    def png_variants(self):
-        for color, depths in LEGAL_DEPTHS.items():
-            for depth in depths:
-                for interlace in (False, True):
-                    layout = "adam7" if interlace else "plain"
-
-                    relative = ("qualification/png/type%d-depth%d-%s.png" %
-                                (color, depth, layout))
-
-                    palette = None
-                    transparency = None
-
-                    if color == 3:
-                        count = min(16, 1 << depth)
-
-                        palette = b"".join(bytes(COLORS[i % len(COLORS)])
-                                           for i in range(count))
-
-                        transparency = bytes(i * 255 // (count - 1)
-                                             for i in range(count))
-                    elif color in (0, 2):
-                        transparency = b"\0\0" * CHANNELS[color]
-
-                    info = png(
-                        self.output / relative, 67, 53,
-                        small_rows(67, 53, color, depth, interlace),
-                        color, depth, interlace, [(b"sRGB", b"\0")],
-                        palette, transparency, encoder=PNG_SPECIMEN,
-                    )
-
-                    oracle = subprocess.run([
-                        sys.executable, "-I", "-B",
-                        str(Path(__file__).with_name("verify.py")),
-                        "--png-reference", str(self.output / relative),
-                    ], capture_output=True, check=True, timeout=30)
-
-                    self.add(relative, category="png-correctness", format="png",
-                             width=67, height=53, color_type=color, depth=depth,
-                             interlace=interlace, expected="success",
-                             sample_reference=json.loads(oracle.stdout), **info)
-
-    def small_codecs(self):
-        pattern = Pattern(128, 96)
-
-        ppm = self.work / "small.ppm"
-
-        ppm.write_bytes(b"P6\n128 96\n255\n" + b"".join(
-            pattern.row(y) for y in range(96)))
-
-        for color, flags in (("gray", ["-grayscale"]),
-                             ("rgb", ["-rgb"]),
-                             ("ycbcr420", ["-sample", "2x2,1x1,1x1"]),
-                             ("ycbcr422", ["-sample", "2x1,1x1,1x1"]),
-                             ("ycbcr444", ["-sample", "1x1,1x1,1x1"])):
-            for progressive in (False, True):
-                coding = "progressive" if progressive else "baseline"
-                relative = "qualification/jpeg/%s-%s.jpg" % (color, coding)
-                destination = self.output / relative
-
-                destination.parent.mkdir(parents=True, exist_ok=True)
-
-                settings = ["-quality", "90", "-dct", "int", *flags,
-                            "-restart", "4B",
-                            "-progressive" if progressive else "-baseline"]
-
-                run("cjpeg", [*settings, "-outfile", destination, ppm])
-
-                self.add(relative, category="jpeg-correctness", format="jpeg",
-                         width=128, height=96, expected="success",
-                         encoder={"tool": "cjpeg", "flags": settings},
-                         reference=self.reference(destination, "jpeg", 128, 96))
-
-        small_png = self.work / "rgba.png"
-
-        for alpha in (False, True):
-            png(small_png, 67, 53, small_rows(67, 53, 6 if alpha else 2,
-                                            8, False),
-                color=6 if alpha else 2)
-
-            for lossless in (False, True):
-                relative = ("qualification/webp/%s-%s.webp" %
-                            ("alpha" if alpha else "opaque",
-                             "lossless" if lossless else "lossy"))
-
-                destination = self.output / relative
-
-                destination.parent.mkdir(parents=True, exist_ok=True)
-
-                settings = WEBP + (["-lossless"] if lossless else [])
-
-                run("cwebp", [*settings, small_png, "-o", destination])
-
-                reference = self.reference(destination, "webp", 67, 53)
-
-                if lossless:
-                    reference["comparison"] = {
-                        "max_channel_error": 0,
-                        "scope": "RGBA, ignoring RGB under zero alpha",
-                    }
-
-                    expected = bytearray()
-
-                    for y in range(53):
-                        for x in range(67):
-                            values = sample(x, y, 67, 53, 6 if alpha else 2, 8)
-
-                            expected.extend(values if alpha else (*values, 255))
-
-                    require(sha(expected) == reference["pixel_sha256"],
-                            "Lossless small WebP differs from master RGBA")
-
-                self.add(relative, category="webp-correctness", format="webp",
-                         width=67, height=53, expected="success",
-                         alpha=alpha, lossless=lossless,
-                         encoder={"tool": "cwebp", "flags": settings},
-                         reference=reference)
-
-    def metadata(self):
-        base_path = self.work / "metadata.png"
-
-        png(base_path, 67, 53, small_rows(67, 53, 2, 8, False))
-
-        base = base_path.read_bytes()
-
-        jpeg_path = self.output / "qualification/jpeg/ycbcr420-baseline.jpg"
-
-        jpeg = jpeg_path.read_bytes()
-
-        webp_path = self.output / "qualification/webp/opaque-lossless.webp"
-
-        for orientation in range(1, 9):
-            payload = exif(orientation)
-
-            self.add("qualification/orientation/png-%d.png" % orientation,
-                     png_insert(base, [(b"eXIf", payload)]),
-                     category="orientation", format="png", width=67, height=53,
-                     orientation=orientation, expected="success",
-                     oriented_geometry=([53, 67] if orientation >= 5
-                                        else [67, 53]))
-
-            self.add("qualification/orientation/jpeg-%d.jpg" % orientation,
-                     jpeg_insert(jpeg, 0xe1, b"Exif\0\0" + payload),
-                     category="orientation", format="jpeg",
-                     width=128, height=96, orientation=orientation,
-                     expected="success",
-                     oriented_geometry=([96, 128] if orientation >= 5
-                                        else [128, 96]))
-
-            metadata = self.work / "orientation.exif"
-
-            metadata.write_bytes(payload)
-
-            relative = "qualification/orientation/webp-%d.webp" % orientation
-            destination = self.output / relative
-
-            destination.parent.mkdir(parents=True, exist_ok=True)
-
-            run("webpmux", ["-set", "exif", metadata, webp_path,
-                            "-o", destination])
-
-            self.add(relative, category="orientation", format="webp",
-                     width=67, height=53, orientation=orientation,
-                     expected="success", exif_order="after-image-payload",
-                     oriented_geometry=([53, 67] if orientation >= 5
-                                        else [67, 53]))
-
-        for name, payload, expectation in (
-            ("invalid", exif(9), "success-no-transform"),
-            ("duplicate", exif(6, True), "success-no-transform"),
-            ("unsafe-ifd", b"II\x2a\0\xff\xff\xff\x7f", "invalid-data"),
-        ):
-            self.add("qualification/fault/png-exif-" + name + ".png",
-                     png_insert(base, [(b"eXIf", payload)]),
-                     category="metadata-fault", format="png",
-                     expected=expectation)
-
-            self.add("qualification/fault/jpeg-exif-" + name + ".jpg",
-                     jpeg_insert(jpeg, 0xe1, b"Exif\0\0" + payload),
-                     category="metadata-fault", format="jpeg",
-                     expected=expectation)
-
-            metadata = self.work / "invalid.exif"
-
-            metadata.write_bytes(payload)
-
-            relative = "qualification/fault/webp-exif-" + name + ".webp"
-
-            run("webpmux", ["-set", "exif", metadata, webp_path,
-                            "-o", self.output / relative])
-
-            self.add(relative, category="metadata-fault", format="webp",
-                     expected=expectation)
-
-        self.color_profiles(base, jpeg, webp_path)
-
-        return base
-
-    def profile_fixture(self, name, profile, gray=False, **metadata):
-        relative = "qualification/color/" + name + ".icc"
-
-        self.add(relative, profile, category="icc-profile", format="icc",
-                 gray=gray, expected="supported-color-profile", **metadata)
-
-        values = ([(i * 255 // 7,) for i in range(8)] if gray
-                  else COLOR_PATCHES)
-
-        function = metadata.get("function")
-
-        if function in (1, 2, 3, 4):
-            # Include the nearest 8-bit samples on either side of each join.
-            levels = ([0, 32, 56, 57, 64, 128, 192, 255]
-                      if function in (1, 2) else
-                      [0, 16, 32, 63, 64, 96, 192, 255])
-
-            values = ([(value,) for value in levels] if gray else
-                      [(value, levels[(i + 2) % 8], levels[(i + 5) % 8])
-                       for i, value in enumerate(levels)])
-
-        row = b"".join(bytes(value) * 20 for value in values)
-
-        path = self.work / "color.png"
-
-        png(path, 160, 64, (row for _ in range(64)), color=0 if gray else 2)
-
-        source = path.read_bytes()
-
-        profile_path = self.output / relative
-
-        reference = subprocess.run([
-            sys.executable, "-I", "-B",
-            str(Path(__file__).with_name("color_reference.py")),
-            str(profile_path), json.dumps(values),
-        ], capture_output=True, check=True, timeout=30)
-
-        expected = json.loads(reference.stdout)
-
-        numeric = ("\n".join(" ".join(map(str, value)) for value in values)
-                   + "\n").encode()
-
-        lcms = run("transicc", ["-n", "-c0", "-t1", "-s",
-                               "-i" + str(profile_path), "-o*sRGB"], numeric)
-
-        lines = [line for line in lcms.decode().splitlines() if line.strip()]
-
-        corroboration = [[float(value) for value in line.split()]
-                         for line in lines]
-
-        require(len(corroboration) == len(expected), "LCMS result count")
-
-        require(all(abs(actual - target) <= 2 for observed, target_values
-                    in zip(corroboration, expected)
-                    for actual, target in zip(observed, target_values)),
-                "Color oracle differs from LCMS")
-
-        self.add("qualification/color/" + name + ".png",
-                 png_insert(source, [(b"iCCP", b"controlled\0\0"
-                                      + zlib.compress(profile, 6))]),
-                 category="color", format="png", expected="color-convert",
-                 width=160, height=64, profile=relative,
-                 oracle_status="decimal50-and-lcms-cross-check",
-                 color_reference={
-                     "method": "decoded-profile-matrix-trc-decimal50",
-                     "intent": "media-relative-colorimetric",
-                     "black_point_compensation": False,
-                     "rgb_channel_tolerance": 2,
-                     "lcms_tool": "transicc",
-                     "lcms_flags": ["-n", "-c0", "-t1", "-s"],
-                     "lcms_rgb": corroboration,
-                     "patches": [{"x": i * 20 + 4, "y": 16,
-                                  "width": 12, "height": 32,
-                                  "input": list(value),
-                                  "expected_rgb": expected[i]}
-                                 for i, value in enumerate(values)],
-                 })
-
-    def color_profiles(self, base, jpeg, webp_path):
-        color_base = self.work / "color-base.png"
-
-        row = b"".join(bytes(value) * 20 for value in COLOR_PATCHES)
-
-        png(color_base, 160, 64, (row for _ in range(64)))
-
-        base = color_base.read_bytes()
-
-        for version, gray, function in (
-            [(2, False, None), (2, True, None),
-             (4, False, None), (4, True, None)]
-            + [(4, gray, function) for gray in (False, True)
-               for function in range(5)]
-        ):
-            name = "v%d-%s-%s" % (
-                version, "gray" if gray else "rgb",
-                "curve" if function is None else "param%d" % function)
-
-            profile = icc_profile(version, gray, function)
-
-            self.profile_fixture(name, profile, gray, profile_version=version,
-                                 function=function)
-
-        profile = icc_profile()
-
-        # Container-specific ICC transport is covered without a cross product.
-        jpeg_relative = "qualification/color/jpeg-icc.jpg"
-
-        (self.output / jpeg_relative).write_bytes(jpeg_insert(
-            jpeg, 0xe2, b"ICC_PROFILE\0\x01\x01" + profile))
-
-        self.add(jpeg_relative,
-                 category="color", format="jpeg", expected="color-convert",
-                 width=128, height=96,
-                 **self.transport_reference(jpeg_relative, "jpeg", 128, 96))
-
-        profile_path = self.work / "profile.icc"
-
-        profile_path.write_bytes(profile)
-
-        destination = self.output / "qualification/color/webp-icc.webp"
-
-        run("webpmux", ["-set", "icc", profile_path, webp_path,
-                        "-o", destination])
-
-        self.add("qualification/color/webp-icc.webp", category="color",
-                 format="webp", expected="color-convert", width=67, height=53,
-                 **self.transport_reference("qualification/color/webp-icc.webp",
-                                            "webp", 67, 53))
-
-        chromaticities = struct.pack(">8I", 31270, 32900, 64000, 33000,
-                                     30000, 60000, 15000, 6000)
-
-        cases = [
-            ("gamma-only", [(b"gAMA", struct.pack(">I", 45455))],
-             "color-convert"),
-            ("chrm-only", [(b"cHRM", chromaticities)], "color-convert"),
-            ("cicp-srgb", [(b"cICP", bytes((1, 13, 0, 1)))], "success"),
-            ("cicp-p3", [(b"cICP", bytes((12, 13, 0, 1)))],
-             "warned-srgb-fallback"),
-            ("cicp-pq", [(b"cICP", bytes((1, 16, 0, 1)))],
-             "unsupported-hdr"),
-            ("cicp-hlg", [(b"cICP", bytes((1, 18, 0, 1)))],
-             "unsupported-hdr"),
-            ("cicp-narrow", [(b"cICP", bytes((1, 13, 0, 0)))],
-             "unsupported-color-model"),
-            ("cicp-unknown", [(b"cICP", bytes((1, 2, 0, 1)))],
-             "unsupported-color-model"),
-            ("gamma-zero", [(b"gAMA", b"\0" * 4)], "warned-srgb-fallback"),
-            ("icc-malformed", [(b"iCCP", b"controlled\0\0"
-                                + zlib.compress(icc_profile(malformed=True)))],
-             "warned-srgb-fallback"),
-            ("cicp-precedes-gamma", [(b"cICP", bytes((1, 13, 0, 1))),
-                                      (b"gAMA", struct.pack(">I", 100000))],
-             "success"),
-            ("hdr-precedes-srgb", [(b"cICP", bytes((1, 16, 0, 1))),
-                                    (b"sRGB", b"\0")], "unsupported-hdr"),
-        ]
-
-        for primaries in (4, 5, 6, 7, 8, 9, 11, 22):
-            cases.append(("cicp-sdr-primary-%d" % primaries,
-                          [(b"cICP", bytes((primaries, 13, 0, 1)))],
-                          "warned-srgb-fallback"))
-
-        for transfer in (1, 4, 5, 6, 7, 14, 15):
-            cases.append(("cicp-sdr-transfer-%d" % transfer,
-                          [(b"cICP", bytes((1, transfer, 0, 1)))],
-                          "warned-srgb-fallback"))
-
-        cases += [
-            ("srgb-precedes-gamma", [(b"sRGB", b"\0"),
-                                     (b"gAMA", struct.pack(">I", 100000))],
-             "success"),
-            ("icc-precedes-gamma", [(b"iCCP", b"controlled\0\0"
-                                     + zlib.compress(profile, 6)),
-                                    (b"gAMA", struct.pack(">I", 100000))],
-             "color-convert"),
-            ("cicp-precedes-icc", [(b"cICP", bytes((1, 13, 0, 1))),
-                                    (b"iCCP", b"controlled\0\0"
-                                     + zlib.compress(profile, 6))], "success"),
-            ("mdcv-alone", [(b"mDCV", struct.pack(">8H2I", 32000, 16500,
-                                                  15000, 30000, 7500, 3000,
-                                                  15635, 16450,
-                                                  1000000, 1000))],
-             "success"),
-        ]
-
-        for name, additions, expectation in cases:
-            oracle = {"oracle_status": "declared-policy"}
-
-            if expectation in ("success", "warned-srgb-fallback"):
-                oracle = {"oracle_status": "srgb-patch-identity",
-                          "policy_patches": self.policy_patches(COLOR_PATCHES)}
-
-            if expectation == "color-convert":
-                description = {}
-                profile_path = self.work / "case-profile.icc"
-                is_profile = False
-
-                for kind, payload in additions:
-                    if kind == b"gAMA":
-                        description["gamma"] = struct.unpack(">I", payload)[0]
-
-                    if kind == b"cHRM":
-                        description["chromaticities"] = list(struct.unpack(
-                            ">8I", payload))
-
-                    if kind == b"iCCP":
-                        start = payload.index(b"\0") + 2
-
-                        profile_path.write_bytes(zlib.decompress(
-                            payload[start:]))
-
-                        is_profile = True
-
-                args = []
-
-                if not is_profile:
-                    profile_path = self.work / "description.json"
-
-                    profile_path.write_text(json.dumps(description))
-
-                    args = ["--png-description"]
-
-                reference = subprocess.run([
-                    sys.executable, "-I", "-B",
-                    str(Path(__file__).with_name("color_reference.py")),
-                    str(profile_path), json.dumps(COLOR_PATCHES), *args,
-                ], capture_output=True, check=True, timeout=30)
-
-                oracle = {"oracle_status": "decimal50-color-description",
-                          "policy_patches": self.policy_patches(
-                              json.loads(reference.stdout))}
-
-            self.add("qualification/color/" + name + ".png",
-                     png_insert(base, additions),
-                     category="color", format="png",
-                     width=160, height=64, expected=expectation, **oracle)
-
-        # A bounded LUT wins over matrix/TRC tags; it must not be ignored.
-        matrix = b"".join(fixed(1 if i % 4 == 0 else 0) for i in range(9))
-
-        lut = (b"mft1\0\0\0\0" + bytes((3, 3, 2, 0)) + matrix
-               + bytes(range(256)) * 3
-               + bytes(value for red in (0, 255) for green in (0, 255)
-                       for blue in (0, 255) for value in (red, green, blue))
-               + bytes(range(256)) * 3)
-
-        unsupported = {"lut-and-matrix": icc_tags(profile, [(b"A2B0", lut)])}
-
-        for name, position, replacement in (
-            ("lab-pcs", 20, b"Lab "), ("device-link", 12, b"link"),
-            ("output-class", 12, b"prtr"), ("abstract", 12, b"abst"),
-            ("named-color", 12, b"nmcl"), ("iccmax", 8, b"\x05\0\0\0"),
-        ):
-            unsupported[name] = (profile[:position] + replacement
-                                 + profile[position + 4:])
-
-        for name, body in unsupported.items():
-            self.add("qualification/color/unsupported-" + name + ".png",
-                     png_insert(base, [(b"iCCP", b"controlled\0\0"
-                                        + zlib.compress(body, 6))]),
-                     category="color", format="png",
-                     expected="warned-srgb-fallback",
-                     width=160, height=64,
-                     oracle_status="srgb-patch-identity",
-                     policy_patches=self.policy_patches(COLOR_PATCHES))
-
-        # Additional supported profile classes and sampled/identity curveType.
-        supported = {"input-class": profile[:12] + b"scnr" + profile[16:]}
-
-        wide_columns = {
-            b"rXYZ": (0.51512146, 0.24119568, -0.001052856),
-            b"gXYZ": (0.2919769, 0.69224548, 0.041885376),
-            b"bXYZ": (0.15710449, 0.0665741, 0.78407288),
-        }
-
-        wide_tags = []
-
-        for index in range(struct.unpack_from(">I", profile, 128)[0]):
-            tag, offset, length = struct.unpack_from(">4sII", profile,
-                                                      132 + 12 * index)
-
-            payload = profile[offset:offset + length]
-
-            if tag in wide_columns:
-                payload = b"XYZ \0\0\0\0" + b"".join(
-                    fixed(value) for value in wide_columns[tag])
-
-            wide_tags.append((tag, payload))
-
-        supported["wide-rgb-matrix"] = icc_tags(
-            profile[:128] + b"\0" * 4, wide_tags)
-
-        for name, curve in (
-            ("identity-curve", b"curv\0\0\0\0" + struct.pack(">I", 0)),
-            ("sampled-curve", b"curv\0\0\0\0" + struct.pack(">I5H", 5,
-                                                               0, 4096, 16384,
-                                                               36863, 65535)),
-        ):
-            original_count = struct.unpack_from(">I", profile, 128)[0]
-
-            retained = []
-
-            for index in range(original_count):
-                tag, offset, length = struct.unpack_from(">4sII", profile,
-                                                          132 + 12 * index)
-
-                payload = (curve if tag in (b"rTRC", b"gTRC", b"bTRC")
-                           else profile[offset:offset + length])
-
-                retained.append((tag, payload))
-
-            empty = profile[:128] + b"\0" * 4
-
-            supported[name] = icc_tags(empty, retained)
-
-        for name, body in supported.items():
-            self.profile_fixture(name, body)
-
-        self.metadata_limits(base, profile)
-
-    @staticmethod
-    def policy_patches(expected):
-        return [{"x": index * 20 + 4, "y": 16, "width": 12, "height": 32,
-                 "input": list(COLOR_PATCHES[index]),
-                 "expected_rgb": list(value), "max_channel_error": 2}
-                for index, value in enumerate(expected)]
-
-    def transport_reference(self, relative, kind, width, height):
-        path = self.output / relative
-
-        reference = self.reference(path, kind, width, height)
-
-        profile = "qualification/color/v4-rgb-curve.icc"
-        patches = []
-
-        for patch in reference["patches"]:
-            source = bytes.fromhex(patch["samples_hex"])
-
-            channels = reference["channels"]
-
-            samples = [list(source[i:i + 3])
-                       for i in range(0, len(source), channels)]
-
-            result = subprocess.run([
-                sys.executable, "-I", "-B",
-                str(Path(__file__).with_name("color_reference.py")),
-                str(self.output / profile), json.dumps(samples),
-            ], capture_output=True, check=True, timeout=60)
-
-            expected = json.loads(result.stdout)
-
-            patches.append({
-                "x": patch["x"], "y": patch["y"],
-                "width": patch["width"], "height": patch["height"],
-                "input_rgb_hex": bytes(v for rgb in samples for v in rgb).hex(),
-                "expected_rgb_hex": bytes(
-                    v for rgb in expected for v in rgb).hex(),
-            })
-
-        return {"oracle_status": "reference-decode-and-decimal50-color",
-                "reference": reference,
-                "color_patch_reference": {"profile": profile,
-                                          "max_channel_error": 2,
-                                          "patches": patches}}
-
-    def metadata_limits(self, base, profile):
-        for size in (1048575, 1048576, 1048577):
-            expanded = (struct.pack(">I", size) + profile[4:]
-                        + b"\0" * (size - len(profile)))
-
-            self.add("qualification/fault/icc-expanded-%d.png" % size,
-                     png_insert(base, [(b"iCCP", b"controlled\0\0"
-                                        + zlib.compress(expanded, 6))]),
-                     category="metadata-limit", format="png",
-                     expanded_icc_bytes=size,
-                     expected=("budget-exceeded" if size > 1048576
-                               else "color-convert"),
-                     oracle_status="admission-policy-only")
-
-            expanded = exif(1) + b"\0" * (size - len(exif(1)))
-
-            self.add("qualification/fault/exif-expanded-%d.png" % size,
-                     png_insert(base, [(b"eXIf", expanded)]),
-                     category="metadata-limit", format="png",
-                     expanded_exif_bytes=size,
-                     expected=("budget-exceeded" if size > 1048576
-                               else "success"))
-
-        initial = struct.unpack_from(">I", profile, 128)[0]
-
-        for count in (127, 128, 129):
-            expanded = icc_tags(profile, [
-                (("p%03d" % i).encode(), b"text\0\0\0\0padding\0")
-                for i in range(count - initial)])
-
-            self.add("qualification/fault/icc-tags-%d.png" % count,
-                     png_insert(base, [(b"iCCP", b"controlled\0\0"
-                                        + zlib.compress(expanded, 6))]),
-                     category="metadata-limit", format="png", icc_tags=count,
-                     expected=("budget-exceeded" if count > 128
-                               else "color-convert"),
-                     oracle_status="admission-policy-only")
-
-        for count in (1023, 1024, 1025):
-            entries = b"".join(struct.pack("<HHII", 0x2000 + i, 4, 1, 0)
-                               for i in range(count))
-
-            payload = (b"II\x2a\0\x08\0\0\0" + struct.pack("<H", count)
-                       + entries + b"\0" * 4)
-
-            self.add("qualification/fault/exif-entries-%d.png" % count,
-                     png_insert(base, [(b"eXIf", payload)]),
-                     category="metadata-limit", format="png",
-                     exif_entries=count,
-                     expected=("budget-exceeded" if count > 1024
-                               else "success-no-transform"))
-
-    def faults(self, base):
-        original = self.output / "journey/ordinary.png"
-
-        data = original.read_bytes()
-
-        entry = next(e for e in self.entries
-                     if e["path"] == "journey/ordinary.png")
-
-        hold = entry["hold"]["offset"]
-
-        cases = [("png-truncated-prefix.png", data[:hold], "truncated"),
-                 ("png-trailing.png", base + b"trailing", "invalid-data"),
-                 ("png-duplicate-ihdr.png", base[:33] + base[8:33] + base[33:],
-                  "invalid-data")]
-
-        damaged = bytearray(base)
-
-        damaged[-13] ^= 1  # The last IDAT CRC, not optional metadata.
-        cases.append(("png-payload-crc.png", bytes(damaged), "invalid-data"))
-
-        palette_source = "qualification/png/type3-depth4-plain.png"
-
-        palette = (self.output / palette_source).read_bytes()
-
-        offset = palette.index(b"PLTE")
-
-        damaged = bytearray(palette)
-
-        damaged[offset + 4] ^= 1
-        cases.append(("png-palette-crc.png", bytes(damaged), "invalid-data"))
-
-        alpha = palette.index(b"tRNS")
-
-        damaged = bytearray(palette)
-
-        damaged[alpha + 4] ^= 1
-        cases.append(("png-alpha-crc.png", bytes(damaged), "invalid-data"))
-
-        optional = bytearray(png_insert(
-            base, [(b"gAMA", struct.pack(">I", 45455))]))
-
-        optional[45] ^= 1
-
-        cases.append(("png-optional-color-crc.png", bytes(optional),
-                      "warned-srgb-fallback"))
-
-        # A valid enclosing IDAT may contain unused bytes after zlib EOF.
-        offset = 8
-        idats = []
-
-        while offset < len(base):
-            size = struct.unpack_from(">I", base, offset)[0]
-
-            if base[offset + 4:offset + 8] == b"IDAT":
-                idats.append((offset, size))
-
-            offset += size + 12
-
-        offset, size = idats[-1]
-        tail = b"unused-deflate-tail"
-        payload = base[offset + 8:offset + 8 + size] + tail
-
-        unused = (base[:offset] + chunk(b"IDAT", payload)
-                  + base[offset + size + 12:])
-
-        self.add("qualification/fault/png-unused-idat.png", unused,
-                 category="integrity-policy", format="png", expected="success",
-                 unused_idat_bytes=len(tail),
-                 note="Count unused final IDAT bytes without rejecting them")
-
-        offset, size = idats[0]
-
-        invalid_stream = bytearray(base[offset + 8:offset + 8 + size])
-
-        invalid_stream[0] ^= 0xff
-
-        invalid_png = (base[:offset] + chunk(b"IDAT", invalid_stream)
-                       + base[offset + size + 12:])
-
-        cases.append(("png-invalid-zlib.png", invalid_png, "invalid-data"))
-
-        # Intact chunks and zlib data, but one middle scanline declares
-        # filter type 5, which the PNG specification does not define.
-        scanlines = bytearray(zlib.decompress(b"".join(
-            base[start + 8:start + 8 + length] for start, length in idats)))
-
-        scanlines[26 * (1 + 67 * 3)] = 5
-
-        deflate = compressor(PNG_AUTHORED)
-
-        payload = deflate.compress(bytes(scanlines)) + deflate.flush()
-
-        self.add("qualification/fault/png-invalid-filter.png",
-                 base[:33] + chunk(b"IDAT", payload) + chunk(b"IEND", b""),
-                 category="payload-fault", format="png",
-                 expected="invalid-data", source="generated-small-png",
-                 invalid_filter={"scanline": 26, "filter_type": 5})
-
-        for name, body, expectation in cases:
-            if "prefix" in name:
-                source = "journey/ordinary.png"
-            elif name in ("png-palette-crc.png", "png-alpha-crc.png"):
-                source = palette_source
-            else:
-                source = "generated-small-png"
-
-            self.add("qualification/fault/" + name, body,
-                     category="payload-fault", expected=expectation,
-                     source=source)
-
-        for kind, relative in (("jpeg", "journey/ordinary.jpg"),
-                               ("webp", "journey/ordinary.webp")):
-            body = (self.output / relative).read_bytes()
-
-            for name, content, expected in (
-                ("truncated", body[:len(body) // 2], "truncated"),
-                ("trailing", body + b"trailing", "invalid-data"),
-            ):
-                self.add("qualification/fault/%s-%s.%s" %
-                         (kind, name, "jpg" if kind == "jpeg" else kind),
-                         content, category="payload-fault", format=kind,
-                         expected=expected, source=relative)
-
-        jpeg_path = self.output / "qualification/jpeg/ycbcr420-baseline.jpg"
-
-        jpeg = jpeg_path.read_bytes()
-
-        profile = icc_profile()
-
-        for name, markers in (
-            ("icc-duplicate", [b"ICC_PROFILE\0\x01\x01" + profile] * 2),
-            ("icc-inconsistent-count", [b"ICC_PROFILE\0\x01\x02" + profile]),
-            ("icc-zero-sequence", [b"ICC_PROFILE\0\x00\x01" + profile]),
-        ):
-            body = jpeg
-
-            for marker in markers:
-                body = jpeg_insert(body, 0xe2, marker)
-
-            self.add("qualification/fault/jpeg-" + name + ".jpg", body,
-                     category="metadata-fault", format="jpeg",
-                     expected="warned-srgb-fallback")
-
-        ppm = self.work / "small.ppm"
-
-        for name, flags in (("arithmetic", ["-arithmetic"]),
-                            ("12bit", ["-precision", "12"]),
-                            ("lossless", ["-lossless", "1"])):
-            relative = "qualification/fault/jpeg-" + name + ".jpg"
-            destination = self.output / relative
-
-            run("cjpeg", [*flags, "-outfile", destination, ppm])
-
-            self.add(relative, category="unsupported-variant", format="jpeg",
-                     expected="unsupported-variant",
-                     encoder={"tool": "cjpeg", "flags": flags})
-
-        for name, transform in (("cmyk", 0), ("ycck", 2)):
-            relative = "qualification/fault/jpeg-" + name + ".jpg"
-
-            self.add(relative, four_component_jpeg(transform),
-                     category="unsupported-variant", format="jpeg",
-                     width=1, height=1, expected="unsupported-color-model",
-                     encoder={"tool": "authored-single-mcu",
-                              "adobe_transform": transform})
-
-            # The reference must accept the coding before it is a model test.
-            run("djpeg", ["-pnm", "-outfile", self.work / "excluded.ppm",
-                          self.output / relative])
-
-        for width in (65534, 65535, 65536):
-            body = PNG_SIGNATURE + chunk(b"IHDR", struct.pack(
-                ">IIBBBBB", width, 1, 8, 2, 0, 0, 0))
-
-            self.add("qualification/fault/axis-%d.png" % width, body,
-                     category="admission-header", format="png", width=width,
-                     height=1, expected=("budget-exceeded" if width > 65535
-                                        else "header-admitted-not-complete"))
-
-        for width, height in ((7999, 8001), (8000, 8000), (5213, 12277)):
-            body = PNG_SIGNATURE + chunk(b"IHDR", struct.pack(
-                ">IIBBBBB", width, height, 8, 2, 0, 0, 0))
-
-            self.add("qualification/fault/pixels-%d.png" % (width * height),
-                     body, category="admission-header", format="png",
-                     width=width, height=height,
-                     expected=("budget-exceeded" if width * height > 64000000
-                               else "header-admitted-not-complete"))
-
-        # An actual APNG, with its default image as the first animation frame.
-        ihdr = base[8:33]
-
-        first = chunk(b"fcTL", struct.pack(">IIIIIHHBB", 0, 67, 53,
-                                           0, 0, 1, 10, 0, 0))
-
-        animated = (PNG_SIGNATURE + ihdr
-                    + chunk(b"acTL", struct.pack(">II", 1, 0))
-                    + first + base[33:])
-
-        self.add("qualification/fault/animated.png", animated,
-                 category="unsupported-variant", format="png",
-                 expected="unsupported-variant")
-
-        webp = self.output / "qualification/webp/opaque-lossless.webp"
-        destination = self.output / "qualification/fault/animated.webp"
-
-        run("webpmux", ["-frame", webp, "+100", "-frame", webp, "+100",
-                        "-loop", "0", "-o", destination])
-
-        self.add("qualification/fault/animated.webp",
-                 category="unsupported-variant",
-                 format="webp", expected="unsupported-variant")
-
     def finish(self, tool_scripts):
         sources = {}
 
@@ -2237,6 +1322,1026 @@ class Corpus:
             flush=True)
 
 
+def timed(corpus):
+    """Write the three timed pages as PNG, and the ordinary and large pages
+    also as baseline and progressive JPEG and as lossy and lossless WebP,
+    with reference decodes."""
+    for name, width, height, hold in (
+        ("ordinary", 1600, 2400, 1536),
+        ("large", 4096, 6144, 3840),
+        ("long", 1440, 40000, 1536),
+    ):
+        print("Generate " + name, flush=True)
+
+        master = Composite(width, height)
+
+        folder = "journey" if name != "large" else "qualification/timed"
+        relative = folder + "/" + name + ".png"
+        path = corpus.output / relative
+        ppm = corpus.work / "master.ppm"
+
+        rows = (master.row(y) for y in range(height))
+
+        if name != "long":
+            # The JPEG and WebP variants encode the same raster.
+            rows = tee(rows, ppm, width, height)
+
+        info = png(path, width, height, rows, metadata=[(b"sRGB", b"\0")],
+                   hold_rows=hold, encoder=PNG_TIMED)
+
+        size = path.stat().st_size
+
+        low, high = PNG_TIMED["bits_per_pixel_band"]
+
+        require(low * width * height <= size * 8 <= high * width * height,
+                "Timed PNG density is outside its band: " + name)
+
+        info["bits_per_pixel"] = round(size * 8 / (width * height), 4)
+
+        common = {"category": "timed", "width": width, "height": height,
+                  "master": master.description(), "expected": "success"}
+
+        common["master"]["rgb_sha256"] = info["serialized_samples_sha256"]
+
+        corpus.add(relative, format="png", variant="rgb8-srgb",
+                   **common, **info)
+
+        if name == "long":
+            continue
+
+        sites = master.patch_sites(16)
+
+        for variant, tool, flags, suffix in (
+            ("jpeg-baseline-420", "cjpeg", JPEG + ["-baseline"], ".jpg"),
+            ("jpeg-progressive-420", "cjpeg", JPEG + ["-progressive"],
+             "-progressive.jpg"),
+            ("webp-lossy", "cwebp", WEBP, ".webp"),
+            ("webp-lossless", "cwebp", WEBP + ["-lossless"],
+             "-lossless.webp"),
+        ):
+            relative = folder + "/" + name + suffix
+
+            if name == "ordinary" and "-" in suffix:
+                relative = "qualification/timed/" + name + suffix
+
+            destination = corpus.output / relative
+
+            destination.parent.mkdir(parents=True, exist_ok=True)
+
+            if tool == "cjpeg":
+                run(tool, [*flags, "-outfile", destination, ppm])
+            else:
+                run(tool, [*flags, ppm, "-o", destination])
+
+            kind = "jpeg" if tool == "cjpeg" else "webp"
+
+            reference = corpus.reference(destination, kind, width, height,
+                                         sites)
+
+            if variant == "webp-lossless":
+                require(reference["rgb_sha256"]
+                        == common["master"]["rgb_sha256"],
+                        "Lossless WebP differs from the master")
+
+                reference["comparison"] = {"max_channel_error": 0,
+                                           "scope": "all RGB pixels"}
+
+            corpus.add(relative, **common, format=kind, variant=variant,
+                       encoder={"tool": tool, "flags": flags},
+                       reference=reference)
+
+        ppm.unlink()
+
+
+def png_correctness(corpus):
+    """Write each legal PNG color type and bit depth, plain and Adam7, with
+    sample references from the verifier."""
+    for color, depths in LEGAL_DEPTHS.items():
+        for depth in depths:
+            for interlace in (False, True):
+                layout = "adam7" if interlace else "plain"
+
+                relative = ("qualification/png/type%d-depth%d-%s.png" %
+                            (color, depth, layout))
+
+                palette = None
+                transparency = None
+
+                if color == 3:
+                    count = min(16, 1 << depth)
+
+                    palette = b"".join(bytes(COLORS[i % len(COLORS)])
+                                       for i in range(count))
+
+                    transparency = bytes(i * 255 // (count - 1)
+                                         for i in range(count))
+                elif color in (0, 2):
+                    transparency = b"\0\0" * CHANNELS[color]
+
+                info = png(
+                    corpus.output / relative, 67, 53,
+                    small_rows(67, 53, color, depth, interlace),
+                    color, depth, interlace, [(b"sRGB", b"\0")],
+                    palette, transparency, encoder=PNG_SPECIMEN,
+                )
+
+                oracle = subprocess.run([
+                    sys.executable, "-I", "-B",
+                    str(Path(__file__).with_name("verify.py")),
+                    "--png-reference", str(corpus.output / relative),
+                ], capture_output=True, check=True, timeout=30)
+
+                corpus.add(relative, category="png-correctness", format="png",
+                           width=67, height=53, color_type=color, depth=depth,
+                           interlace=interlace, expected="success",
+                           sample_reference=json.loads(oracle.stdout), **info)
+
+
+def small_master(work):
+    """Write the 128 x 96 master of the small JPEG specimens, and return its
+    path."""
+    pattern = Pattern(128, 96)
+
+    ppm = work / "small.ppm"
+
+    ppm.write_bytes(b"P6\n128 96\n255\n" + b"".join(
+        pattern.row(y) for y in range(96)))
+
+    return ppm
+
+
+def jpeg_correctness(corpus, ppm):
+    """Encode the small master as baseline and progressive JPEG in gray, RGB,
+    and three YCbCr chroma samplings, with reference decodes."""
+    for color, flags in (("gray", ["-grayscale"]),
+                         ("rgb", ["-rgb"]),
+                         ("ycbcr420", ["-sample", "2x2,1x1,1x1"]),
+                         ("ycbcr422", ["-sample", "2x1,1x1,1x1"]),
+                         ("ycbcr444", ["-sample", "1x1,1x1,1x1"])):
+        for progressive in (False, True):
+            coding = "progressive" if progressive else "baseline"
+            relative = "qualification/jpeg/%s-%s.jpg" % (color, coding)
+            destination = corpus.output / relative
+
+            destination.parent.mkdir(parents=True, exist_ok=True)
+
+            settings = ["-quality", "90", "-dct", "int", *flags,
+                        "-restart", "4B",
+                        "-progressive" if progressive else "-baseline"]
+
+            run("cjpeg", [*settings, "-outfile", destination, ppm])
+
+            corpus.add(relative, category="jpeg-correctness", format="jpeg",
+                       width=128, height=96, expected="success",
+                       encoder={"tool": "cjpeg", "flags": settings},
+                       reference=corpus.reference(destination, "jpeg", 128, 96))
+
+
+def webp_correctness(corpus):
+    """Write opaque and alpha WebP, lossy and lossless, with reference
+    decodes."""
+    small_png = corpus.work / "rgba.png"
+
+    for alpha in (False, True):
+        png(small_png, 67, 53, small_rows(67, 53, 6 if alpha else 2,
+                                        8, False),
+            color=6 if alpha else 2)
+
+        for lossless in (False, True):
+            relative = ("qualification/webp/%s-%s.webp" %
+                        ("alpha" if alpha else "opaque",
+                         "lossless" if lossless else "lossy"))
+
+            destination = corpus.output / relative
+
+            destination.parent.mkdir(parents=True, exist_ok=True)
+
+            settings = WEBP + (["-lossless"] if lossless else [])
+
+            run("cwebp", [*settings, small_png, "-o", destination])
+
+            reference = corpus.reference(destination, "webp", 67, 53)
+
+            if lossless:
+                reference["comparison"] = {
+                    "max_channel_error": 0,
+                    "scope": "RGBA, ignoring RGB under zero alpha",
+                }
+
+                expected = bytearray()
+
+                for y in range(53):
+                    for x in range(67):
+                        values = sample(x, y, 67, 53, 6 if alpha else 2, 8)
+
+                        expected.extend(values if alpha else (*values, 255))
+
+                require(sha(expected) == reference["pixel_sha256"],
+                        "Lossless small WebP differs from master RGBA")
+
+            corpus.add(relative, category="webp-correctness", format="webp",
+                       width=67, height=53, expected="success",
+                       alpha=alpha, lossless=lossless,
+                       encoder={"tool": "cwebp", "flags": settings},
+                       reference=reference)
+
+
+def small_png(work):
+    """Write the 67 x 53 RGB PNG that the PNG orientation and fault specimens
+    extend, and return its bytes."""
+    base_path = work / "metadata.png"
+
+    png(base_path, 67, 53, small_rows(67, 53, 2, 8, False))
+
+    base = base_path.read_bytes()
+
+    return base
+
+
+def orientation(corpus, base):
+    """Write each EXIF orientation in PNG, JPEG, and WebP. Reads
+    qualification/jpeg/ycbcr420-baseline.jpg and
+    qualification/webp/opaque-lossless.webp, written by the JPEG and WebP
+    correctness families."""
+    jpeg_path = corpus.output / "qualification/jpeg/ycbcr420-baseline.jpg"
+
+    jpeg = jpeg_path.read_bytes()
+
+    webp_path = corpus.output / "qualification/webp/opaque-lossless.webp"
+
+    for orientation in range(1, 9):
+        payload = exif(orientation)
+
+        corpus.add("qualification/orientation/png-%d.png" % orientation,
+                   png_insert(base, [(b"eXIf", payload)]),
+                   category="orientation", format="png", width=67, height=53,
+                   orientation=orientation, expected="success",
+                   oriented_geometry=([53, 67] if orientation >= 5
+                                      else [67, 53]))
+
+        corpus.add("qualification/orientation/jpeg-%d.jpg" % orientation,
+                   jpeg_insert(jpeg, 0xe1, b"Exif\0\0" + payload),
+                   category="orientation", format="jpeg",
+                   width=128, height=96, orientation=orientation,
+                   expected="success",
+                   oriented_geometry=([96, 128] if orientation >= 5
+                                      else [128, 96]))
+
+        metadata = corpus.work / "orientation.exif"
+
+        metadata.write_bytes(payload)
+
+        relative = "qualification/orientation/webp-%d.webp" % orientation
+        destination = corpus.output / relative
+
+        destination.parent.mkdir(parents=True, exist_ok=True)
+
+        run("webpmux", ["-set", "exif", metadata, webp_path,
+                        "-o", destination])
+
+        corpus.add(relative, category="orientation", format="webp",
+                   width=67, height=53, orientation=orientation,
+                   expected="success", exif_order="after-image-payload",
+                   oriented_geometry=([53, 67] if orientation >= 5
+                                      else [67, 53]))
+
+
+def exif_faults(corpus, base):
+    """Write invalid, duplicate, and unsafe EXIF in PNG, JPEG, and WebP.
+    Reads qualification/jpeg/ycbcr420-baseline.jpg and
+    qualification/webp/opaque-lossless.webp, written by the JPEG and WebP
+    correctness families."""
+    jpeg_path = corpus.output / "qualification/jpeg/ycbcr420-baseline.jpg"
+
+    jpeg = jpeg_path.read_bytes()
+
+    webp_path = corpus.output / "qualification/webp/opaque-lossless.webp"
+
+    for name, payload, expectation in (
+        ("invalid", exif(9), "success-no-transform"),
+        ("duplicate", exif(6, True), "success-no-transform"),
+        ("unsafe-ifd", b"II\x2a\0\xff\xff\xff\x7f", "invalid-data"),
+    ):
+        corpus.add("qualification/fault/png-exif-" + name + ".png",
+                   png_insert(base, [(b"eXIf", payload)]),
+                   category="metadata-fault", format="png",
+                   expected=expectation)
+
+        corpus.add("qualification/fault/jpeg-exif-" + name + ".jpg",
+                   jpeg_insert(jpeg, 0xe1, b"Exif\0\0" + payload),
+                   category="metadata-fault", format="jpeg",
+                   expected=expectation)
+
+        metadata = corpus.work / "invalid.exif"
+
+        metadata.write_bytes(payload)
+
+        relative = "qualification/fault/webp-exif-" + name + ".webp"
+
+        run("webpmux", ["-set", "exif", metadata, webp_path,
+                        "-o", corpus.output / relative])
+
+        corpus.add(relative, category="metadata-fault", format="webp",
+                   expected=expectation)
+
+
+def profile_fixture(corpus, name, profile, gray=False, **metadata):
+    relative = "qualification/color/" + name + ".icc"
+
+    corpus.add(relative, profile, category="icc-profile", format="icc",
+               gray=gray, expected="supported-color-profile", **metadata)
+
+    values = ([(i * 255 // 7,) for i in range(8)] if gray
+              else COLOR_PATCHES)
+
+    function = metadata.get("function")
+
+    if function in (1, 2, 3, 4):
+        # Include the nearest 8-bit samples on either side of each join.
+        levels = ([0, 32, 56, 57, 64, 128, 192, 255]
+                  if function in (1, 2) else
+                  [0, 16, 32, 63, 64, 96, 192, 255])
+
+        values = ([(value,) for value in levels] if gray else
+                  [(value, levels[(i + 2) % 8], levels[(i + 5) % 8])
+                   for i, value in enumerate(levels)])
+
+    row = b"".join(bytes(value) * 20 for value in values)
+
+    path = corpus.work / "color.png"
+
+    png(path, 160, 64, (row for _ in range(64)), color=0 if gray else 2)
+
+    source = path.read_bytes()
+
+    profile_path = corpus.output / relative
+
+    reference = subprocess.run([
+        sys.executable, "-I", "-B",
+        str(Path(__file__).with_name("color_reference.py")),
+        str(profile_path), json.dumps(values),
+    ], capture_output=True, check=True, timeout=30)
+
+    expected = json.loads(reference.stdout)
+
+    numeric = ("\n".join(" ".join(map(str, value)) for value in values)
+               + "\n").encode()
+
+    lcms = run("transicc", ["-n", "-c0", "-t1", "-s",
+                           "-i" + str(profile_path), "-o*sRGB"], numeric)
+
+    lines = [line for line in lcms.decode().splitlines() if line.strip()]
+
+    corroboration = [[float(value) for value in line.split()]
+                     for line in lines]
+
+    require(len(corroboration) == len(expected), "LCMS result count")
+
+    require(all(abs(actual - target) <= 2 for observed, target_values
+                in zip(corroboration, expected)
+                for actual, target in zip(observed, target_values)),
+            "Color oracle differs from LCMS")
+
+    corpus.add("qualification/color/" + name + ".png",
+               png_insert(source, [(b"iCCP", b"controlled\0\0"
+                                    + zlib.compress(profile, 6))]),
+               category="color", format="png", expected="color-convert",
+               width=160, height=64, profile=relative,
+               oracle_status="decimal50-and-lcms-cross-check",
+               color_reference={
+                   "method": "decoded-profile-matrix-trc-decimal50",
+                   "intent": "media-relative-colorimetric",
+                   "black_point_compensation": False,
+                   "rgb_channel_tolerance": 2,
+                   "lcms_tool": "transicc",
+                   "lcms_flags": ["-n", "-c0", "-t1", "-s"],
+                   "lcms_rgb": corroboration,
+                   "patches": [{"x": i * 20 + 4, "y": 16,
+                                "width": 12, "height": 32,
+                                "input": list(value),
+                                "expected_rgb": expected[i]}
+                               for i, value in enumerate(values)],
+               })
+
+
+def color_base_png(work):
+    """Write the 160 x 64 RGB PNG of the color patches, which the PNG color
+    and metadata-limit specimens extend, and return its bytes."""
+    color_base = work / "color-base.png"
+
+    row = b"".join(bytes(value) * 20 for value in COLOR_PATCHES)
+
+    png(color_base, 160, 64, (row for _ in range(64)))
+
+    base = color_base.read_bytes()
+
+    return base
+
+
+def profile_variants(corpus):
+    for version, gray, function in (
+        [(2, False, None), (2, True, None),
+         (4, False, None), (4, True, None)]
+        + [(4, gray, function) for gray in (False, True)
+           for function in range(5)]
+    ):
+        name = "v%d-%s-%s" % (
+            version, "gray" if gray else "rgb",
+            "curve" if function is None else "param%d" % function)
+
+        profile = icc_profile(version, gray, function)
+
+        profile_fixture(corpus, name, profile, gray, profile_version=version,
+                        function=function)
+
+
+def icc_transport(corpus, profile):
+    # Container-specific ICC transport is covered without a cross product.
+    jpeg_path = corpus.output / "qualification/jpeg/ycbcr420-baseline.jpg"
+
+    jpeg = jpeg_path.read_bytes()
+
+    webp_path = corpus.output / "qualification/webp/opaque-lossless.webp"
+    jpeg_relative = "qualification/color/jpeg-icc.jpg"
+
+    (corpus.output / jpeg_relative).write_bytes(jpeg_insert(
+        jpeg, 0xe2, b"ICC_PROFILE\0\x01\x01" + profile))
+
+    corpus.add(jpeg_relative,
+               category="color", format="jpeg", expected="color-convert",
+               width=128, height=96,
+               **transport_reference(corpus, jpeg_relative, "jpeg", 128, 96))
+
+    profile_path = corpus.work / "profile.icc"
+
+    profile_path.write_bytes(profile)
+
+    destination = corpus.output / "qualification/color/webp-icc.webp"
+
+    run("webpmux", ["-set", "icc", profile_path, webp_path,
+                    "-o", destination])
+
+    corpus.add("qualification/color/webp-icc.webp", category="color",
+               format="webp", expected="color-convert", width=67, height=53,
+               **transport_reference(corpus,
+                                     "qualification/color/webp-icc.webp",
+                                     "webp", 67, 53))
+
+
+def chunk_policy(corpus, base, profile):
+    chromaticities = struct.pack(">8I", 31270, 32900, 64000, 33000,
+                                 30000, 60000, 15000, 6000)
+
+    cases = [
+        ("gamma-only", [(b"gAMA", struct.pack(">I", 45455))],
+         "color-convert"),
+        ("chrm-only", [(b"cHRM", chromaticities)], "color-convert"),
+        ("cicp-srgb", [(b"cICP", bytes((1, 13, 0, 1)))], "success"),
+        ("cicp-p3", [(b"cICP", bytes((12, 13, 0, 1)))],
+         "warned-srgb-fallback"),
+        ("cicp-pq", [(b"cICP", bytes((1, 16, 0, 1)))],
+         "unsupported-hdr"),
+        ("cicp-hlg", [(b"cICP", bytes((1, 18, 0, 1)))],
+         "unsupported-hdr"),
+        ("cicp-narrow", [(b"cICP", bytes((1, 13, 0, 0)))],
+         "unsupported-color-model"),
+        ("cicp-unknown", [(b"cICP", bytes((1, 2, 0, 1)))],
+         "unsupported-color-model"),
+        ("gamma-zero", [(b"gAMA", b"\0" * 4)], "warned-srgb-fallback"),
+        ("icc-malformed", [(b"iCCP", b"controlled\0\0"
+                            + zlib.compress(icc_profile(malformed=True)))],
+         "warned-srgb-fallback"),
+        ("cicp-precedes-gamma", [(b"cICP", bytes((1, 13, 0, 1))),
+                                  (b"gAMA", struct.pack(">I", 100000))],
+         "success"),
+        ("hdr-precedes-srgb", [(b"cICP", bytes((1, 16, 0, 1))),
+                                (b"sRGB", b"\0")], "unsupported-hdr"),
+    ]
+
+    for primaries in (4, 5, 6, 7, 8, 9, 11, 22):
+        cases.append(("cicp-sdr-primary-%d" % primaries,
+                      [(b"cICP", bytes((primaries, 13, 0, 1)))],
+                      "warned-srgb-fallback"))
+
+    for transfer in (1, 4, 5, 6, 7, 14, 15):
+        cases.append(("cicp-sdr-transfer-%d" % transfer,
+                      [(b"cICP", bytes((1, transfer, 0, 1)))],
+                      "warned-srgb-fallback"))
+
+    cases += [
+        ("srgb-precedes-gamma", [(b"sRGB", b"\0"),
+                                 (b"gAMA", struct.pack(">I", 100000))],
+         "success"),
+        ("icc-precedes-gamma", [(b"iCCP", b"controlled\0\0"
+                                 + zlib.compress(profile, 6)),
+                                (b"gAMA", struct.pack(">I", 100000))],
+         "color-convert"),
+        ("cicp-precedes-icc", [(b"cICP", bytes((1, 13, 0, 1))),
+                                (b"iCCP", b"controlled\0\0"
+                                 + zlib.compress(profile, 6))], "success"),
+        ("mdcv-alone", [(b"mDCV", struct.pack(">8H2I", 32000, 16500,
+                                              15000, 30000, 7500, 3000,
+                                              15635, 16450,
+                                              1000000, 1000))],
+         "success"),
+    ]
+
+    for name, additions, expectation in cases:
+        oracle = {"oracle_status": "declared-policy"}
+
+        if expectation in ("success", "warned-srgb-fallback"):
+            oracle = {"oracle_status": "srgb-patch-identity",
+                      "policy_patches": policy_patches(COLOR_PATCHES)}
+
+        if expectation == "color-convert":
+            description = {}
+            profile_path = corpus.work / "case-profile.icc"
+            is_profile = False
+
+            for kind, payload in additions:
+                if kind == b"gAMA":
+                    description["gamma"] = struct.unpack(">I", payload)[0]
+
+                if kind == b"cHRM":
+                    description["chromaticities"] = list(struct.unpack(
+                        ">8I", payload))
+
+                if kind == b"iCCP":
+                    start = payload.index(b"\0") + 2
+
+                    profile_path.write_bytes(zlib.decompress(
+                        payload[start:]))
+
+                    is_profile = True
+
+            args = []
+
+            if not is_profile:
+                profile_path = corpus.work / "description.json"
+
+                profile_path.write_text(json.dumps(description))
+
+                args = ["--png-description"]
+
+            reference = subprocess.run([
+                sys.executable, "-I", "-B",
+                str(Path(__file__).with_name("color_reference.py")),
+                str(profile_path), json.dumps(COLOR_PATCHES), *args,
+            ], capture_output=True, check=True, timeout=30)
+
+            oracle = {"oracle_status": "decimal50-color-description",
+                      "policy_patches": policy_patches(
+                          json.loads(reference.stdout))}
+
+        corpus.add("qualification/color/" + name + ".png",
+                   png_insert(base, additions),
+                   category="color", format="png",
+                   width=160, height=64, expected=expectation, **oracle)
+
+
+def unsupported_profiles(corpus, base, profile):
+    # A bounded LUT wins over matrix/TRC tags; it must not be ignored.
+    matrix = b"".join(fixed(1 if i % 4 == 0 else 0) for i in range(9))
+
+    lut = (b"mft1\0\0\0\0" + bytes((3, 3, 2, 0)) + matrix
+           + bytes(range(256)) * 3
+           + bytes(value for red in (0, 255) for green in (0, 255)
+                   for blue in (0, 255) for value in (red, green, blue))
+           + bytes(range(256)) * 3)
+
+    unsupported = {"lut-and-matrix": icc_tags(profile, [(b"A2B0", lut)])}
+
+    for name, position, replacement in (
+        ("lab-pcs", 20, b"Lab "), ("device-link", 12, b"link"),
+        ("output-class", 12, b"prtr"), ("abstract", 12, b"abst"),
+        ("named-color", 12, b"nmcl"), ("iccmax", 8, b"\x05\0\0\0"),
+    ):
+        unsupported[name] = (profile[:position] + replacement
+                             + profile[position + 4:])
+
+    for name, body in unsupported.items():
+        corpus.add("qualification/color/unsupported-" + name + ".png",
+                   png_insert(base, [(b"iCCP", b"controlled\0\0"
+                                      + zlib.compress(body, 6))]),
+                   category="color", format="png",
+                   expected="warned-srgb-fallback",
+                   width=160, height=64,
+                   oracle_status="srgb-patch-identity",
+                   policy_patches=policy_patches(COLOR_PATCHES))
+
+
+def supported_profiles(corpus, profile):
+    # Additional supported profile classes and sampled/identity curveType.
+    supported = {"input-class": profile[:12] + b"scnr" + profile[16:]}
+
+    wide_columns = {
+        b"rXYZ": (0.51512146, 0.24119568, -0.001052856),
+        b"gXYZ": (0.2919769, 0.69224548, 0.041885376),
+        b"bXYZ": (0.15710449, 0.0665741, 0.78407288),
+    }
+
+    wide_tags = []
+
+    for index in range(struct.unpack_from(">I", profile, 128)[0]):
+        tag, offset, length = struct.unpack_from(">4sII", profile,
+                                                  132 + 12 * index)
+
+        payload = profile[offset:offset + length]
+
+        if tag in wide_columns:
+            payload = b"XYZ \0\0\0\0" + b"".join(
+                fixed(value) for value in wide_columns[tag])
+
+        wide_tags.append((tag, payload))
+
+    supported["wide-rgb-matrix"] = icc_tags(
+        profile[:128] + b"\0" * 4, wide_tags)
+
+    for name, curve in (
+        ("identity-curve", b"curv\0\0\0\0" + struct.pack(">I", 0)),
+        ("sampled-curve", b"curv\0\0\0\0" + struct.pack(">I5H", 5,
+                                                           0, 4096, 16384,
+                                                           36863, 65535)),
+    ):
+        original_count = struct.unpack_from(">I", profile, 128)[0]
+
+        retained = []
+
+        for index in range(original_count):
+            tag, offset, length = struct.unpack_from(">4sII", profile,
+                                                      132 + 12 * index)
+
+            payload = (curve if tag in (b"rTRC", b"gTRC", b"bTRC")
+                       else profile[offset:offset + length])
+
+            retained.append((tag, payload))
+
+        empty = profile[:128] + b"\0" * 4
+
+        supported[name] = icc_tags(empty, retained)
+
+    for name, body in supported.items():
+        profile_fixture(corpus, name, body)
+
+
+def color(corpus, base):
+    """Write the color fixtures: the ICC profile specimens, each on its own
+    patch raster; the ICC transport specimens, built from the JPEG and WebP
+    correctness specimens; and the chunk-policy and unsupported-profile
+    specimens on the color base. Reads qualification/jpeg/ycbcr420-baseline.jpg
+    and qualification/webp/opaque-lossless.webp, written by the JPEG and WebP
+    correctness families."""
+    profile_variants(corpus)
+
+    profile = icc_profile()
+
+    icc_transport(corpus, profile)
+    chunk_policy(corpus, base, profile)
+    unsupported_profiles(corpus, base, profile)
+    supported_profiles(corpus, profile)
+
+
+def policy_patches(expected):
+    return [{"x": index * 20 + 4, "y": 16, "width": 12, "height": 32,
+             "input": list(COLOR_PATCHES[index]),
+             "expected_rgb": list(value), "max_channel_error": 2}
+            for index, value in enumerate(expected)]
+
+
+def transport_reference(corpus, relative, kind, width, height):
+    path = corpus.output / relative
+
+    reference = corpus.reference(path, kind, width, height)
+
+    profile = "qualification/color/v4-rgb-curve.icc"
+    patches = []
+
+    for patch in reference["patches"]:
+        source = bytes.fromhex(patch["samples_hex"])
+
+        channels = reference["channels"]
+
+        samples = [list(source[i:i + 3])
+                   for i in range(0, len(source), channels)]
+
+        result = subprocess.run([
+            sys.executable, "-I", "-B",
+            str(Path(__file__).with_name("color_reference.py")),
+            str(corpus.output / profile), json.dumps(samples),
+        ], capture_output=True, check=True, timeout=60)
+
+        expected = json.loads(result.stdout)
+
+        patches.append({
+            "x": patch["x"], "y": patch["y"],
+            "width": patch["width"], "height": patch["height"],
+            "input_rgb_hex": bytes(v for rgb in samples for v in rgb).hex(),
+            "expected_rgb_hex": bytes(
+                v for rgb in expected for v in rgb).hex(),
+        })
+
+    return {"oracle_status": "reference-decode-and-decimal50-color",
+            "reference": reference,
+            "color_patch_reference": {"profile": profile,
+                                      "max_channel_error": 2,
+                                      "patches": patches}}
+
+
+def metadata_limits(corpus, base):
+    """Write the ICC and EXIF size and count limits on the color base."""
+    profile = icc_profile()
+
+    for size in (1048575, 1048576, 1048577):
+        expanded = (struct.pack(">I", size) + profile[4:]
+                    + b"\0" * (size - len(profile)))
+
+        corpus.add("qualification/fault/icc-expanded-%d.png" % size,
+                   png_insert(base, [(b"iCCP", b"controlled\0\0"
+                                      + zlib.compress(expanded, 6))]),
+                   category="metadata-limit", format="png",
+                   expanded_icc_bytes=size,
+                   expected=("budget-exceeded" if size > 1048576
+                             else "color-convert"),
+                   oracle_status="admission-policy-only")
+
+        expanded = exif(1) + b"\0" * (size - len(exif(1)))
+
+        corpus.add("qualification/fault/exif-expanded-%d.png" % size,
+                   png_insert(base, [(b"eXIf", expanded)]),
+                   category="metadata-limit", format="png",
+                   expanded_exif_bytes=size,
+                   expected=("budget-exceeded" if size > 1048576
+                             else "success"))
+
+    initial = struct.unpack_from(">I", profile, 128)[0]
+
+    for count in (127, 128, 129):
+        expanded = icc_tags(profile, [
+            (("p%03d" % i).encode(), b"text\0\0\0\0padding\0")
+            for i in range(count - initial)])
+
+        corpus.add("qualification/fault/icc-tags-%d.png" % count,
+                   png_insert(base, [(b"iCCP", b"controlled\0\0"
+                                      + zlib.compress(expanded, 6))]),
+                   category="metadata-limit", format="png", icc_tags=count,
+                   expected=("budget-exceeded" if count > 128
+                             else "color-convert"),
+                   oracle_status="admission-policy-only")
+
+    for count in (1023, 1024, 1025):
+        entries = b"".join(struct.pack("<HHII", 0x2000 + i, 4, 1, 0)
+                           for i in range(count))
+
+        payload = (b"II\x2a\0\x08\0\0\0" + struct.pack("<H", count)
+                   + entries + b"\0" * 4)
+
+        corpus.add("qualification/fault/exif-entries-%d.png" % count,
+                   png_insert(base, [(b"eXIf", payload)]),
+                   category="metadata-limit", format="png",
+                   exif_entries=count,
+                   expected=("budget-exceeded" if count > 1024
+                             else "success-no-transform"))
+
+
+def payload_faults(corpus, base):
+    original = corpus.output / "journey/ordinary.png"
+
+    data = original.read_bytes()
+
+    entry = next(e for e in corpus.entries
+                 if e["path"] == "journey/ordinary.png")
+
+    hold = entry["hold"]["offset"]
+
+    cases = [("png-truncated-prefix.png", data[:hold], "truncated"),
+             ("png-trailing.png", base + b"trailing", "invalid-data"),
+             ("png-duplicate-ihdr.png", base[:33] + base[8:33] + base[33:],
+              "invalid-data")]
+
+    damaged = bytearray(base)
+
+    damaged[-13] ^= 1  # The last IDAT CRC, not optional metadata.
+    cases.append(("png-payload-crc.png", bytes(damaged), "invalid-data"))
+
+    palette_source = "qualification/png/type3-depth4-plain.png"
+
+    palette = (corpus.output / palette_source).read_bytes()
+
+    offset = palette.index(b"PLTE")
+
+    damaged = bytearray(palette)
+
+    damaged[offset + 4] ^= 1
+    cases.append(("png-palette-crc.png", bytes(damaged), "invalid-data"))
+
+    alpha = palette.index(b"tRNS")
+
+    damaged = bytearray(palette)
+
+    damaged[alpha + 4] ^= 1
+    cases.append(("png-alpha-crc.png", bytes(damaged), "invalid-data"))
+
+    optional = bytearray(png_insert(
+        base, [(b"gAMA", struct.pack(">I", 45455))]))
+
+    optional[45] ^= 1
+
+    cases.append(("png-optional-color-crc.png", bytes(optional),
+                  "warned-srgb-fallback"))
+
+    # A valid enclosing IDAT may contain unused bytes after zlib EOF.
+    offset = 8
+    idats = []
+
+    while offset < len(base):
+        size = struct.unpack_from(">I", base, offset)[0]
+
+        if base[offset + 4:offset + 8] == b"IDAT":
+            idats.append((offset, size))
+
+        offset += size + 12
+
+    offset, size = idats[-1]
+    tail = b"unused-deflate-tail"
+    payload = base[offset + 8:offset + 8 + size] + tail
+
+    unused = (base[:offset] + chunk(b"IDAT", payload)
+              + base[offset + size + 12:])
+
+    corpus.add("qualification/fault/png-unused-idat.png", unused,
+               category="integrity-policy", format="png", expected="success",
+               unused_idat_bytes=len(tail),
+               note="Count unused final IDAT bytes without rejecting them")
+
+    offset, size = idats[0]
+
+    invalid_stream = bytearray(base[offset + 8:offset + 8 + size])
+
+    invalid_stream[0] ^= 0xff
+
+    invalid_png = (base[:offset] + chunk(b"IDAT", invalid_stream)
+                   + base[offset + size + 12:])
+
+    cases.append(("png-invalid-zlib.png", invalid_png, "invalid-data"))
+
+    # Intact chunks and zlib data, but one middle scanline declares
+    # filter type 5, which the PNG specification does not define.
+    scanlines = bytearray(zlib.decompress(b"".join(
+        base[start + 8:start + 8 + length] for start, length in idats)))
+
+    scanlines[26 * (1 + 67 * 3)] = 5
+
+    deflate = compressor(PNG_AUTHORED)
+
+    payload = deflate.compress(bytes(scanlines)) + deflate.flush()
+
+    corpus.add("qualification/fault/png-invalid-filter.png",
+               base[:33] + chunk(b"IDAT", payload) + chunk(b"IEND", b""),
+               category="payload-fault", format="png",
+               expected="invalid-data", source="generated-small-png",
+               invalid_filter={"scanline": 26, "filter_type": 5})
+
+    for name, body, expectation in cases:
+        if "prefix" in name:
+            source = "journey/ordinary.png"
+        elif name in ("png-palette-crc.png", "png-alpha-crc.png"):
+            source = palette_source
+        else:
+            source = "generated-small-png"
+
+        corpus.add("qualification/fault/" + name, body,
+                   category="payload-fault", expected=expectation,
+                   source=source)
+
+
+def container_faults(corpus):
+    for kind, relative in (("jpeg", "journey/ordinary.jpg"),
+                           ("webp", "journey/ordinary.webp")):
+        body = (corpus.output / relative).read_bytes()
+
+        for name, content, expected in (
+            ("truncated", body[:len(body) // 2], "truncated"),
+            ("trailing", body + b"trailing", "invalid-data"),
+        ):
+            corpus.add("qualification/fault/%s-%s.%s" %
+                       (kind, name, "jpg" if kind == "jpeg" else kind),
+                       content, category="payload-fault", format=kind,
+                       expected=expected, source=relative)
+
+
+def jpeg_icc_faults(corpus):
+    jpeg_path = corpus.output / "qualification/jpeg/ycbcr420-baseline.jpg"
+
+    jpeg = jpeg_path.read_bytes()
+
+    profile = icc_profile()
+
+    for name, markers in (
+        ("icc-duplicate", [b"ICC_PROFILE\0\x01\x01" + profile] * 2),
+        ("icc-inconsistent-count", [b"ICC_PROFILE\0\x01\x02" + profile]),
+        ("icc-zero-sequence", [b"ICC_PROFILE\0\x00\x01" + profile]),
+    ):
+        body = jpeg
+
+        for marker in markers:
+            body = jpeg_insert(body, 0xe2, marker)
+
+        corpus.add("qualification/fault/jpeg-" + name + ".jpg", body,
+                   category="metadata-fault", format="jpeg",
+                   expected="warned-srgb-fallback")
+
+
+def unsupported_variants(corpus, ppm):
+    for name, flags in (("arithmetic", ["-arithmetic"]),
+                        ("12bit", ["-precision", "12"]),
+                        ("lossless", ["-lossless", "1"])):
+        relative = "qualification/fault/jpeg-" + name + ".jpg"
+        destination = corpus.output / relative
+
+        run("cjpeg", [*flags, "-outfile", destination, ppm])
+
+        corpus.add(relative, category="unsupported-variant", format="jpeg",
+                   expected="unsupported-variant",
+                   encoder={"tool": "cjpeg", "flags": flags})
+
+    for name, transform in (("cmyk", 0), ("ycck", 2)):
+        relative = "qualification/fault/jpeg-" + name + ".jpg"
+
+        corpus.add(relative, four_component_jpeg(transform),
+                   category="unsupported-variant", format="jpeg",
+                   width=1, height=1, expected="unsupported-color-model",
+                   encoder={"tool": "authored-single-mcu",
+                            "adobe_transform": transform})
+
+        # The reference must accept the coding before it is a model test.
+        run("djpeg", ["-pnm", "-outfile", corpus.work / "excluded.ppm",
+                      corpus.output / relative])
+
+
+def admission_headers(corpus):
+    for width in (65534, 65535, 65536):
+        body = PNG_SIGNATURE + chunk(b"IHDR", struct.pack(
+            ">IIBBBBB", width, 1, 8, 2, 0, 0, 0))
+
+        corpus.add("qualification/fault/axis-%d.png" % width, body,
+                   category="admission-header", format="png", width=width,
+                   height=1, expected=("budget-exceeded" if width > 65535
+                                      else "header-admitted-not-complete"))
+
+    for width, height in ((7999, 8001), (8000, 8000), (5213, 12277)):
+        body = PNG_SIGNATURE + chunk(b"IHDR", struct.pack(
+            ">IIBBBBB", width, height, 8, 2, 0, 0, 0))
+
+        corpus.add("qualification/fault/pixels-%d.png" % (width * height),
+                   body, category="admission-header", format="png",
+                   width=width, height=height,
+                   expected=("budget-exceeded" if width * height > 64000000
+                             else "header-admitted-not-complete"))
+
+
+def animation(corpus, base):
+    # An actual APNG, with its default image as the first animation frame.
+    ihdr = base[8:33]
+
+    first = chunk(b"fcTL", struct.pack(">IIIIIHHBB", 0, 67, 53,
+                                       0, 0, 1, 10, 0, 0))
+
+    animated = (PNG_SIGNATURE + ihdr
+                + chunk(b"acTL", struct.pack(">II", 1, 0))
+                + first + base[33:])
+
+    corpus.add("qualification/fault/animated.png", animated,
+               category="unsupported-variant", format="png",
+               expected="unsupported-variant")
+
+    webp = corpus.output / "qualification/webp/opaque-lossless.webp"
+    destination = corpus.output / "qualification/fault/animated.webp"
+
+    run("webpmux", ["-frame", webp, "+100", "-frame", webp, "+100",
+                    "-loop", "0", "-o", destination])
+
+    corpus.add("qualification/fault/animated.webp",
+               category="unsupported-variant",
+               format="webp", expected="unsupported-variant")
+
+
+def faults(corpus, base, ppm):
+    """Write the PNG, JPEG, and WebP payload faults, the JPEG ICC faults, the
+    unsupported variants, the admission headers, and the animations. Reads
+    journey/ordinary.png with its hold offset, journey/ordinary.jpg, and
+    journey/ordinary.webp, written by the timed family;
+    qualification/png/type3-depth4-plain.png, written by the PNG correctness
+    family; and qualification/jpeg/ycbcr420-baseline.jpg and
+    qualification/webp/opaque-lossless.webp, written by the JPEG and WebP
+    correctness families."""
+    payload_faults(corpus, base)
+    container_faults(corpus)
+    jpeg_icc_faults(corpus)
+    unsupported_variants(corpus, ppm)
+    admission_headers(corpus)
+    animation(corpus, base)
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
 
@@ -2261,13 +2366,24 @@ def main():
     with tempfile.TemporaryDirectory(prefix="generate-", dir=WORK) as temporary:
         corpus = Corpus(output, Path(temporary), versions)
 
-        corpus.timed()
-        corpus.png_variants()
-        corpus.small_codecs()
+        timed(corpus)
+        png_correctness(corpus)
 
-        base = corpus.metadata()
+        small = small_master(corpus.work)
 
-        corpus.faults(base)
+        jpeg_correctness(corpus, small)
+        webp_correctness(corpus)
+
+        base = small_png(corpus.work)
+
+        orientation(corpus, base)
+        exif_faults(corpus, base)
+
+        color_base = color_base_png(corpus.work)
+
+        color(corpus, color_base)
+        metadata_limits(corpus, color_base)
+        faults(corpus, base, small)
         corpus.finish(TOOL_SCRIPTS)
 
 

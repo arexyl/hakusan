@@ -22928,7 +22928,7 @@
     },
     "source_sha256": {
       "color_reference.py": "9bc66e4c3849a708876c1a18c95b14be752ca662d39c03605bf054f27614bcc5",
-      "generate.py": "361405dc393eac0577e1b66138d003b0c9ff44c337c4dffd789eb7dd9963a995",
+      "generate.py": "9fa7aecd38e3a48033e8db9210dd974d6e5f76bdb1d082b6416c5b6846a42c5e",
       "verify.py": "7631111718f7bf154e75731af5a2c234ad26a6c9a4c4c0bd823be3572b6918c7"
     },
     "tools": {
