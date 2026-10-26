@@ -22939,7 +22939,7 @@
       "generate_rasters.py": "c0d6fda63c9dd8476c94e1925b5aac01accdc7ce426c3a379cd970e5a33ef91a",
       "generate_specimens.py": "3f7fbd05b62a84c73ed6491c2f47dce2ad6eff2d2697f74cf3056d6a852b9488",
       "generate_timed.py": "23512b84f4dd130dfb49bf6272200fca92ed025a81c932f23edd6e27d21f47f2",
-      "verify.py": "7631111718f7bf154e75731af5a2c234ad26a6c9a4c4c0bd823be3572b6918c7"
+      "verify.py": "891a96a6219c7471553d2b375bdd0a0265cdb3c08e14efd75b037d5e48d6b90c"
     },
     "tools": {
       "cjpeg": "libjpeg-turbo version 3.2.0 (build 20260630)",

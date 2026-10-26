@@ -296,6 +296,55 @@ def adaptive_choice(row, prior, unit):
     return scores.index(min(scores))
 
 
+def verify_hold(entry, data, chunks, width, height):
+    """Check a PNG's hold when the entry has one: a prefix that ends after a
+    complete IDAT chunk and delays only completion, and a withheld payload
+    that encodes the declared remaining rows."""
+    hold = entry.get("hold")
+
+    if hold:
+        offset = hold["offset"]
+
+        require(sha(data[:offset]) == hold["prefix_sha256"], "Prefix changed")
+
+        require(any(kind == b"IDAT" and end == offset
+                    for kind, _, end in chunks),
+                "Hold is not after complete IDAT")
+
+        stream = zlib.decompressobj()
+
+        size = 0
+
+        for kind, payload, end in chunks:
+            if end <= offset and kind == b"IDAT":
+                size += len(stream.decompress(payload))
+
+        require(not stream.eof, "Hold delays only completion")
+
+        require(size == hold["source_rows"] * (1 + width * 3),
+                "Hold does not contain exactly the declared RGB8 rows")
+
+        require(hold["source_rows"] * 1080 / width >= 960,
+                "Prefix cannot cover useful output")
+
+        later_bytes = sum(len(payload) for kind, payload, end in chunks
+                          if kind == b"IDAT" and end > offset)
+
+        require(later_bytes > 6 and hold["source_rows"] < height,
+                "No required image payload withheld")
+
+        remaining = 0
+
+        for kind, payload, end in chunks:
+            if end > offset and kind == b"IDAT":
+                remaining += len(stream.decompress(payload))
+
+        require(stream.eof, "Released payload does not complete zlib")
+
+        require(remaining == (height - hold["source_rows"]) * (1 + width * 3),
+                "Withheld payload does not encode declared remaining rows")
+
+
 def verify_png(entry, data, rule):
     """Check a decodable PNG's structure, row extents, and filter rule, and
     its recorded scanline and sample hashes when the entry has them."""
@@ -366,49 +415,7 @@ def verify_png(entry, data, rule):
         require(counts == entry["scanline_filter_counts"],
                 "PNG filter type counts changed")
 
-    hold = entry.get("hold")
-
-    if hold:
-        offset = hold["offset"]
-
-        require(sha(data[:offset]) == hold["prefix_sha256"], "Prefix changed")
-
-        require(any(kind == b"IDAT" and end == offset
-                    for kind, _, end in chunks),
-                "Hold is not after complete IDAT")
-
-        stream = zlib.decompressobj()
-
-        size = 0
-
-        for kind, payload, end in chunks:
-            if end <= offset and kind == b"IDAT":
-                size += len(stream.decompress(payload))
-
-        require(not stream.eof, "Hold delays only completion")
-
-        require(size == hold["source_rows"] * (1 + width * 3),
-                "Hold does not contain exactly the declared RGB8 rows")
-
-        require(hold["source_rows"] * 1080 / width >= 960,
-                "Prefix cannot cover useful output")
-
-        later_bytes = sum(len(payload) for kind, payload, end in chunks
-                          if kind == b"IDAT" and end > offset)
-
-        require(later_bytes > 6 and hold["source_rows"] < height,
-                "No required image payload withheld")
-
-        remaining = 0
-
-        for kind, payload, end in chunks:
-            if end > offset and kind == b"IDAT":
-                remaining += len(stream.decompress(payload))
-
-        require(stream.eof, "Released payload does not complete zlib")
-
-        require(remaining == (height - hold["source_rows"]) * (1 + width * 3),
-                "Withheld payload does not encode declared remaining rows")
+    verify_hold(entry, data, chunks, width, height)
 
 
 def verify_icc(data):
@@ -1001,15 +1008,10 @@ def verify_pins(manifest):
                 "Generator source changed: " + name)
 
 
-def verify_corpus(root, references):
-    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"),
-                          object_pairs_hook=unique_object)
-
-    require(manifest["schema_version"] == 1, "Unknown manifest schema")
-    verify_pins(manifest)
-
-    entries = manifest["artifacts"]
-
+def verify_inventory(root, manifest, entries):
+    """Check the artifact list against the files under root and the
+    composition of the corpus, and return the PNG filter rule of each
+    encoder group."""
     paths = {entry["path"] for entry in entries}
 
     require(len(paths) == len(entries), "Duplicate fixture paths")
@@ -1087,71 +1089,91 @@ def verify_corpus(root, references):
                         "journey/ordinary.webp", "journey/long.png"},
             "Unexpected Debug journey assets")
 
+    return rules
+
+
+def verify_entry(entry, root, rules, references, temp):
+    """Check one artifact's path, size, and digest, then each check that its
+    entry selects."""
+    relative = Path(entry["path"])
+
+    require(not relative.is_absolute() and ".." not in relative.parts,
+            "Unsafe fixture path")
+
+    path = root / relative
+
+    require(not path.is_symlink(), "Fixture symlink is not permitted")
+
+    data = path.read_bytes()
+
+    require(len(data) == entry["bytes"]
+            and sha(data) == entry["sha256"],
+            "Artifact changed: " + str(relative))
+
+    if entry["category"] == "timed" and entry["format"] == "png":
+        pixels = entry["width"] * entry["height"]
+        low, high = TIMED_PNG_BAND
+
+        require(low * pixels <= len(data) * 8 <= high * pixels,
+                "Timed PNG density is outside %d to %d bits per "
+                "pixel: %s" % (low, high, relative))
+
+        require(entry["bits_per_pixel"]
+                == round(len(data) * 8 / pixels, 4),
+                "Timed PNG density record changed")
+
+    # Payload faults and header-only admission specimens are not
+    # decodable images; every other PNG belongs to an encoder group.
+    if entry.get("format") == "png" and entry["category"] not in (
+        "payload-fault", "admission-header",
+    ):
+        group = (entry["category"] if entry["category"] in rules
+                 else "small-authored")
+
+        verify_png(entry, data, rules[group])
+
+    if "invalid_filter" in entry:
+        verify_invalid_filter(entry, data)
+
+    if entry.get("format") == "icc":
+        verify_icc(data)
+
+    if "sample_reference" in entry:
+        require(png_reference(data) == entry["sample_reference"],
+                "PNG sample oracle changed")
+
+    verify_color(entry, data, root, Path(temp))
+
+    if entry.get("format") == "webp" and entry["expected"] not in (
+        "truncated", "invalid-data",
+    ):
+        verify_webp(entry, data)
+
+    if entry.get("format") == "jpeg" and entry["expected"] not in (
+        "truncated", "invalid-data",
+    ):
+        verify_jpeg(entry, data)
+
+    if references and "reference" in entry:
+        verify_reference(entry, path, Path(temp))
+
+
+def verify_corpus(root, references):
+    manifest = json.loads((root / "manifest.json").read_text(encoding="utf-8"),
+                          object_pairs_hook=unique_object)
+
+    require(manifest["schema_version"] == 1, "Unknown manifest schema")
+    verify_pins(manifest)
+
+    entries = manifest["artifacts"]
+
+    rules = verify_inventory(root, manifest, entries)
+
     WORK.mkdir(parents=True, exist_ok=True)
 
     with tempfile.TemporaryDirectory(prefix="verify-", dir=WORK) as temp:
         for entry in entries:
-            relative = Path(entry["path"])
-
-            require(not relative.is_absolute() and ".." not in relative.parts,
-                    "Unsafe fixture path")
-
-            path = root / relative
-
-            require(not path.is_symlink(), "Fixture symlink is not permitted")
-
-            data = path.read_bytes()
-
-            require(len(data) == entry["bytes"]
-                    and sha(data) == entry["sha256"],
-                    "Artifact changed: " + str(relative))
-
-            if entry["category"] == "timed" and entry["format"] == "png":
-                pixels = entry["width"] * entry["height"]
-                low, high = TIMED_PNG_BAND
-
-                require(low * pixels <= len(data) * 8 <= high * pixels,
-                        "Timed PNG density is outside %d to %d bits per "
-                        "pixel: %s" % (low, high, relative))
-
-                require(entry["bits_per_pixel"]
-                        == round(len(data) * 8 / pixels, 4),
-                        "Timed PNG density record changed")
-
-            # Payload faults and header-only admission specimens are not
-            # decodable images; every other PNG belongs to an encoder group.
-            if entry.get("format") == "png" and entry["category"] not in (
-                "payload-fault", "admission-header",
-            ):
-                group = (entry["category"] if entry["category"] in rules
-                         else "small-authored")
-
-                verify_png(entry, data, rules[group])
-
-            if "invalid_filter" in entry:
-                verify_invalid_filter(entry, data)
-
-            if entry.get("format") == "icc":
-                verify_icc(data)
-
-            if "sample_reference" in entry:
-                require(png_reference(data) == entry["sample_reference"],
-                        "PNG sample oracle changed")
-
-            verify_color(entry, data, root, Path(temp))
-
-            if entry.get("format") == "webp" and entry["expected"] not in (
-                "truncated", "invalid-data",
-            ):
-                verify_webp(entry, data)
-
-            if entry.get("format") == "jpeg" and entry["expected"] not in (
-                "truncated", "invalid-data",
-            ):
-                verify_jpeg(entry, data)
-
-            if references and "reference" in entry:
-                verify_reference(entry, path, Path(temp))
+            verify_entry(entry, root, rules, references, temp)
 
     print("Verified %d artifacts, %d bytes; references=%s" % (
         len(entries), sum(e["bytes"] for e in entries), references))
