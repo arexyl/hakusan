@@ -2,10 +2,27 @@
 <manifest
   xmlns:android="http://schemas.android.com/apk/res/android"
   xmlns:tools="http://schemas.android.com/tools">
+  <!-- The predictive Back flag sits on the application, because the
+       activity attribute starts at API 34 and the minimum SDK is 33. -->
   <application
     android:name=".HakusanApplication"
     android:allowBackup="false"
-    android:dataExtractionRules="@xml/data_extraction_rules">
+    android:dataExtractionRules="@xml/data_extraction_rules"
+    android:enableOnBackInvokedCallback="true"
+    android:icon="@mipmap/ic_launcher"
+    android:label="@string/app_name"
+    android:roundIcon="@mipmap/ic_launcher"
+    android:theme="@style/Theme.Hakusan">
+    <activity
+      android:name=".HakusanActivity"
+      android:exported="true">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+    </activity>
+
     <!-- No other process opens the database, so Room's multi-instance
          invalidation stays off. Room is not on the compile classpath of
          this project, so lint cannot resolve the removed class. -->

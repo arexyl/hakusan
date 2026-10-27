@@ -2,6 +2,7 @@ import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
   alias(libs.plugins.android.application)
+  alias(libs.plugins.compose.compiler)
   alias(libs.plugins.metro)
 }
 
@@ -39,6 +40,10 @@ android {
     }
   }
 
+  buildFeatures {
+    compose = true
+  }
+
   lint {
     fatal += "Aligned16KB"
   }
@@ -64,11 +69,14 @@ dependencyLocking {
 }
 
 dependencies {
+  implementation(platform(libs.compose.bom))
   implementation(project(":app:sdk"))
   implementation(project(":app:ui"))
   implementation(project(":extensions"))
   implementation(project(":reader"))
   implementation(project(":titles"))
+  implementation(libs.activity.compose)
+  implementation(libs.compose.runtime)
   implementation(libs.kotlinx.coroutines.core)
 
   testImplementation(libs.junit.jupiter.api)
@@ -76,7 +84,17 @@ dependencies {
   testRuntimeOnly(libs.junit.jupiter.engine)
   testRuntimeOnly(libs.junit.platform.launcher)
 
+  androidTestImplementation(platform(libs.compose.bom))
   androidTestImplementation(libs.androidx.test.core)
   androidTestImplementation(libs.androidx.test.junit)
+  androidTestImplementation(libs.compose.ui.test.junit4)
+  androidTestImplementation(libs.lifecycle.common)
+  androidTestImplementation(libs.lifecycle.viewmodel)
   androidTestRuntimeOnly(libs.androidx.test.runner)
+
+  constraints {
+    androidTestImplementation(libs.espresso.core) {
+      because("Compose UI Test brings Espresso 3.5.0, which fails on API 37")
+    }
+  }
 }

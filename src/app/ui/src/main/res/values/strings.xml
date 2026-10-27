@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <string name="catalog_empty_body">No sources are available in this build.</string>
+  <string name="catalog_empty_title">No sources available</string>
+  <string name="catalog_sources">Sources</string>
+  <string name="destination_catalog">Catalog</string>
+  <string name="destination_library">Library</string>
+  <string name="library_empty_body">Titles you add appear here.</string>
+  <string name="library_empty_title">Your Library is empty</string>
+  <string name="library_loading">Loading Library</string>
+  <plurals name="library_read_progress">
+    <item quantity="one">%1$d of %2$d chapter read</item>
+    <item quantity="other">%1$d of %2$d chapters read</item>
+  </plurals>
+  <string name="library_resume_available">Saved position available</string>
+  <string name="library_resume_none">No saved position</string>
+  <string name="library_resume_temporarily_unavailable">Saved position temporarily unavailable</string>
+  <string name="library_shelf_empty">No titles in this shelf.</string>
+  <string name="library_shelf_name_fallback">Unnamed shelf</string>
+  <string name="library_source_fallback">Unknown source</string>
+  <plurals name="library_title_count">
+    <item quantity="one">%1$d title</item>
+    <item quantity="other">%1$d titles</item>
+  </plurals>
+  <string name="source_name_fallback">Unnamed source</string>
+  <string name="title_name_fallback">Unnamed title</string>
+</resources>
