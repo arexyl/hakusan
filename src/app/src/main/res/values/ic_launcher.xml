@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+  <!--
+    Path data of the adaptive launcher icon, in dp on its 108 dp canvas.
+    The foreground and the monochrome layer both reference these strings,
+    so each peak outline exists once and the layers cannot diverge. Keep
+    every group of both layers free of transforms, so that these numbers
+    are the drawn positions.
+
+    Safe zone: a launcher may mask everything outside a circle of 66 dp
+    diameter around (54, 54). Keep every control point of every outline
+    within 33 dp of that center, and clip every other path to an outline.
+
+    Outlines (ic_launcher_peak_*): each peak is a polygon of five vertices
+    on a 0.25 dp grid. About x = 54, the right peak mirrors the left one,
+    and the middle peak mirrors itself.
+      left:   (27, 74) (27, 47.25) (38.5, 38) (43, 41.5) (43, 74)
+      middle: (45.5, 76) (45.5, 36) (54, 28.25) (62.5, 36) (62.5, 76)
+      right:  (65, 74) (65, 41.5) (69.5, 38) (81, 47.25) (81, 74)
+    A circular arc rounds each vertex, with a radius of 6 dp at the bases
+    and the shoulders and 3 dp at the apexes. For a vertex with turning
+    angle phi and radius r, the arc meets each edge r * tan(phi / 2) from
+    the vertex. It is one cubic whose handles lie along the edges and are
+    4 / 3 * tan(phi / 4) * r long. The arcs on one edge do not overlap, so
+    every edge keeps a straight part. Each outline starts on its left edge
+    above the base and runs clockwise.
+
+    Snow regions (ic_launcher_snow_*): each follows the freely drawn snow
+    line of its peak, continues 1 dp past each column edge along the end
+    tangent of the line, and closes with a box up to y = 26. The
+    foreground clips each region, the highlight band, and the small
+    highlight to the outline of their peak, so the outline alone bounds
+    them.
+
+    Write path data with absolute M, L, C, and Z commands, one per line,
+    with at most three decimals.
+  -->
+  <string name="ic_launcher_peak_left" translatable="false">
+    M27,68
+    L27,50.124
+    C27,48.307 27.824,46.588 29.239,45.449
+    L36.651,39.487
+    C37.735,38.616 39.275,38.603 40.373,39.457
+    L40.684,39.698
+    C42.145,40.835 43,42.583 43,44.435
+    L43,68
+    C43,71.314 40.314,74 37,74
+    L33,74
+    C29.686,74 27,71.314 27,68
+    Z
+  </string>
+  <string name="ic_launcher_peak_middle" translatable="false">
+    M45.5,70
+    L45.5,38.649
+    C45.5,36.962 46.211,35.352 47.457,34.215
+    L51.979,30.093
+    C53.124,29.049 54.876,29.049 56.021,30.093
+    L60.543,34.215
+    C61.789,35.352 62.5,36.962 62.5,38.649
+    L62.5,70
+    C62.5,73.314 59.814,76 56.5,76
+    L51.5,76
+    C48.186,76 45.5,73.314 45.5,70
+    Z
+  </string>
+  <string name="ic_launcher_peak_right" translatable="false">
+    M65,68
+    L65,44.435
+    C65,42.583 65.855,40.835 67.316,39.698
+    L67.627,39.457
+    C68.725,38.603 70.265,38.616 71.349,39.487
+    L78.761,45.449
+    C80.176,46.588 81,48.307 81,50.124
+    L81,68
+    C81,71.314 78.314,74 75,74
+    L71,74
+    C67.686,74 65,71.314 65,68
+    Z
+  </string>
+  <string name="ic_launcher_snow_left" translatable="false">
+    M44,52.138
+    L42.934,51.728
+    C41.43,51.149 40.19,49.219 38.597,49.026
+    C36.649,48.833 35.056,51.053 33.197,51.439
+    C31.249,51.825 29.125,53.079 27,54.623
+    L26,55.35
+    L26,26
+    L44,26
+    Z
+  </string>
+  <string name="ic_launcher_snow_middle" translatable="false">
+    M63.5,42.248
+    L44.5,53.585
+    L44.5,26
+    L63.5,26
+    Z
+  </string>
+  <string name="ic_launcher_snow_right" translatable="false">
+    M82,54.807
+    L81,54.333
+    C78.964,53.368 77.282,50.667 75.069,50.474
+    C73.033,50.281 71.705,52.211 69.757,52.307
+    C67.987,52.404 66.57,53.658 65.066,54.816
+    L64,55.636
+    L64,26
+    L82,26
+    Z
+  </string>
+</resources>
