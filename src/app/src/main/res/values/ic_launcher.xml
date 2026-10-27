@@ -27,10 +27,26 @@
 
     Snow regions (ic_launcher_snow_*): each follows the freely drawn snow
     line of its peak, continues 1 dp past each column edge along the end
-    tangent of the line, and closes with a box up to y = 26. The
-    foreground clips each region, the highlight band, and the small
-    highlight to the outline of their peak, so the outline alone bounds
-    them.
+    tangent of the line, and closes with a box up to y = 26. Both layers
+    clip each region to the outline of its peak, and the foreground clips
+    the highlight band and the small highlight the same way, so the
+    outline alone bounds them.
+
+    Snow gap: the monochrome layer draws each peak as its snow region and
+    a rock region below it, so the themed icon keeps the snow line of the
+    color icon as a gap. The rock regions stay inline in that layer, their
+    only user. The top of a rock region is the snow line offset 1.75 dp
+    along its normal: move each leg of the control polygon of the line
+    1.75 dp toward the rock, put each inner control point where its two
+    moved legs meet, or move it with them where the legs are collinear,
+    and move each end point with its leg. A vertical
+    shift would narrow the gap on the steep parts of the line; this
+    offset keeps it between 1.74 and 1.87 dp. Like the snow line, the top
+    continues 1 dp past each column edge along its end tangent, and the
+    region closes with a box down to y = 78, below every base. The gap is
+    about 3 px wide at 48 dp on a 420 dpi screen, so it stays open at
+    launcher size, and it is narrower than the 2.5 dp gaps between the
+    columns, which stay the main division.
 
     Write path data with absolute M, L, C, and Z commands, one per line,
     with at most three decimals.

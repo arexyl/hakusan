@@ -5,13 +5,54 @@
   android:height="108dp"
   android:viewportWidth="108"
   android:viewportHeight="108">
-  <path
-    android:pathData="@string/ic_launcher_peak_left"
-    android:fillColor="#FF000000" />
-  <path
-    android:pathData="@string/ic_launcher_peak_middle"
-    android:fillColor="#FF000000" />
-  <path
-    android:pathData="@string/ic_launcher_peak_right"
-    android:fillColor="#FF000000" />
+  <group>
+    <clip-path android:pathData="@string/ic_launcher_peak_left" />
+    <path
+      android:pathData="@string/ic_launcher_snow_left"
+      android:fillColor="#FF000000" />
+    <path
+      android:pathData="
+        M44,54.014
+        L42.305,53.361
+        C40.267,52.577 39.163,50.857 38.405,50.766
+        C37.482,50.674 36.08,52.628 33.545,53.154
+        C31.882,53.484 30.086,54.544 28.029,56.039
+        L26,57.513
+        L26,78
+        L44,78
+        Z"
+      android:fillColor="#FF000000" />
+  </group>
+  <group>
+    <clip-path android:pathData="@string/ic_launcher_peak_middle" />
+    <path
+      android:pathData="@string/ic_launcher_snow_middle"
+      android:fillColor="#FF000000" />
+    <path
+      android:pathData="
+        M63.5,44.286
+        L44.5,55.623
+        L44.5,78
+        L63.5,78
+        Z"
+      android:fillColor="#FF000000" />
+  </group>
+  <group>
+    <clip-path android:pathData="@string/ic_launcher_peak_right" />
+    <path
+      android:pathData="@string/ic_launcher_snow_right"
+      android:fillColor="#FF000000" />
+    <path
+      android:pathData="
+        M82,56.744
+        L80.25,55.914
+        C77.75,54.729 76.259,52.334 74.91,52.217
+        C73.892,52.12 72.656,53.916 69.848,54.055
+        C68.691,54.118 67.685,55.008 66.134,56.203
+        L64,57.845
+        L64,78
+        L82,78
+        Z"
+      android:fillColor="#FF000000" />
+  </group>
 </vector>
