@@ -127,6 +127,17 @@ tasks.register("hostMatrix") {
   )
 }
 
+tasks.register("deviceMatrix") {
+  group = "verification"
+  description = "Runs every project's Android tests on the connected device."
+
+  dependsOn(
+    hostMatrixAndroidTestProjects.map { project ->
+      "$project:connectedDebugAndroidTest"
+    }
+  )
+}
+
 tasks.named<Delete>("clean") {
   delete(
     layout.projectDirectory.dir("build/work"),
