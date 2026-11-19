@@ -67,14 +67,18 @@
         in
         pkgs.mkShellNoCC {
           # actionlint checks the shell steps of a workflow only when it finds shellcheck.
+          # Zig and clang-format serve the check of the bindings header.
           packages = [
             jdk
             sdk
             pkgs.actionlint
             pkgs.shellcheck
+            pkgs.zig_0_17
+            pkgs.llvmPackages_23.clang-tools
           ]
           ++ tools sdk;
 
+          HAKU_SDK_MIN = versions.sdk-min;
           JAVA_HOME = jdk.home;
           ANDROID_HOME = "${sdk}/libexec/android-sdk";
         };
