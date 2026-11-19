@@ -382,7 +382,7 @@ class LibraryObservationsTest {
     }
 
     assertEquals(1, snapshots.size)
-    assertEquals(setOf(WORKER_NAME), rows.threads.map(Thread::getName).toSet())
+    assertEquals(workers.toSet(), rows.threads.toSet())
     assertFalse(rows.threads.any(collectors::contains))
   }
 
@@ -402,7 +402,7 @@ class LibraryObservationsTest {
     }
 
     assertEquals(listOf(setOf(A_ID)), sets)
-    assertEquals(setOf(WORKER_NAME), rows.threads.map(Thread::getName).toSet())
+    assertEquals(workers.toSet(), rows.threads.toSet())
     assertFalse(rows.threads.any(collectors::contains))
   }
 
@@ -488,11 +488,20 @@ class LibraryObservationsTest {
     assertThrows<StoredStateViolationException> { read() }
 
   /**
-   * Runs [block] with a single-thread worker named [WORKER_NAME], collecting on
-   * the calling thread, and bounds it with a timeout.
+   * The worker threads of [onWorker]. Tests compare threads, not names: the
+   * coroutine debug mode renames a thread while a coroutine runs on it.
+   */
+  private val workers: MutableSet<Thread> =
+    Collections.synchronizedSet(HashSet())
+
+  /**
+   * Runs [block] with a single-thread worker, collecting on the calling thread,
+   * and bounds it with a timeout.
    */
   private fun <T> onWorker(block: suspend (CoroutineDispatcher) -> T): T =
-    Executors.newSingleThreadExecutor { task -> Thread(task, WORKER_NAME) }
+    Executors.newSingleThreadExecutor { task ->
+        Thread(task, WORKER_NAME).also(workers::add)
+      }
       .asCoroutineDispatcher()
       .use { worker ->
         runBlocking { withTimeout(TIMEOUT_MILLIS) { block(worker) } }
