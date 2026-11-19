@@ -66,9 +66,12 @@
           sdk = (sdkWith images).androidsdk;
         in
         pkgs.mkShellNoCC {
+          # actionlint checks the shell steps of a workflow only when it finds shellcheck.
           packages = [
             jdk
             sdk
+            pkgs.actionlint
+            pkgs.shellcheck
           ]
           ++ tools sdk;
 
