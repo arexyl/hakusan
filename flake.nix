@@ -44,27 +44,49 @@
         }
       ];
 
-      sdkWith =
-        images:
-        pkgs.androidenv.composeAndroidPackages {
-          platformVersions = lib.unique (
-            [ "${versions.sdk-compile}.${versions.sdk-compile-minor}" ] ++ map (device: device.platform) images
-          );
-          buildToolsVersions = [ versions.build-tools ];
-          includeCmake = false;
-          includeEmulator = images != [ ];
-          includeSystemImages = images != [ ];
-          systemImageTypes = lib.unique (map (device: device.image) images);
-          abiVersions = [ abi ];
-        };
+      composeSdk =
+        arguments:
+        (pkgs.androidenv.composeAndroidPackages ({ includeCmake = false; } // arguments)).androidsdk;
+
+      # What a build needs: the compile platform and the Build Tools.
+      buildSdk = composeSdk {
+        platformVersions = [ "${versions.sdk-compile}.${versions.sdk-compile-minor}" ];
+        buildToolsVersions = [ versions.build-tools ];
+      };
+
+      # The emulator and the device images. nixpkgs composes every listed image type for every listed
+      # platform, so the compile platform stays out: its image would serve no device.
+      emulatorSdk = composeSdk {
+        platformVersions = lib.unique (map (device: device.platform) devices);
+        buildToolsVersions = [ ];
+        includeEmulator = true;
+        includeSystemImages = true;
+        systemImageTypes = lib.unique (map (device: device.image) devices);
+        abiVersions = [ abi ];
+      };
+
+      # One SDK root for the device shell: the emulator composition with the platform and the Build Tools of a build.
+      # Its tools stay those of the emulator composition, so that every adb is the same one.
+      deviceSdk = pkgs.runCommand "androidsdk-with-devices" { } ''
+        root=$out/libexec/android-sdk
+        mkdir -p "$root"
+
+        for entry in ${emulatorSdk}/libexec/android-sdk/*; do
+          case ''${entry##*/} in
+            platforms | build-tools) ;;
+            *) ln -s "$entry" "$root/" ;;
+          esac
+        done
+
+        ln -s ${buildSdk}/libexec/android-sdk/platforms "$root/platforms"
+        ln -s ${buildSdk}/libexec/android-sdk/build-tools "$root/build-tools"
+        ln -s ${emulatorSdk}/bin "$out/bin"
+      '';
 
       jdk = pkgs."temurin-bin-${versions.jdk}";
 
       shellWith =
-        { images, tools }:
-        let
-          sdk = (sdkWith images).androidsdk;
-        in
+        { sdk, tools }:
         pkgs.mkShellNoCC {
           # actionlint checks the shell steps of a workflow only when it finds shellcheck.
           # Zig and clang-format serve the check of the bindings header.
@@ -186,12 +208,12 @@
     {
       devShells.${system} = {
         default = shellWith {
-          images = [ ];
+          sdk = buildSdk;
           tools = _: [ ];
         };
 
         device = shellWith {
-          images = devices;
+          sdk = deviceSdk;
           tools = sdk: [
             (createDevices sdk)
             (withDevice sdk)
