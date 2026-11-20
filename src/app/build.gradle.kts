@@ -97,10 +97,4 @@ dependencies {
   androidTestImplementation(libs.lifecycle.common)
   androidTestImplementation(libs.lifecycle.viewmodel)
   androidTestRuntimeOnly(libs.androidx.test.runner)
-
-  constraints {
-    androidTestImplementation(libs.espresso.core) {
-      because("Compose UI Test brings Espresso 3.5.0, which fails on API 37")
-    }
-  }
 }
