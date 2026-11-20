@@ -1,45 +1,9 @@
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
-
 plugins {
-  alias(libs.plugins.android.library)
+  id("hakusan.android.library")
 }
-
-layout.buildDirectory = layout.settingsDirectory.dir("build/work/app-sdk")
 
 android {
   namespace = "app.hakusan.sdk"
-  compileSdk {
-    version =
-      release(libs.versions.sdk.compile.asProvider().get().toInt()) {
-        minorApiLevel = libs.versions.sdk.compile.minor.get().toInt()
-      }
-  }
-
-  buildToolsVersion = libs.versions.build.tools.get()
-
-  defaultConfig {
-    minSdk = libs.versions.sdk.min.get().toInt()
-  }
-
-  compileOptions {
-    sourceCompatibility = JavaVersion.VERSION_25
-    targetCompatibility = JavaVersion.VERSION_25
-  }
-}
-
-kotlin {
-  explicitApi()
-  jvmToolchain(25)
-
-  compilerOptions {
-    jvmTarget = JvmTarget.JVM_25
-  }
-}
-
-tasks.withType<Test>().configureEach { useJUnitPlatform() }
-
-dependencyLocking {
-  lockAllConfigurations()
 }
 
 dependencies {

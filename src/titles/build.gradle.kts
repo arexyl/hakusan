@@ -1,13 +1,10 @@
 import org.gradle.work.DisableCachingByDefault
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
-  alias(libs.plugins.android.library)
+  id("hakusan.android.library")
   alias(libs.plugins.ksp)
   alias(libs.plugins.room)
 }
-
-layout.buildDirectory = layout.settingsDirectory.dir("build/work/titles")
 
 // Room exports into a build-owned path. A later version that needs an
 // auto-migration seeds this path from the reviewed history before KSP runs.
@@ -26,17 +23,8 @@ room3 {
 
 android {
   namespace = "app.hakusan.titles"
-  compileSdk {
-    version =
-      release(libs.versions.sdk.compile.asProvider().get().toInt()) {
-        minorApiLevel = libs.versions.sdk.compile.minor.get().toInt()
-      }
-  }
-
-  buildToolsVersion = libs.versions.build.tools.get()
 
   defaultConfig {
-    minSdk = libs.versions.sdk.min.get().toInt()
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
 
     ndk {
@@ -51,23 +39,7 @@ android {
   testFixtures {
     enable = true
   }
-
-  compileOptions {
-    sourceCompatibility = JavaVersion.VERSION_25
-    targetCompatibility = JavaVersion.VERSION_25
-  }
 }
-
-kotlin {
-  explicitApi()
-  jvmToolchain(25)
-
-  compilerOptions {
-    jvmTarget = JvmTarget.JVM_25
-  }
-}
-
-tasks.withType<Test>().configureEach { useJUnitPlatform() }
 
 /** Fails when the exported Room schema differs from the reviewed history. */
 @DisableCachingByDefault(because = "Verification produces no output")
@@ -131,10 +103,6 @@ tasks.register<Copy>("promoteRoomSchema") {
   dependsOn(roomSchemaExport)
   from(exportedRoomSchema)
   into(reviewedRoomSchema)
-}
-
-dependencyLocking {
-  lockAllConfigurations()
 }
 
 dependencies {

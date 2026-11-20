@@ -10,6 +10,9 @@ buildscript {
   }
 }
 
+// The convention plugins of gradle/build-logic apply the Android plugins by
+// identifier and compile against their API only, so this classpath supplies
+// the plugins to every project.
 plugins {
   base
   alias(libs.plugins.android.application) apply false
@@ -56,6 +59,9 @@ dependencies {
 
 val ktfmtSources =
   fileTree("src") { include("**/*.kt", "**/*.kts") } +
+    fileTree("gradle/build-logic") {
+      include("*.kts", "src/**/*.kt")
+    } +
     fileTree("share/bindings/kotlin") { include("**/*.kt") } +
     files("build.gradle.kts", "settings.gradle.kts")
 

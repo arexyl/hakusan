@@ -1,4 +1,6 @@
 pluginManagement {
+  includeBuild("gradle/build-logic")
+
   repositories {
     exclusiveContent {
       forRepository { google() }

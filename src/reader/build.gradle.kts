@@ -5,48 +5,19 @@ import java.security.DigestInputStream
 import java.security.MessageDigest
 import java.util.HexFormat
 import javax.inject.Inject
-import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 
 plugins {
-  alias(libs.plugins.android.library)
+  id("hakusan.android.library")
 }
-
-layout.buildDirectory = layout.settingsDirectory.dir("build/work/reader")
 
 android {
   namespace = "app.hakusan.reader"
-  compileSdk {
-    version =
-      release(libs.versions.sdk.compile.asProvider().get().toInt()) {
-        minorApiLevel = libs.versions.sdk.compile.minor.get().toInt()
-      }
-  }
-
-  buildToolsVersion = libs.versions.build.tools.get()
-
-  defaultConfig {
-    minSdk = libs.versions.sdk.min.get().toInt()
-  }
-
-  compileOptions {
-    sourceCompatibility = JavaVersion.VERSION_25
-    targetCompatibility = JavaVersion.VERSION_25
-  }
 
   sourceSets {
     named("main") {
       kotlin.directories +=
         layout.settingsDirectory.dir("share/bindings/kotlin").asFile.path
     }
-  }
-}
-
-kotlin {
-  explicitApi()
-  jvmToolchain(25)
-
-  compilerOptions {
-    jvmTarget = JvmTarget.JVM_25
   }
 }
 
@@ -92,8 +63,6 @@ abstract class BindingsTableArgument : CommandLineArgumentProvider {
 }
 
 tasks.withType<Test>().configureEach {
-  useJUnitPlatform()
-
   jvmArgumentProviders.add(
     objects.newInstance<FixtureManifestArgument>().apply {
       manifest = layout.settingsDirectory.file("share/reader/manifest.json")
@@ -105,10 +74,6 @@ tasks.withType<Test>().configureEach {
       table = layout.settingsDirectory.file("share/bindings/abi.tsv")
     }
   )
-}
-
-dependencyLocking {
-  lockAllConfigurations()
 }
 
 dependencies {
