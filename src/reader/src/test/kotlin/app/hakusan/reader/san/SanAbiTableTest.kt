@@ -43,7 +43,7 @@ class SanAbiTableTest {
   }
 
   @Test
-  fun `every native method is static and uses JVM primitives only`() {
+  fun `every native method is static and takes primitives or the Bitmap`() {
     val rows = readTable().filter { it.kind == JNI }
 
     val natives = jniClasses(rows).flatMap(::nativeMethods)
@@ -51,9 +51,12 @@ class SanAbiTableTest {
     val instance = natives.filterNot { Modifier.isStatic(it.modifiers) }
 
     val nonPrimitive = natives.filterNot { method ->
-      val types = method.parameterTypes.toList() + method.returnType
+      val parameters =
+        method.parameterTypes.withIndex().all { (index, type) ->
+          isPrimitiveOrArray(type) || isCopyDestination(method, index, type)
+        }
 
-      types.all(::isPrimitiveOrArray)
+      parameters && isPrimitiveOrArray(method.returnType)
     }
 
     assertTrue(instance.isEmpty()) {
@@ -64,7 +67,35 @@ class SanAbiTableTest {
       nonPrimitive
         .map(::jniName)
         .sorted()
-        .joinToString(", ", "Natives with a type that is not primitive: ")
+        .joinToString(", ", "Natives with a type that the ABI does not admit: ")
+    }
+  }
+
+  @Test
+  fun `report indices run from zero to the length minus one`() {
+    val constants =
+      readTable()
+        .filter { it.kind == "i32" }
+        .associate { it.name to it.value.toInt() }
+
+    val families =
+      constants.keys
+        .filter { it.endsWith(LENGTH_SUFFIX) }
+        .map { it.removeSuffix(LENGTH_SUFFIX) }
+
+    assertTrue(families.isNotEmpty()) { "The table has no report family." }
+
+    for (family in families) {
+      val length = constants.getValue(family + LENGTH_SUFFIX)
+
+      val indices =
+        constants
+          .filterKeys { it.startsWith("${family}_") }
+          .filterKeys { it != family + LENGTH_SUFFIX }
+          .values
+          .sorted()
+
+      assertEquals((0 until length).toList(), indices, family)
     }
   }
 
@@ -283,10 +314,25 @@ class SanAbiTableTest {
   private fun isPrimitiveOrArray(type: Class<*>): Boolean =
     type.isPrimitive || type.componentType?.isPrimitive == true
 
+  /**
+   * Returns whether parameter [index] of [method], of [type], is the Bitmap
+   * destination of the copy operation, the one reference that the ABI admits.
+   */
+  private fun isCopyDestination(
+    method: Method,
+    index: Int,
+    type: Class<*>,
+  ): Boolean =
+    jniName(method) == COPY && index == COPY_DESTINATION && type.name == BITMAP
+
   private companion object {
     const val TABLE_PROPERTY = "app.hakusan.reader.bindingsTable"
     const val HEADER = "kind\tname\tabi\tvalue"
     const val JNI = "jni"
+    const val LENGTH_SUFFIX = "_LENGTH"
+    const val COPY = "app/hakusan/reader/san/SanAbi.outputCopy"
+    const val COPY_DESTINATION = 3
+    const val BITMAP = "android.graphics.Bitmap"
     const val ID = "[A-Za-z_][A-Za-z0-9_]*"
     const val FIELD_TYPE = "\\[*(?:[ZBCSIJFD]|L(?:$ID/)*$ID;)"
 
