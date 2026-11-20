@@ -48,7 +48,7 @@
         images:
         pkgs.androidenv.composeAndroidPackages {
           platformVersions = lib.unique (
-            [ "${versions.sdk-compile}.0" ] ++ map (device: device.platform) images
+            [ "${versions.sdk-compile}.${versions.sdk-compile-minor}" ] ++ map (device: device.platform) images
           );
           buildToolsVersions = [ versions.build-tools ];
           includeCmake = false;
