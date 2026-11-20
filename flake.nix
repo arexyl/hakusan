@@ -105,6 +105,83 @@
             ''
           ) devices;
         };
+
+      # Boots one device headless, runs a command against it, and stops the device.
+      # The environment selects the AVD home, and the command finds the device in ANDROID_SERIAL.
+      withDevice =
+        sdk:
+        pkgs.writeShellApplication {
+          name = "with-device";
+          runtimeInputs = [ sdk ];
+
+          text = ''
+            if [ "$#" -lt 2 ]; then
+              echo "Usage: with-device <avd> <command>..." >&2
+              exit 2
+            fi
+
+            avd=$1
+            shift
+            port=5554
+            export ANDROID_SERIAL=emulator-$port
+
+            attached() {
+              adb devices | sed 1d | grep --quiet .
+            }
+
+            # A starting server writes its notice into the first device list.
+            adb start-server >/dev/null 2>&1
+
+            # adb lists a stopped emulator for a moment.
+            for _ in $(seq 30); do
+              attached || break
+              sleep 1
+            done
+
+            if attached; then
+              echo "A device is attached. Run one device at a time." >&2
+              exit 2
+            fi
+
+            log=$(mktemp)
+
+            emulator -avd "$avd" -port "$port" -no-window -gpu swiftshader_indirect \
+              -read-only -no-snapshot -no-audio -no-boot-anim -no-metrics >"$log" 2>&1 &
+            pid=$!
+
+            stop() {
+              adb emu kill >/dev/null 2>&1 || kill "$pid" 2>/dev/null || true
+              wait "$pid" 2>/dev/null || true
+              rm -f "$log"
+            }
+
+            trap stop EXIT
+
+            booted() {
+              [ "$(adb shell getprop sys.boot_completed 2>/dev/null </dev/null)" = 1 ]
+            }
+
+            for _ in $(seq 300); do
+              booted && break
+
+              if ! kill -0 "$pid" 2>/dev/null; then
+                cat "$log" >&2
+                echo "The emulator stopped before the boot completed." >&2
+                exit 1
+              fi
+
+              sleep 1
+            done
+
+            if ! booted; then
+              cat "$log" >&2
+              echo "The boot did not complete in time." >&2
+              exit 1
+            fi
+
+            "$@"
+          '';
+        };
     in
     {
       devShells.${system} = {
@@ -115,7 +192,10 @@
 
         device = shellWith {
           images = devices;
-          tools = sdk: [ (createDevices sdk) ];
+          tools = sdk: [
+            (createDevices sdk)
+            (withDevice sdk)
+          ];
         };
       };
 
