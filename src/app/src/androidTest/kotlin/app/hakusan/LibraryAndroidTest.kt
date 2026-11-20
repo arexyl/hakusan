@@ -2,7 +2,6 @@ package app.hakusan
 
 import android.os.Bundle
 import android.os.Parcel
-import android.util.SparseArray
 import androidx.compose.ui.semantics.ProgressBarRangeInfo
 import androidx.compose.ui.semantics.SemanticsActions
 import androidx.compose.ui.test.DeviceConfigurationOverride
@@ -262,23 +261,15 @@ class LibraryAndroidTest {
 
     val state = compose.savedState()
 
-    // Compose saves its registry, which holds the back stacks, as one
-    // Parcelable, so only the parcel scan reaches them.
     assertTrue(
       "The scan must reach the saved back stacks.",
       parcelHoldsAny(state, textEncodings(CATALOG_SERIAL_NAME)),
     )
 
     for (shelf in screen.shelves) {
-      val key = shelf.id.value
-
-      val leaks = findInSavedState(state) { value -> value.holdsShelfKey(key) }
-
-      assertEquals("A shelf key leaked at $leaks.", emptyList<String>(), leaks)
-
       assertFalse(
-        "A shelf key leaked inside a saved value.",
-        parcelHoldsAny(state, shelfKeyEncodings(key)),
+        "The key of shelf ${shelf.id.value} leaked into the saved state.",
+        parcelHoldsAny(state, shelfKeyEncodings(shelf.id.value)),
       )
     }
   }
@@ -481,17 +472,6 @@ private const val SHELF_KEY_BASE = 0x5348454C46000000L
 /** The serial name of the Catalog root, held by every saved Catalog stack. */
 private const val CATALOG_SERIAL_NAME = "catalog"
 
-/** Returns whether this saved value is [key] or a text that contains it. */
-private fun Any.holdsShelfKey(key: Long): Boolean {
-  val decimal = key.toString()
-
-  val hexadecimal = java.lang.Long.toHexString(key)
-
-  return this == key ||
-    this is String &&
-      (contains(decimal) || contains(hexadecimal, ignoreCase = true))
-}
-
 /**
  * Returns the encodings of [key] that a parcel can hold: both byte orders of
  * the binary value, and its decimal and hexadecimal text.
@@ -516,8 +496,8 @@ private fun textEncodings(text: String): List<ByteArray> =
 /**
  * Returns whether [state], written to a parcel, holds any of [patterns].
  *
- * Writing the state also writes out the Parcelable and Serializable values that
- * [findInSavedState] does not open, such as a saved MutableState.
+ * Writing the state writes out every value in it, also the Parcelable that
+ * holds the whole Compose registry, which no walk over the bundles opens.
  */
 private fun parcelHoldsAny(state: Bundle, patterns: List<ByteArray>): Boolean {
   val parcel = Parcel.obtain()
@@ -538,70 +518,3 @@ private fun ByteArray.holdsBytes(pattern: ByteArray): Boolean =
   (0..size - pattern.size).any { start ->
     pattern.indices.all { index -> this[start + index] == pattern[index] }
   }
-
-/**
- * Returns the paths of every value in [state] that [matches] accepts, in nested
- * bundles, maps, collections, arrays, and sparse arrays, map keys included.
- *
- * It opens no Parcelable or Serializable value; [parcelHoldsAny] covers those.
- */
-private fun findInSavedState(
-  state: Bundle,
-  matches: (Any) -> Boolean,
-): List<String> {
-  val found = ArrayList<String>()
-
-  collectMatches(state, "", matches, found)
-
-  return found
-}
-
-@Suppress("DEPRECATION")
-private fun collectMatches(
-  value: Any?,
-  path: String,
-  matches: (Any) -> Boolean,
-  found: MutableList<String>,
-) {
-  if (value == null) {
-    return
-  }
-
-  if (matches(value)) {
-    found += path
-  }
-
-  when (value) {
-    is Bundle ->
-      for (key in value.keySet()) {
-        collectMatches(key, "$path/key", matches, found)
-        collectMatches(value.get(key), "$path/$key", matches, found)
-      }
-
-    is Map<*, *> ->
-      for ((key, element) in value) {
-        collectMatches(key, "$path{key}", matches, found)
-        collectMatches(element, "$path{$key}", matches, found)
-      }
-
-    is Iterable<*> ->
-      value.forEachIndexed { index, element ->
-        collectMatches(element, "$path[$index]", matches, found)
-      }
-
-    is Array<*> ->
-      value.forEachIndexed { index, element ->
-        collectMatches(element, "$path[$index]", matches, found)
-      }
-
-    is LongArray ->
-      value.forEachIndexed { index, element ->
-        collectMatches(element, "$path[$index]", matches, found)
-      }
-
-    is SparseArray<*> ->
-      for (index in 0 until value.size()) {
-        collectMatches(value.valueAt(index), "$path[$index]", matches, found)
-      }
-  }
-}

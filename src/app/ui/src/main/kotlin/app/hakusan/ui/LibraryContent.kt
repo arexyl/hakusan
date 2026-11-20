@@ -120,17 +120,18 @@ private fun LibraryShelves(
   carouselPosition: (ScreenShelfId) -> CarouselPosition,
   onCarouselLeave: (ScreenShelfId, CarouselPosition) -> Unit,
 ) {
-  LazyColumn(
-    modifier = Modifier.fillMaxSize(),
-    state = listState,
-    contentPadding = contentPadding,
-    verticalArrangement = Arrangement.spacedBy(24.dp),
-  ) {
-    items(screen.shelves, key = { shelf -> shelf.id.value }) { shelf ->
-      // The list saves what an item registers under the item's key, which is
-      // the shelf key, and a nested lazy layout registers its holders even
-      // when they are empty. A shelf therefore reaches no registry.
-      CompositionLocalProvider(LocalSaveableStateRegistry provides null) {
+  // A lazy list saves each item's registry under the item's key, which is the
+  // shelf key here, and a nested lazy layout fills that registry even when it
+  // has nothing to save. The list therefore saves no item state: its own
+  // position lives in listState, and a carousel's in the model.
+  CompositionLocalProvider(LocalSaveableStateRegistry provides null) {
+    LazyColumn(
+      modifier = Modifier.fillMaxSize(),
+      state = listState,
+      contentPadding = contentPadding,
+      verticalArrangement = Arrangement.spacedBy(24.dp),
+    ) {
+      items(screen.shelves, key = { shelf -> shelf.id.value }) { shelf ->
         LibraryShelf(
           shelf = shelf,
           titles = screen.titlesById,
