@@ -20,7 +20,7 @@
         };
       };
 
-      # The version catalog owns the SDK versions, so the shells follow it.
+      # The version catalog owns the SDK and JDK versions, so the shells follow it.
       inherit (fromTOML (builtins.readFile ./gradle/libs.versions.toml)) versions;
 
       abi = "arm64-v8a";
@@ -58,7 +58,7 @@
           abiVersions = [ abi ];
         };
 
-      jdk = pkgs.temurin-bin-25;
+      jdk = pkgs."temurin-bin-${versions.jdk}";
 
       shellWith =
         { images, tools }:

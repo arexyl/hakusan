@@ -152,5 +152,6 @@ tasks.named<Delete>("clean") {
 }
 
 tasks.named<UpdateDaemonJvm>("updateDaemonJvm") {
+  languageVersion = JavaLanguageVersion.of(libs.versions.jdk.get())
   toolchainPlatforms.set(emptySet())
 }
