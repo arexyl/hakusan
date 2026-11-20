@@ -1,4 +1,4 @@
-import org.gradle.work.DisableCachingByDefault
+import app.hakusan.build.VerifyRoomSchema
 
 plugins {
   id("hakusan.android.library")
@@ -38,54 +38,6 @@ android {
 
   testFixtures {
     enable = true
-  }
-}
-
-/** Fails when the exported Room schema differs from the reviewed history. */
-@DisableCachingByDefault(because = "Verification produces no output")
-abstract class VerifyRoomSchema : DefaultTask() {
-  @get:InputFiles
-  @get:PathSensitive(PathSensitivity.RELATIVE)
-  abstract val exported: DirectoryProperty
-
-  @get:InputFiles
-  @get:PathSensitive(PathSensitivity.RELATIVE)
-  abstract val reviewed: DirectoryProperty
-
-  @TaskAction
-  fun verify() {
-    val exportedFiles = contents(exported.get())
-
-    val reviewedFiles = contents(reviewed.get())
-
-    if (exportedFiles.isEmpty()) {
-      throw GradleException("Room exported no schema.")
-    }
-
-    val differences =
-      (exportedFiles.keys + reviewedFiles.keys).sorted().filterNot { path ->
-        exportedFiles[path] contentEquals reviewedFiles[path]
-      }
-
-    if (differences.isNotEmpty()) {
-      throw GradleException(
-        "The exported Room schema differs from the reviewed history in " +
-          "${differences.joinToString()}. Review the export and run " +
-          ":titles:promoteRoomSchema, or clean a stale export."
-      )
-    }
-  }
-
-  private fun contents(directory: Directory): Map<String, ByteArray> {
-    val files = mutableMapOf<String, ByteArray>()
-
-    directory.asFileTree.visit {
-      if (!isDirectory) {
-        files[relativePath.pathString] = file.readBytes()
-      }
-    }
-
-    return files
   }
 }
 
