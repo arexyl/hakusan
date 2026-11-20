@@ -262,13 +262,11 @@ class LibraryAndroidTest {
 
     val state = compose.savedState()
 
-    val stackPaths =
-      findInSavedState(state) { value -> value == CATALOG_SERIAL_NAME }
-
+    // Compose saves its registry, which holds the back stacks, as one
+    // Parcelable, so only the parcel scan reaches them.
     assertTrue(
       "The scan must reach the saved back stacks.",
-      stackPaths.isNotEmpty() &&
-        parcelHoldsAny(state, textEncodings(CATALOG_SERIAL_NAME)),
+      parcelHoldsAny(state, textEncodings(CATALOG_SERIAL_NAME)),
     )
 
     for (shelf in screen.shelves) {

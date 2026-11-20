@@ -18,10 +18,12 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.runtime.saveable.LocalSaveableStateRegistry
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.pluralStringResource
@@ -125,12 +127,17 @@ private fun LibraryShelves(
     verticalArrangement = Arrangement.spacedBy(24.dp),
   ) {
     items(screen.shelves, key = { shelf -> shelf.id.value }) { shelf ->
-      LibraryShelf(
-        shelf = shelf,
-        titles = screen.titlesById,
-        carouselPosition = carouselPosition,
-        onCarouselLeave = onCarouselLeave,
-      )
+      // The list saves what an item registers under the item's key, which is
+      // the shelf key, and a nested lazy layout registers its holders even
+      // when they are empty. A shelf therefore reaches no registry.
+      CompositionLocalProvider(LocalSaveableStateRegistry provides null) {
+        LibraryShelf(
+          shelf = shelf,
+          titles = screen.titlesById,
+          carouselPosition = carouselPosition,
+          onCarouselLeave = onCarouselLeave,
+        )
+      }
     }
   }
 }
