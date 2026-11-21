@@ -8,6 +8,9 @@ import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicLong
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.update
 
 /** One call that a [ScriptedSan] answered, with the status it returned. */
 internal data class ScriptedCall(
@@ -67,6 +70,25 @@ internal class ScriptedContent(val handle: Long) {
  * receiver and returns the status of the step.
  */
 internal typealias ScriptedStep = ScriptedJob.() -> Int
+
+/**
+ * A script whose every four bytes complete one row: it admits its lease with
+ * the first row, covers the complete rows, and completes when the input ends.
+ */
+internal fun rowsOfFourBytes(width: Int, height: Int): ScriptedStep = {
+  val rows = (content.receivedBytes / 4).toInt()
+
+  if (rows > 0 && lease == SanAbi.NO_HANDLE) {
+    describe(width, height)
+    admit(width, height)
+  }
+
+  if (rows > report[SanAbi.JOB_REPORT_COVERED_ROWS]) {
+    cover(rows)
+  }
+
+  if (content.ended) SanAbi.STATUS_OK else SanAbi.STATUS_INPUT_NEEDED
+}
 
 /**
  * One job of a [ScriptedSan], and the view that its [ScriptedStep] has of it.
@@ -280,6 +302,7 @@ internal class ScriptedSan : SanCalls {
   private val ownedJobs = ConcurrentHashMap<Long, ScriptedJob>()
   private val leases = ConcurrentHashMap<Long, ScriptedJob>()
   private val closedByShutdown = ConcurrentHashMap.newKeySet<Long>()
+  private val answered = MutableStateFlow(0)
 
   @Volatile private var worker: Thread? = null
   @Volatile private var engine = SanAbi.NO_HANDLE
@@ -314,9 +337,20 @@ internal class ScriptedSan : SanCalls {
   val heldLeaseCount: Int
     get() = leases.size
 
+  /**
+   * Runs with every answered call, inside the call and on its thread. It must
+   * not call the engine.
+   */
+  @Volatile var onAnswer: (ScriptedCall) -> Unit = {}
+
   /** Queues the script of the next requested job. */
   fun script(step: ScriptedStep) {
     scripts += step
+  }
+
+  /** Suspends until [condition] holds after an answered call. */
+  suspend fun await(condition: ScriptedSan.() -> Boolean) {
+    answered.first { condition() }
   }
 
   /**
@@ -600,7 +634,7 @@ internal class ScriptedSan : SanCalls {
     val status =
       if (owned == null) SanAbi.STATUS_INVALID_HANDLE else SanAbi.STATUS_OK
 
-    calls += ScriptedCall("jobCancel", Thread.currentThread(), status, job)
+    record(ScriptedCall("jobCancel", Thread.currentThread(), status, job))
 
     return status
   }
@@ -725,8 +759,9 @@ internal class ScriptedSan : SanCalls {
           injected[name]?.poll() ?: call()
         }
 
-      calls +=
+      record(
         ScriptedCall(name, Thread.currentThread(), status, handle, resetPeak)
+      )
 
       return status
     } finally {
@@ -746,6 +781,12 @@ internal class ScriptedSan : SanCalls {
     if (!busy.compareAndSet(false, true)) {
       violate("$name ran beside another call.")
     }
+  }
+
+  private fun record(call: ScriptedCall) {
+    calls += call
+    onAnswer(call)
+    answered.update { it + 1 }
   }
 
   private fun violate(message: String): Nothing {

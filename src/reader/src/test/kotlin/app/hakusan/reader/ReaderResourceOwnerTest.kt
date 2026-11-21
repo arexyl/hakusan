@@ -6,6 +6,7 @@ import app.hakusan.reader.san.ScriptedSan
 import java.util.concurrent.TimeUnit
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
@@ -196,6 +197,22 @@ class ReaderResourceOwnerTest {
       assertFalse(worker.isAlive)
       assertSuspendFails<IllegalStateException> { owner.counters() }
     }
+
+  @Test
+  fun `a canceled caller still closes once the gate is free`() = readerTest {
+    engine()
+    owner.gate.lock()
+
+    val closing = launch(start = CoroutineStart.UNDISPATCHED) { owner.close() }
+
+    closing.cancel()
+    assertTrue(san.engineLive)
+    owner.gate.unlock()
+    closing.join()
+
+    assertFalse(san.engineLive)
+    assertSuspendFails<IllegalStateException> { owner.counters() }
+  }
 
   @Test
   fun `closing an owner that never used its engine calls nothing`() =

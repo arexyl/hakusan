@@ -545,25 +545,6 @@ class ScriptedSanTest {
     assertEquals(SanAbi.STATUS_OK, san.engineShutdown(engine))
   }
 
-  /**
-   * A script whose every four bytes complete one row: it admits its lease with
-   * the first row, covers the complete rows, and completes when the input ends.
-   */
-  private fun rowsOfFourBytes(width: Int, height: Int): ScriptedStep = {
-    val rows = (content.receivedBytes / 4).toInt()
-
-    if (rows > 0 && lease == SanAbi.NO_HANDLE) {
-      describe(width, height)
-      admit(width, height)
-    }
-
-    if (rows > report[SanAbi.JOB_REPORT_COVERED_ROWS]) {
-      cover(rows)
-    }
-
-    if (content.ended) SanAbi.STATUS_OK else SanAbi.STATUS_INPUT_NEEDED
-  }
-
   private fun create(
     contentCount: Long = 4,
     jobCount: Long = 4,

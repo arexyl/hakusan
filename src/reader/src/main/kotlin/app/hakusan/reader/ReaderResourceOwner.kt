@@ -4,13 +4,17 @@ import app.hakusan.reader.san.SanAbi
 import app.hakusan.reader.san.SanAbiCalls
 import app.hakusan.reader.san.SanBinding
 import app.hakusan.reader.san.SanCalls
+import app.hakusan.reader.san.SanExecution
 import app.hakusan.reader.san.SanLibrary
 import app.hakusan.reader.san.checkSettled
 import app.hakusan.reader.san.engineCreateFailure
 import java.util.concurrent.Executors
+import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
@@ -66,7 +70,7 @@ internal sealed interface ReaderEngineAccess {
  */
 public class ReaderResourceOwner
 internal constructor(
-  private val settings: ReaderEngineSettings,
+  internal val settings: ReaderEngineSettings,
   private val callsOn: (worker: Thread) -> SanCalls,
   private val bind: () -> SanBinding,
 ) {
@@ -107,6 +111,47 @@ internal constructor(
     }
 
   /**
+   * Executes the waiting request of [requests] with an input of [source] and
+   * returns it after its terminal acknowledgment, or returns null when
+   * [ReaderContentRequests.takeNext] supplies none.
+   *
+   * It waits for the gate, so one request executes at a time across all content
+   * owners. A cancellation of the request ends it as canceled. A cancellation
+   * of the caller propagates after the request has been acknowledged as
+   * canceled, and any other failure of the work propagates after it has been
+   * acknowledged as an engine failure, both with nothing of the request left
+   * running.
+   */
+  public suspend fun execute(
+    requests: ReaderContentRequests,
+    source: ReaderEncodedSource,
+  ): ReaderContentRequest? {
+    val request = requests.takeNext() ?: return null
+    var execution: SanExecution? = null
+
+    try {
+      // From the take on, every failure acknowledges, also one of the
+      // allocations of the execution.
+      val outcome =
+        try {
+          SanExecution(this, requests, source, request)
+            .also { execution = it }
+            .run()
+        } catch (failure: Throwable) {
+          requests.acknowledgeTerminal(request, abandoned(failure))
+
+          throw failure
+        }
+
+      requests.acknowledgeTerminal(request, outcome)
+    } finally {
+      execution?.releaseGate()
+    }
+
+    return request
+  }
+
+  /**
    * Shuts the engine down and stops the worker. It waits for the executing
    * request, and a repeated call returns at once. It completes also when its
    * caller is canceled meanwhile.
@@ -116,19 +161,26 @@ internal constructor(
    *   that no one will release. The engine then stays closing.
    */
   public suspend fun close() {
-    gate.withLock {
-      if (closed) {
-        return
-      }
+    // The wait for the gate ends with the executing request, which the end of
+    // its session cancels, so a canceled caller still closes.
+    withContext(NonCancellable) {
+      gate.withLock {
+        if (!closed) {
+          closed = true
 
-      closed = true
-
-      try {
-        withContext(NonCancellable + worker) { shutDown() }
-      } finally {
-        executor.shutdown()
+          try {
+            withContext(worker) { shutDown() }
+          } finally {
+            executor.shutdown()
+          }
+        }
       }
     }
+  }
+
+  /** Fails a use of the owner after [close]. The caller holds the gate. */
+  internal fun checkOpen() {
+    check(!closed) { CLOSED }
   }
 
   /**
@@ -192,7 +244,19 @@ internal constructor(
   private suspend fun readCounters(resetPeak: Boolean): ReaderEngineCounters? {
     check(!closed) { CLOSED }
 
-    return withContext(worker) {
+    return try {
+      readOnWorker(resetPeak)
+    } catch (cancellation: CancellationException) {
+      // A close that stopped the worker meanwhile refuses the dispatch as a
+      // cancellation, which this caller did not request.
+      currentCoroutineContext().ensureActive()
+
+      throw IllegalStateException(CLOSED, cancellation)
+    }
+  }
+
+  private suspend fun readOnWorker(resetPeak: Boolean): ReaderEngineCounters? =
+    withContext(worker) {
       val live = (state as? State.Live)?.access ?: return@withContext null
       val counters = LongArray(SanAbi.ENGINE_COUNTERS_LENGTH)
 
@@ -215,7 +279,14 @@ internal constructor(
         leaseCount = counters[SanAbi.ENGINE_COUNTERS_LEASE_COUNT],
       )
     }
-  }
+
+  /** The outcome of a request whose execution threw [failure]. */
+  private fun abandoned(failure: Throwable): ReaderContentTerminal =
+    if (failure is CancellationException) {
+      ReaderContentTerminal.Canceled
+    } else {
+      ReaderContentTerminal.Failed(ReaderContentFailure.ENGINE_FAILURE)
+    }
 
   /** Runs on the worker, with the gate held. */
   private fun shutDown() {
