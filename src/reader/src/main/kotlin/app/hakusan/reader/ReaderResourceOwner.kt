@@ -1,14 +1,13 @@
 package app.hakusan.reader
 
 import app.hakusan.reader.san.SanAbi
-import app.hakusan.reader.san.SanAbiCalls
 import app.hakusan.reader.san.SanBinding
 import app.hakusan.reader.san.SanCalls
 import app.hakusan.reader.san.SanExecution
-import app.hakusan.reader.san.SanLibrary
 import app.hakusan.reader.san.checkSettled
 import app.hakusan.reader.san.engineCreateFailure
 import java.util.concurrent.Executors
+import java.util.concurrent.RejectedExecutionException
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.NonCancellable
@@ -64,35 +63,55 @@ internal sealed interface ReaderEngineAccess {
  * owners, from taking the request until its acknowledgment, which keeps one
  * acquisition and one native job.
  *
- * **Closing.** [close] waits for the executing request, shuts the engine down,
- * and stops the worker. The sessions end first: a request after it is a defect
- * of the caller.
+ * **Targets.** The owner holds every target of the output copies until
+ * presentation has returned it, also after the request that created it.
+ *
+ * **Closing.** [close] waits for the executing request and shuts the engine
+ * down. The worker stops once presentation has returned the last target. The
+ * sessions end first: a request after it is a defect of the caller.
  */
 public class ReaderResourceOwner
 internal constructor(
   internal val settings: ReaderEngineSettings,
-  private val callsOn: (worker: Thread) -> SanCalls,
-  private val bind: () -> SanBinding,
+  internal val platform: ReaderPlatform,
 ) {
   private val executor = Executors.newSingleThreadExecutor { task ->
     Thread(task, WORKER_NAME).apply { isDaemon = true }
   }
 
-  /** The worker. Every use of [engine] runs on it. */
+  /** The worker. Every use of [engine] and of [targets] runs on it. */
   internal val worker: CoroutineDispatcher = executor.asCoroutineDispatcher()
 
   /** Held by the executing request, and by a closing or a peak reset. */
   internal val gate: Mutex = Mutex()
 
+  internal val targets: ReaderTargetPool =
+    ReaderTargetPool(platform, settings.targetBytes, settings.targetCount)
+
+  /**
+   * Runs on the thread that returns a target, for the executing request. It
+   * must be short, and it must neither block nor throw.
+   */
+  @Volatile internal var returnListener: (() -> Unit)? = null
+
   @Volatile private var closed = false
 
   // Confined to the worker.
   private var state: State = State.Absent
+  private var stopping = false
+
+  init {
+    targets.onEmpty = {
+      if (stopping) {
+        executor.shutdown()
+      }
+    }
+  }
 
   /** An owner of the San library that the application packages. */
   public constructor(
     settings: ReaderEngineSettings
-  ) : this(settings, ::SanAbiCalls, SanLibrary::bind)
+  ) : this(settings, AndroidReaderPlatform)
 
   /**
    * Reads the ledger of the engine, or returns null while none is live. With
@@ -152,9 +171,10 @@ internal constructor(
   }
 
   /**
-   * Shuts the engine down and stops the worker. It waits for the executing
-   * request, and a repeated call returns at once. It completes also when its
-   * caller is canceled meanwhile.
+   * Shuts the engine down. It waits for the executing request, and a repeated
+   * call returns at once. It completes also when its caller is canceled
+   * meanwhile. The worker stops with the return of the last target, at once
+   * when presentation holds none.
    *
    * @throws IllegalStateException if the engine reports its shutdown pending:
    *   every job and lease is released by then, so the engine holds something
@@ -168,13 +188,44 @@ internal constructor(
         if (!closed) {
           closed = true
 
-          try {
-            withContext(worker) { shutDown() }
-          } finally {
-            executor.shutdown()
+          withContext(worker) {
+            try {
+              shutDown()
+            } finally {
+              stopping = true
+
+              if (targets.isEmpty) {
+                executor.shutdown()
+              }
+            }
           }
         }
       }
+    }
+  }
+
+  /**
+   * Returns the display lease [ordinal] of [target] to the worker. Any thread
+   * calls it, from the release of that lease.
+   *
+   * An executing request hears of it between two steps, through
+   * [returnListener]. A task of the worker applies it in any case, because the
+   * request may have ended meanwhile, and then tells the request that executes
+   * by then: a request that began between the two would otherwise wait for room
+   * that is already free.
+   */
+  internal fun returnTarget(target: ReaderTargetPool.Target, ordinal: Int) {
+    targets.post(target, ordinal)
+    returnListener?.invoke()
+
+    try {
+      executor.execute {
+        targets.applyReturns()
+        returnListener?.invoke()
+      }
+    } catch (_: RejectedExecutionException) {
+      // The worker stops only with an empty pool, so this lease was never
+      // handed over, and its return would change nothing.
     }
   }
 
@@ -200,13 +251,13 @@ internal constructor(
     }
 
   private fun create(): ReaderEngineAccess {
-    if (bind() != SanBinding.Established) {
+    if (platform.bind() != SanBinding.Established) {
       state = State.Unavailable
 
       return ReaderEngineAccess.Failed(ReaderContentFailure.ENGINE_UNAVAILABLE)
     }
 
-    val san = callsOn(Thread.currentThread())
+    val san = platform.calls(Thread.currentThread())
     val engine = LongArray(1)
 
     val status =

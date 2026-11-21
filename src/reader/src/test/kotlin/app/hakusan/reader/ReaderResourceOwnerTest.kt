@@ -18,19 +18,8 @@ import org.junit.jupiter.api.Test
 
 class ReaderResourceOwnerTest {
   private val san = ScriptedSan()
-  private var binding: SanBinding = SanBinding.Established
-  private var binds = 0
-
-  private val owner =
-    ReaderResourceOwner(
-      ReaderEngineSettings.FIRST_ITERATION,
-      callsOn = { san },
-      bind = {
-        binds++
-
-        binding
-      },
-    )
+  private val platform = ScriptedPlatform(san)
+  private val owner = ReaderResourceOwner(profile, platform)
 
   @Test
   fun `the first use creates one engine under the profile on the worker`() =
@@ -39,7 +28,7 @@ class ReaderResourceOwnerTest {
 
       assertInstanceOf(ReaderEngineAccess.Live::class.java, first)
       assertSame(first, engine())
-      assertEquals(1, binds)
+      assertEquals(1, platform.binds.get())
 
       // The first-iteration profile, in the order of the creation.
       assertEquals(
@@ -83,7 +72,7 @@ class ReaderResourceOwnerTest {
 
     for (failed in bindings) {
       readerTest {
-        val owner = ReaderResourceOwner(profile, { san }, { failed })
+        val owner = ReaderResourceOwner(profile, ScriptedPlatform(san, failed))
 
         val unavailable =
           ReaderEngineAccess.Failed(ReaderContentFailure.ENGINE_UNAVAILABLE)
@@ -99,12 +88,12 @@ class ReaderResourceOwnerTest {
 
   @Test
   fun `the binding is established once for the process`() = readerTest {
-    binding = SanBinding.Mismatch(status = null)
+    platform.binding = SanBinding.Mismatch(status = null)
 
     engine()
     engine()
 
-    assertEquals(1, binds)
+    assertEquals(1, platform.binds.get())
     owner.close()
   }
 
@@ -219,7 +208,7 @@ class ReaderResourceOwnerTest {
     readerTest {
       owner.close()
 
-      assertEquals(0, binds)
+      assertEquals(0, platform.binds.get())
       assertEquals(emptyList<Any>(), san.calls)
     }
 

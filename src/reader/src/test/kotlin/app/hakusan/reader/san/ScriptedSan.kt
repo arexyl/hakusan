@@ -35,6 +35,9 @@ internal class ScriptedTarget(
   )
 
   val copies: MutableList<Copy> = CopyOnWriteArrayList()
+
+  /** Whether the platform recycled the target, which then takes no copy. */
+  @Volatile var recycled: Boolean = false
 }
 
 /** The input that one content of a [ScriptedSan] received. */
@@ -667,7 +670,8 @@ internal class ScriptedSan : SanCalls {
     destinationFirstRow: Int,
   ): Int =
     answer("outputCopy", lease) {
-      if (destination !is ScriptedTarget) {
+      // The method rejects a missing and a recycled destination alike.
+      if (destination !is ScriptedTarget || destination.recycled) {
         return@answer SanAbi.STATUS_BINDING_MISMATCH
       }
 

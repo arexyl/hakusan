@@ -10,6 +10,7 @@ import app.hakusan.reader.ReaderEngineAccess
 import app.hakusan.reader.ReaderInputOpenResult
 import app.hakusan.reader.ReaderInputRead
 import app.hakusan.reader.ReaderResourceOwner
+import app.hakusan.reader.section
 import app.hakusan.reader.toContentFailure
 import kotlin.coroutines.cancellation.CancellationException
 import kotlinx.coroutines.CoroutineScope
@@ -46,7 +47,9 @@ import kotlinx.coroutines.withContext
  * on the lease, closes the content and the input, joins the watcher, and only
  * then releases the job: every cancellation has returned by then.
  *
- * It publishes no output yet.
+ * **Output.** After each step and each wakeup, the [SanOutput] of the job
+ * copies and publishes what it can. Decoding never waits for presentation. Only
+ * the final copy does, after the job ended and the pump is settled.
  */
 internal class SanExecution(
   private val owner: ReaderResourceOwner,
@@ -56,8 +59,9 @@ internal class SanExecution(
 ) {
   private val transfer = ByteArray(owner.settings.inputPortionBytes)
 
-  // Bounded by construction: one read of the pump at a time, and cancellations
-  // that the worker collects once.
+  // Bounded by construction: one read of the pump at a time, cancellations
+  // that the worker collects once, and one event for each return or take of
+  // presentation.
   private val mailbox = Channel<Event>(Channel.UNLIMITED)
   private val fedSignal = Channel<Unit>(Channel.CONFLATED)
 
@@ -71,7 +75,7 @@ internal class SanExecution(
   private val report = LongArray(SanAbi.JOB_REPORT_LENGTH)
   private var content = SanAbi.NO_HANDLE
   private var job = SanAbi.NO_HANDLE
-  private var lease = SanAbi.NO_HANDLE
+  private var output: SanOutput? = null
   private var fedBytes = 0L
   private var pendingInput: ReaderInputRead? = null
   private var collect = false
@@ -207,6 +211,16 @@ internal class SanExecution(
 
       val open = checkNotNull(input) { "The acquisition left no input." }
 
+      val publishing =
+        SanOutput(owner, requests, request, open.representation, san, report) {
+          cancel(san, it)
+        }
+
+      // Both wakeups stand before the first publication, so that none is lost
+      // between a refused attempt and the next one.
+      output = publishing
+      requests.setProducerWakeup(request) { mailbox.trySend(Event.Wakeup) }
+      owner.returnListener = { mailbox.trySend(Event.Returned) }
       pumping = launch(Dispatchers.IO) { pump(open) }
 
       val status = steps(san)
@@ -216,7 +230,18 @@ internal class SanExecution(
 
       jobSettled = true
 
-      return outcome
+      // The acquisition ends before any wait for presentation.
+      pumping?.cancelAndJoin()
+
+      while (publishing.finish()) {
+        route(san, mailbox.receive())
+      }
+
+      return if (publishing.refused) {
+        ReaderContentTerminal.Failed(ReaderContentFailure.BUDGET_EXCEEDED)
+      } else {
+        outcome
+      }
     } finally {
       withContext(NonCancellable) { cleanUp(san, watcher) }
     }
@@ -273,6 +298,14 @@ internal class SanExecution(
     when (event) {
       Event.Cancel -> cancel(san)
 
+      // A target or the queue of the owner may be free now.
+      Event.Returned -> {
+        owner.targets.applyReturns()
+        output?.update()
+      }
+
+      Event.Wakeup -> output?.update()
+
       is Event.Input ->
         when (val read = event.read) {
           is ReaderInputRead.Data,
@@ -291,13 +324,9 @@ internal class SanExecution(
   }
 
   private fun step(san: SanCalls): Int {
-    val status = san.jobStep(job, report)
+    val status = owner.platform.section(STEP) { san.jobStep(job, report) }
 
-    // The claim on a lease starts with the first report that names it. A
-    // status that writes no report leaves the last one in place.
-    if (lease == SanAbi.NO_HANDLE) {
-      lease = report[SanAbi.JOB_REPORT_LEASE]
-    }
+    output?.update()
 
     return status
   }
@@ -395,11 +424,12 @@ internal class SanExecution(
       }
     }
 
-    settle(failures) {
-      if (lease != SanAbi.NO_HANDLE) {
-        checkSettled("outputRelease", san.outputRelease(lease))
-      }
-    }
+    // The lease goes after the last copy, and the targets stay with
+    // presentation for as long as it draws them.
+    settle(failures) { output?.releaseLease() }
+    settle(failures) { output?.releaseTargets() }
+
+    owner.returnListener = null
 
     settle(failures) { closeContent(san) }
     settle(failures) { closeInput() }
@@ -460,5 +490,15 @@ internal class SanExecution(
     class Input(val read: ReaderInputRead) : Event
 
     data object Cancel : Event
+
+    /** Presentation returned a target. */
+    data object Returned : Event
+
+    /** Presentation took a publication, or a published output settled. */
+    data object Wakeup : Event
+  }
+
+  private companion object {
+    const val STEP = "reader.step"
   }
 }

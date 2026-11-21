@@ -6,11 +6,9 @@ import app.hakusan.reader.san.SanBinding
 import app.hakusan.reader.san.ScriptedSan
 import app.hakusan.reader.san.ScriptedStep
 import app.hakusan.reader.san.rowsOfFourBytes
-import java.util.concurrent.ConcurrentLinkedQueue
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicInteger
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration.Companion.milliseconds
 import kotlinx.coroutines.CompletableDeferred
@@ -20,7 +18,6 @@ import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelAndJoin
-import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.junit.jupiter.api.Assertions.assertArrayEquals
@@ -40,19 +37,16 @@ class ReaderRequestExecutionTest {
   private val book = ReaderTestBook()
   private val san = ScriptedSan()
   private val source = TestSource()
+  private val platform = ScriptedPlatform(san)
 
   private val owner =
-    ReaderResourceOwner(
-      ReaderEngineSettings.FIRST_ITERATION,
-      callsOn = { san },
-      bind = { SanBinding.Established },
-    )
+    ReaderResourceOwner(ReaderEngineSettings.FIRST_ITERATION, platform)
 
   @Test
   fun `a request decodes to its completion and leaves nothing behind`() =
     readerTest {
       val requests = contentOwner()
-      val input = complete()
+      val input = completeInput()
       val acknowledged = CopyOnWriteArrayList<Boolean>()
 
       source.supply(input)
@@ -68,7 +62,7 @@ class ReaderRequestExecutionTest {
 
       assertSame(request, owner.execute(requests, source))
       assertEquals(completed(), request.terminal)
-      assertArrayEquals(counting(16), san.contents.single().bytes())
+      assertArrayEquals(countingBytes(16), san.contents.single().bytes())
       assertEquals(1, input.closeCount)
       assertEquals(SETTLEMENTS, san.calls.takeLast(3).map { it.name })
       assertEquals(listOf(false, false, false), acknowledged)
@@ -80,7 +74,7 @@ class ReaderRequestExecutionTest {
   fun `input that arrives in stages is fed in order and never polled for`() =
     readerTest {
       val requests = contentOwner()
-      val input = live()
+      val input = liveInput()
 
       source.supply(input)
       san.script(rowsOfFourBytes(width = 4, height = 4))
@@ -91,16 +85,14 @@ class ReaderRequestExecutionTest {
       san.await { count("jobStep") >= 1 }
       input.receiveThrough(5)
 
-      san.await {
-        contents.single().receivedBytes == 5L && calls.last().name == "jobStep"
-      }
+      san.await { steppedAt(5L) }
 
       input.receiveThrough(16)
       input.end()
 
       assertSame(request, running.request())
       assertEquals(completed(), request.terminal)
-      assertArrayEquals(counting(16), san.contents.single().bytes())
+      assertArrayEquals(countingBytes(16), san.contents.single().bytes())
       assertSettled()
     }
 
@@ -111,7 +103,7 @@ class ReaderRequestExecutionTest {
       val rows = rowsOfFourBytes(width = 4, height = 4)
       var progressed = false
 
-      source.supply(complete())
+      source.supply(completeInput())
 
       // Every portion takes two steps, and the next read is ready meanwhile.
       san.script {
@@ -175,7 +167,7 @@ class ReaderRequestExecutionTest {
   fun `a cancellation in an input wait is collected by an immediate step`() =
     readerTest {
       val requests = contentOwner()
-      val input = live()
+      val input = liveInput()
 
       source.supply(input)
       san.script(rowsOfFourBytes(width = 4, height = 4))
@@ -248,7 +240,7 @@ class ReaderRequestExecutionTest {
     readerTest {
       val requests = contentOwner()
 
-      source.supply(live())
+      source.supply(liveInput())
       san.script(rowsOfFourBytes(width = 4, height = 4))
 
       val request = submit(requests)
@@ -268,9 +260,9 @@ class ReaderRequestExecutionTest {
   @Test
   fun `canceled requests leave the next one only its own bytes`() = readerTest {
     val requests = contentOwner()
-    val full = complete()
+    val full = completeInput()
 
-    repeat(3) { source.supply(live()) }
+    repeat(3) { source.supply(liveInput()) }
     source.supply(full)
     repeat(4) { san.script(rowsOfFourBytes(width = 4, height = 4)) }
 
@@ -298,14 +290,14 @@ class ReaderRequestExecutionTest {
       san.contents.map { it.receivedBytes },
     )
 
-    assertArrayEquals(counting(16), san.contents.last().bytes())
+    assertArrayEquals(countingBytes(16), san.contents.last().bytes())
     assertSettled()
   }
 
   @Test
   fun `a producer failure after a prefix ends as that failure`() = readerTest {
     val requests = contentOwner()
-    val input = live()
+    val input = liveInput()
 
     input.receiveThrough(6)
     input.fail(ReaderAcquisitionFailure.FAILED)
@@ -317,7 +309,7 @@ class ReaderRequestExecutionTest {
     owner.execute(requests, source)
 
     assertEquals(failed(ReaderContentFailure.INPUT_FAILED), request.terminal)
-    assertArrayEquals(counting(6), san.contents.single().bytes())
+    assertArrayEquals(countingBytes(6), san.contents.single().bytes())
     assertEquals(
       SanAbi.STATUS_CANCELED,
       san.calls.last { it.name == "jobStep" }.status,
@@ -332,7 +324,9 @@ class ReaderRequestExecutionTest {
       val session = gate.start()
       val requests = ReaderContentRequests(session, LIMITS)
 
-      source.supply(live())
+      requests.consumeAtOnce()
+
+      source.supply(liveInput())
       san.script(rowsOfFourBytes(width = 4, height = 4))
 
       val request = submit(requests)
@@ -352,7 +346,7 @@ class ReaderRequestExecutionTest {
     readerTest {
       val requests = contentOwner()
 
-      source.supply(complete())
+      source.supply(completeInput())
       san.script(rowsOfFourBytes(width = 4, height = 4))
       san.failNext("contentFeed", SanAbi.STATUS_ALLOCATION_FAILED)
 
@@ -375,7 +369,7 @@ class ReaderRequestExecutionTest {
     val rows = rowsOfFourBytes(width = 4, height = 4)
 
     for ((status, failure) in FAILURES) {
-      source.supply(complete())
+      source.supply(completeInput())
       san.script { status }
 
       val request = submit(requests)
@@ -385,7 +379,7 @@ class ReaderRequestExecutionTest {
       assertEquals(failed(failure), request.terminal)
     }
 
-    source.supply(complete())
+    source.supply(completeInput())
 
     san.script {
       warn(SanAbi.WARNING_SRGB_FALLBACK.toLong())
@@ -410,7 +404,7 @@ class ReaderRequestExecutionTest {
   fun `a refused content or job ends as its failure`() = readerTest {
     val requests = contentOwner()
 
-    source.supply(complete())
+    source.supply(completeInput())
     san.failNext("contentOpen", SanAbi.STATUS_BUDGET_EXCEEDED)
 
     val unopened = submit(requests)
@@ -423,7 +417,7 @@ class ReaderRequestExecutionTest {
     )
     assertEquals("contentOpen", san.calls.last().name)
 
-    source.supply(complete())
+    source.supply(completeInput())
     san.failNext("jobRequest", SanAbi.STATUS_UNSUPPORTED_OPERATION)
 
     val unrequested = submit(requests)
@@ -447,7 +441,7 @@ class ReaderRequestExecutionTest {
   fun `a job that completes before the end of its input closes the input`() =
     readerTest {
       val requests = contentOwner()
-      val input = live()
+      val input = liveInput()
 
       input.receiveThrough(16)
       source.supply(input)
@@ -483,7 +477,7 @@ class ReaderRequestExecutionTest {
   fun `a status outside the contract throws after the cleanup`() = readerTest {
     val requests = contentOwner()
 
-    source.supply(complete())
+    source.supply(completeInput())
     san.script(rowsOfFourBytes(width = 4, height = 4))
     san.failNext("contentFeed", SanAbi.STATUS_BINDING_MISMATCH)
 
@@ -505,7 +499,7 @@ class ReaderRequestExecutionTest {
   fun `a throwing step ends the request as an engine failure`() = readerTest {
     val requests = contentOwner()
 
-    source.supply(complete())
+    source.supply(completeInput())
 
     // The engine fails a script that progresses past no byte.
     san.script { SanAbi.STATUS_PROGRESS }
@@ -524,12 +518,11 @@ class ReaderRequestExecutionTest {
       val unavailable =
         ReaderResourceOwner(
           ReaderEngineSettings.FIRST_ITERATION,
-          callsOn = { san },
-          bind = { SanBinding.Mismatch(status = null) },
+          ScriptedPlatform(san, SanBinding.Mismatch(status = null)),
         )
 
       val requests = contentOwner()
-      val input = complete()
+      val input = completeInput()
 
       source.supply(input)
 
@@ -573,11 +566,11 @@ class ReaderRequestExecutionTest {
     val first = contentOwner()
     val second = contentOwner()
     val other = TestSource()
-    val hold = Hold()
+    val hold = StepHold()
     val acknowledgedAtOpen = CompletableDeferred<Boolean>()
 
-    source.supply(live())
-    other.supply(complete())
+    source.supply(liveInput())
+    other.supply(completeInput())
 
     san.script {
       hold.block()
@@ -614,7 +607,7 @@ class ReaderRequestExecutionTest {
   fun `a canceled caller leaves the request acknowledged and settled`() =
     readerTest {
       val requests = contentOwner()
-      val input = live()
+      val input = liveInput()
 
       source.supply(input)
       san.script(rowsOfFourBytes(width = 4, height = 4))
@@ -650,7 +643,7 @@ class ReaderRequestExecutionTest {
   fun `the release of a job waits for a cancellation that still runs`() =
     readerTest {
       val requests = contentOwner()
-      val input = live()
+      val input = liveInput()
       val entered = CompletableDeferred<Unit>()
       val resume = CountDownLatch(1)
 
@@ -689,7 +682,7 @@ class ReaderRequestExecutionTest {
   fun `a cancellation that the input or the source throws is a defect`() =
     readerTest {
       val requests = contentOwner()
-      val waiting = live()
+      val waiting = liveInput()
 
       val input =
         object : ReaderByteInput by waiting {
@@ -751,9 +744,9 @@ class ReaderRequestExecutionTest {
     result: ScriptedStep
   ): ReaderContentRequest {
     val requests = contentOwner()
-    val hold = Hold()
+    val hold = StepHold()
 
-    source.supply(live())
+    source.supply(liveInput())
 
     san.script {
       hold.block()
@@ -781,6 +774,7 @@ class ReaderRequestExecutionTest {
    */
   private suspend fun assertSettled(defect: Boolean = false) {
     assertEquals(emptyList<String>(), san.violations)
+    assertEquals(emptyList<String>(), platform.violations)
 
     if (!defect) {
       assertEquals(
@@ -789,9 +783,9 @@ class ReaderRequestExecutionTest {
       )
     }
 
-    val serialized = san.calls.filter { it.name != "jobCancel" }
+    val decoding = san.calls.filter { it.name in DECODING }
 
-    for ((previous, call) in serialized.zipWithNext()) {
+    for ((previous, call) in decoding.zipWithNext()) {
       val needed =
         previous.name == "jobStep" &&
           previous.status == SanAbi.STATUS_INPUT_NEEDED
@@ -828,8 +822,11 @@ class ReaderRequestExecutionTest {
     assertEquals(SanAbi.STATUS_OK, last.status)
   }
 
+  /** A content owner whose presentation takes and returns at once. */
   private suspend fun contentOwner(): ReaderContentRequests =
-    ReaderContentRequests(ReaderSessionGate().start(), LIMITS)
+    ReaderContentRequests(ReaderSessionGate().start(), LIMITS).apply {
+      consumeAtOnce()
+    }
 
   private fun submit(
     requests: ReaderContentRequests,
@@ -846,68 +843,11 @@ class ReaderRequestExecutionTest {
   private suspend fun Deferred<Result<ReaderContentRequest?>>.request():
     ReaderContentRequest? = await().getOrThrow()
 
-  private fun failed(failure: ReaderContentFailure): ReaderContentTerminal =
-    ReaderContentTerminal.Failed(failure)
-
-  private fun ScriptedSan.count(name: String): Int = calls.count {
-    it.name == name
-  }
-
-  /** An input whose [count] bytes arrived and whose producer completed. */
-  private fun complete(count: Int = 16): ControlledReaderInput =
-    live(count).apply {
-      receiveThrough(count)
-      end()
-    }
-
-  /** An input of [count] bytes that has received none and stays live. */
-  private fun live(count: Int = 16): ControlledReaderInput =
-    ControlledReaderInput(counting(count), maxTransfer = 5)
-
-  private fun counting(count: Int): ByteArray = ByteArray(count) { it.toByte() }
-
-  /** Blocks the step that calls [block] until the test counts [resume] down. */
-  private class Hold {
-    val entered = CompletableDeferred<Unit>()
-    val resume = CountDownLatch(1)
-
-    fun block() {
-      entered.complete(Unit)
-      check(resume.await(BOUND_SECONDS, TimeUnit.SECONDS))
-    }
-  }
-
-  /** A source that hands out the queued results, one per opening. */
-  private class TestSource : ReaderEncodedSource {
-    val results = ConcurrentLinkedQueue<ReaderInputOpenResult>()
-    val entered = Channel<Unit>(Channel.UNLIMITED)
-    val opens = AtomicInteger()
-
-    /** Suspends every opening until it completes, when set. */
-    @Volatile var hold: CompletableDeferred<Unit>? = null
-
-    @Volatile var onOpen: () -> Unit = {}
-
-    fun supply(input: ReaderByteInput) {
-      results += ReaderInputOpenResult.Opened(input)
-    }
-
-    override suspend fun open(
-      descriptor: ReaderContentDescriptor
-    ): ReaderInputOpenResult {
-      opens.incrementAndGet()
-      onOpen()
-      entered.trySend(Unit)
-      hold?.await()
-
-      return checkNotNull(results.poll()) { "No result for an opening." }
-    }
-  }
-
   private companion object {
     const val BOUND_SECONDS = 5L
     val LIMITS = ReaderOutputLimits.FIRST_ITERATION
     val SETTLEMENTS = listOf("outputRelease", "contentClose", "jobRelease")
+    val DECODING = setOf("jobRequest", "jobStep", "contentFeed")
 
     val CALLER_DEFECTS =
       setOf(

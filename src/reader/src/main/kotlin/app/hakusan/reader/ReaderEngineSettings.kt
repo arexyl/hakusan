@@ -1,7 +1,8 @@
 package app.hakusan.reader
 
 /**
- * The limits of the native engine, as named, replaceable settings.
+ * The limits of the native engine and the ceilings of the adapter around it, as
+ * named, replaceable settings.
  *
  * Engine creation passes the first sixteen as they stand. The engine checks
  * each limit alone and no relation between two of them, so the settings check
@@ -48,6 +49,10 @@ public data class ReaderEngineSettings(
    * engine takes no such limit: it bounds the two limits that multiply to it.
    */
   public val transferStagingBytes: Long,
+  /** Every target of the output copies together, in bytes of pixels. */
+  public val targetBytes: Long,
+  /** The targets of the output copies, across all content owners. */
+  public val targetCount: Int,
 ) {
   init {
     val limits =
@@ -69,6 +74,8 @@ public data class ReaderEngineSettings(
         outputLeaseBytes,
         outputLeaseCount.toLong(),
         transferStagingBytes,
+        targetBytes,
+        targetCount.toLong(),
       )
 
     require(limits.all { it >= 1 }) { "Every limit must be at least 1." }
@@ -110,7 +117,8 @@ public data class ReaderEngineSettings(
 
     /**
      * The first-iteration qualification profile: a budget of 128 MiB with one
-     * job, three contents, and four leases of at most 16 MiB.
+     * job, three contents, and four leases of at most 16 MiB, and four targets
+     * within 64 MiB.
      */
     public val FIRST_ITERATION: ReaderEngineSettings =
       ReaderEngineSettings(
@@ -131,6 +139,8 @@ public data class ReaderEngineSettings(
         outputLeaseBytes = 16L shl 20,
         outputLeaseCount = 4,
         transferStagingBytes = 2L shl 20,
+        targetBytes = 64L shl 20,
+        targetCount = 4,
       )
   }
 }
