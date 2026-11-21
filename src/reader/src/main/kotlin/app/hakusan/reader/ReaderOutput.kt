@@ -1,5 +1,7 @@
 package app.hakusan.reader
 
+import android.graphics.Bitmap
+
 /**
  * A half-open rectangle `[left, right) × [top, bottom)` in image coordinates.
  *
@@ -51,11 +53,13 @@ public data class ReaderImageCoverage(
 }
 
 /**
- * Ownership of one published output and of the obligation to release it.
+ * Ownership of one publication of an output and of the obligation to release
+ * it: the display lease of one target.
  *
- * The shape is provisional and carries no pixels: the first ABI binds the
- * backing and its release to the Bindings declarations, while these semantics
- * stay.
+ * Presentation draws [bitmap] up to the covered rows of [coverage], and it
+ * closes the lease once it has stopped drawing the target and a frame recorded
+ * without it has synced to the render thread. Closing only returns the target
+ * to the adapter that created it, which may then copy into it again.
  *
  * **Claims.** A lease has at most one claimant, which receives the outcome of
  * its release. A closing or released lease cannot be claimed.
@@ -71,16 +75,39 @@ public data class ReaderImageCoverage(
  * The [release] action must be short and must not block. It can run inside any
  * call of the owner, and inside the end handler of a session.
  */
-public class ReaderOutputLease(
+public class ReaderOutputLease
+internal constructor(
   /** The representation whose content the output shows. */
   public val representation: ReaderRepresentation,
   /** The valid content of the output. */
   public val coverage: ReaderImageCoverage,
+  /**
+   * The ordinal of this publication of its output, from 1. A later revision
+   * covers every row of an earlier one.
+   */
+  public val revision: Int,
+  internal val target: ReaderTarget,
   release: () -> Unit,
 ) : AutoCloseable {
   private val monitor = Any()
   private var release: (() -> Unit)? = release
   private var claimant: ((Throwable?) -> Unit)? = null
+
+  init {
+    require(revision >= 1) { "A publication has a revision from 1." }
+  }
+
+  /**
+   * The pixels of the target, of which only the covered rows are valid. Never
+   * draw them after [close].
+   *
+   * @throws IllegalStateException if the target holds no Bitmap, as in a JVM
+   *   test.
+   */
+  public val bitmap: Bitmap
+    get() =
+      (target as? ReaderBitmapTarget)?.bitmap
+        ?: error("The target of this lease holds no Bitmap.")
 
   /**
    * Makes [claimant] the receiver of the release outcome if the lease is open

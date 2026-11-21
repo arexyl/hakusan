@@ -351,10 +351,7 @@ class ReaderContentRequestsTest {
     var releases = 0
 
     val partial =
-      ReaderOutputLease(
-        bound.representation,
-        ReaderImageCoverage(100, 4000, REGION, finalQuality = false),
-      ) {
+      testLease(bound.representation, REGION, finalQuality = false) {
         releases++
       }
 
@@ -558,6 +555,164 @@ class ReaderContentRequestsTest {
   }
 
   @Test
+  fun `a publication waits until presentation takes it`() = readerTest {
+    val owner = TestOwner.start()
+
+    val requests = owner.requests
+
+    val bound = owner.execute(book.descriptor(0))
+
+    val output = testLease(bound.representation) {}
+
+    assertFalse(requests.publicationWaits(bound.request))
+    assertEquals(PUBLISHED, requests.publish(bound.request, output))
+    assertTrue(requests.publicationWaits(bound.request))
+    assertSame(output, requests.takePublication()?.output)
+    assertFalse(requests.publicationWaits(bound.request))
+    output.close()
+    requests.acknowledgeTerminal(bound.request, completed())
+  }
+
+  @Test
+  fun `only a queued publication wakes presentation`() = readerTest {
+    val owner = TestOwner.start()
+
+    val requests = owner.requests
+
+    val bound = owner.execute(book.descriptor(0))
+
+    val outputs = List(3) { testLease(bound.representation) {} }
+
+    val wakeups = mutableListOf<Wakeup>()
+
+    requests.setPresentationWakeup {
+      val queued = requests.publicationWaits(bound.request)
+
+      wakeups += Wakeup(queued, monitorHeld(requests, bound.request))
+    }
+
+    assertEquals(PUBLISHED, requests.publish(bound.request, outputs[0]))
+    assertEquals(listOf(Wakeup(queued = true, monitorHeld = false)), wakeups)
+    assertEquals(BUSY, requests.publish(bound.request, outputs[1]))
+    assertSame(outputs[0], requests.takePublication()?.output)
+    assertEquals(1, wakeups.size)
+
+    requests.setPresentationWakeup(null)
+
+    assertEquals(PUBLISHED, requests.publish(bound.request, outputs[1]))
+    assertEquals(1, wakeups.size)
+    outputs.forEach { it.close() }
+    requests.acknowledgeTerminal(bound.request, completed())
+  }
+
+  @Test
+  fun `a taken publication and a settled one wake the producer`() = readerTest {
+    val owner = TestOwner.start()
+
+    val requests = owner.requests
+
+    val bound = owner.execute(book.descriptor(0))
+
+    val outputs = List(3) { testLease(bound.representation) {} }
+
+    val wakeups = mutableListOf<Boolean>()
+
+    requests.setProducerWakeup(bound.request) {
+      wakeups += monitorHeld(requests, bound.request)
+    }
+
+    assertEquals(PUBLISHED, requests.publish(bound.request, outputs[0]))
+    assertEquals(0, wakeups.size)
+    assertSame(outputs[0], requests.takePublication()?.output)
+    assertEquals(1, wakeups.size)
+    outputs[0].close()
+    assertEquals(2, wakeups.size)
+
+    // A new request releases the publication that presentation never took.
+    assertEquals(PUBLISHED, requests.publish(bound.request, outputs[1]))
+    checkNotNull(requests.submit(book.descriptor(1)))
+    assertEquals(3, wakeups.size)
+
+    assertEquals(STALE, requests.publish(bound.request, outputs[2]))
+    assertNull(requests.takePublication())
+    assertEquals(listOf(false, false, false), wakeups)
+    requests.acknowledgeTerminal(bound.request, Canceled)
+  }
+
+  @Test
+  fun `an output that was never published wakes no producer`() = readerTest {
+    val limits = ReaderOutputLimits(liveOutputs = 1, awaitingPublications = 1)
+
+    val owner = TestOwner.start(limits)
+
+    val requests = owner.requests
+
+    val bound = owner.execute(book.descriptor(0))
+
+    val outputs = List(2) { testLease(bound.representation) {} }
+
+    var wakeups = 0
+
+    requests.setProducerWakeup(bound.request) { wakeups++ }
+
+    assertEquals(PUBLISHED, requests.publish(bound.request, outputs[0]))
+    assertEquals(BUSY, requests.publish(bound.request, outputs[1]))
+    requests.discard(bound.request, outputs[1])
+    assertEquals(0, wakeups)
+    requests.acknowledgeTerminal(bound.request, completed())
+  }
+
+  @Test
+  fun `a producer wakeup ends with the acknowledgment of its request`() =
+    readerTest {
+      val owner = TestOwner.start()
+
+      val requests = owner.requests
+
+      val first = owner.execute(book.descriptor(0))
+
+      val output = testLease(first.representation) {}
+
+      var firstWakeups = 0
+      var secondWakeups = 0
+
+      requests.setProducerWakeup(first.request) { firstWakeups++ }
+
+      assertEquals(PUBLISHED, requests.publish(first.request, output))
+      assertSame(output, requests.takePublication()?.output)
+      assertEquals(1, firstWakeups)
+      requests.acknowledgeTerminal(first.request, completed())
+
+      val second = owner.execute(book.descriptor(1))
+
+      requests.setProducerWakeup(second.request) { secondWakeups++ }
+
+      // The output of the first request frees capacity of the owner.
+      output.close()
+      assertEquals(1, firstWakeups)
+      assertEquals(1, secondWakeups)
+      requests.acknowledgeTerminal(second.request, completed())
+    }
+
+  @Test
+  fun `the producer calls reject a request that does not execute`() =
+    readerTest {
+      val owner = TestOwner.start()
+
+      val requests = owner.requests
+
+      val waiting = checkNotNull(requests.submit(book.descriptor(0)))
+
+      assertThrowsExactly(IllegalArgumentException::class.java) {
+        requests.publicationWaits(waiting)
+      }
+
+      assertThrowsExactly(IllegalArgumentException::class.java) {
+        requests.setProducerWakeup(waiting) {}
+      }
+    }
+
+  @Test
   fun `output limits reject impossible settings`() {
     assertThrowsExactly(IllegalArgumentException::class.java) {
       ReaderOutputLimits(liveOutputs = 0, awaitingPublications = 1)
@@ -613,6 +768,25 @@ class ReaderContentRequestsTest {
     val request: ReaderContentRequest,
     val representation: ReaderRepresentation,
   )
+
+  /**
+   * Whether the calling thread holds the monitor of [requests]: a call from
+   * another thread then does not return within the bound. The probe asks about
+   * the executing [request], which changes nothing.
+   */
+  private fun monitorHeld(
+    requests: ReaderContentRequests,
+    request: ReaderContentRequest,
+  ): Boolean {
+    val probe = thread { requests.publicationWaits(request) }
+
+    probe.join(TimeUnit.SECONDS.toMillis(BOUND_SECONDS))
+
+    return probe.isAlive
+  }
+
+  /** What presentation saw when the owner woke it. */
+  private data class Wakeup(val queued: Boolean, val monitorHeld: Boolean)
 
   /** What a cancellation observer saw when it was notified. */
   private data class Observation(
@@ -670,7 +844,7 @@ class ReaderContentRequestsTest {
 
         REPRESENTATION -> testLease(release = release)
 
-        REGION -> testLease(bound.representation, OUTSIDE, release)
+        REGION -> testLease(bound.representation, OUTSIDE, release = release)
       }
   }
 

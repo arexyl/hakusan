@@ -13,15 +13,24 @@ internal fun ReaderTestBook.descriptor(
 internal fun completed(): ReaderContentTerminal =
   ReaderContentTerminal.Completed.of()
 
-/** A lease of one 100 × 4000 segment whose top 100 rows are final. */
+/** A target without pixels, which only its identity tells apart. */
+internal class TestTarget : ReaderTarget
+
+/**
+ * A lease of one 100 × 4000 segment whose top 100 rows are final, as the first
+ * publication of a target of its own.
+ */
 internal fun testLease(
   representation: ReaderRepresentation = ReaderRepresentation(),
   region: ReaderImageRegion = ReaderImageRegion(0, 0, 100, 100),
+  finalQuality: Boolean = true,
   release: () -> Unit,
 ): ReaderOutputLease =
   ReaderOutputLease(
     representation,
-    ReaderImageCoverage(100, 4000, region, finalQuality = true),
+    ReaderImageCoverage(100, 4000, region, finalQuality),
+    revision = 1,
+    target = TestTarget(),
     release,
   )
 

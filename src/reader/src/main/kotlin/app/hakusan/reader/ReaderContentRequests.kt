@@ -147,6 +147,14 @@ internal constructor(cause: Throwable) :
  * it, so a lease taken by presentation survives the end of its request. The
  * executor hands every output that it does not publish to [discard].
  *
+ * **Wakeups.** The owner tells presentation that a publication is queued, and
+ * the producer of the executing request that presentation took a publication or
+ * that a published output settled. A wakeup is an action that runs outside the
+ * monitor, on the thread whose call caused it. It must be short, and it must
+ * neither block nor throw. It carries no state: the woken side asks the owner.
+ * The owner reads a wakeup under its monitor and runs it afterward, so one can
+ * still run once after it was replaced, removed, or ended by its request.
+ *
  * **Closing.** The end of the session closes the owner as [beginClose] does,
  * without a paired call. Closing stops admission, cancels both requests, and
  * releases queued outputs. [awaitClosed] completes once the executing request
@@ -180,6 +188,8 @@ public class ReaderContentRequests(
   private var pending: ReaderContentRequest? = null
   private var failedReleases = 0
   private var closeFailure: ReaderOutputReleaseException? = null
+  private var producerWakeup: (() -> Unit)? = null
+  private var presentationWakeup: (() -> Unit)? = null
 
   init {
     session.invokeOnEnd(::beginClose)
@@ -279,6 +289,8 @@ public class ReaderContentRequests(
     request: ReaderContentRequest,
     output: ReaderOutputLease,
   ): ReaderPublishResult {
+    var wakeup: (() -> Unit)? = null
+
     val result =
       synchronized(monitor) {
         requireExecuting(request)
@@ -294,7 +306,7 @@ public class ReaderContentRequests(
           if (result == ReaderPublishResult.BUSY) {
             output.claimable()
           } else {
-            hold(output)
+            hold(output, published = result == ReaderPublishResult.PUBLISHED)
           }
 
         require(accepted) { UNCLAIMABLE }
@@ -302,8 +314,10 @@ public class ReaderContentRequests(
         when (result) {
           ReaderPublishResult.STALE -> request.stale = true
 
-          ReaderPublishResult.PUBLISHED ->
+          ReaderPublishResult.PUBLISHED -> {
             queued.addLast(ReaderPublication(request, output))
+            wakeup = presentationWakeup
+          }
 
           ReaderPublishResult.BUSY -> {}
         }
@@ -311,11 +325,61 @@ public class ReaderContentRequests(
         result
       }
 
+    wakeup?.invoke()
+
     if (result == ReaderPublishResult.STALE) {
       output.close()
     }
 
     return result
+  }
+
+  /**
+   * Whether a publication of the executing [request] still waits for
+   * presentation. A producer copies its next revision only when none does, so
+   * that it never queues behind its own output.
+   *
+   * @throws IllegalArgumentException if [request] is not executing in this
+   *   owner.
+   */
+  public fun publicationWaits(request: ReaderContentRequest): Boolean =
+    synchronized(monitor) {
+      requireExecuting(request)
+
+      queued.any { it.request === request }
+    }
+
+  /**
+   * Makes [wakeup] the producer wakeup of the executing [request], until its
+   * terminal acknowledgment. The owner runs it each time presentation takes a
+   * publication and each time a published output settles, whichever request
+   * published it. An output that was never published wakes no producer.
+   *
+   * A producer registers before its first publication, so that no wakeup
+   * between a busy publication and its next attempt is lost.
+   *
+   * @throws IllegalArgumentException if [request] is not executing in this
+   *   owner.
+   */
+  public fun setProducerWakeup(
+    request: ReaderContentRequest,
+    wakeup: () -> Unit,
+  ) {
+    synchronized(monitor) {
+      requireExecuting(request)
+
+      producerWakeup = wakeup
+    }
+  }
+
+  /**
+   * Makes [wakeup] the action that the owner runs each time it queues a
+   * publication, or removes that action with null. Presentation then requests a
+   * frame and takes the publication. A publication that was queued before the
+   * call is not announced.
+   */
+  public fun setPresentationWakeup(wakeup: (() -> Unit)?) {
+    synchronized(monitor) { presentationWakeup = wakeup }
   }
 
   /**
@@ -334,7 +398,7 @@ public class ReaderContentRequests(
   public fun discard(request: ReaderContentRequest, output: ReaderOutputLease) {
     synchronized(monitor) {
       requireExecuting(request)
-      require(hold(output)) { UNCLAIMABLE }
+      require(hold(output, published = false)) { UNCLAIMABLE }
     }
 
     output.close()
@@ -344,8 +408,18 @@ public class ReaderContentRequests(
    * Hands the oldest queued publication to presentation, which must close its
    * lease. Returns null when none is queued.
    */
-  public fun takePublication(): ReaderPublication? =
-    synchronized(monitor) { queued.removeFirstOrNull() }
+  public fun takePublication(): ReaderPublication? {
+    var wakeup: (() -> Unit)? = null
+
+    val publication =
+      synchronized(monitor) {
+        queued.removeFirstOrNull()?.also { wakeup = producerWakeup }
+      }
+
+    wakeup?.invoke()
+
+    return publication
+  }
 
   /**
    * Records [outcome] as the one terminal outcome of the executing [request].
@@ -366,6 +440,7 @@ public class ReaderContentRequests(
       requireExecuting(request)
       request.settle(outcome)
       executing = null
+      producerWakeup = null
     }
 
     completeIfClosed()
@@ -438,11 +513,14 @@ public class ReaderContentRequests(
       queued.size >= limits.awaitingPublications
 
   /**
-   * Claims [output] for the owner and returns whether it could. The caller
-   * holds the monitor.
+   * Claims [output] for the owner and returns whether it could. [published]
+   * tells whether its settlement frees capacity that a producer waits for. The
+   * caller holds the monitor.
    */
-  private fun hold(output: ReaderOutputLease): Boolean {
-    val claimed = output.claim { failure -> settled(output, failure) }
+  private fun hold(output: ReaderOutputLease, published: Boolean): Boolean {
+    val claimed = output.claim { failure ->
+      settled(output, failure, published)
+    }
 
     if (claimed) {
       held += output
@@ -467,17 +545,27 @@ public class ReaderContentRequests(
     return Withdrawal(canceled, discarded)
   }
 
-  private fun settled(output: ReaderOutputLease, failure: Throwable?) {
-    synchronized(monitor) {
-      held -= output
+  private fun settled(
+    output: ReaderOutputLease,
+    failure: Throwable?,
+    published: Boolean,
+  ) {
+    val wakeup =
+      synchronized(monitor) {
+        held -= output
 
-      if (failure != null) {
-        failedReleases += 1
-        recordFailure(failure)
+        if (failure != null) {
+          failedReleases += 1
+          recordFailure(failure)
+        }
+
+        producerWakeup.takeIf { published }
       }
-    }
 
+    // Closing completes first, so that no wakeup stands between a settlement
+    // and its completion.
     completeIfClosed()
+    wakeup?.invoke()
   }
 
   private fun recordFailure(failure: Throwable) {

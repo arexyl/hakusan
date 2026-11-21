@@ -161,6 +161,23 @@ class ReaderOutputLeaseTest {
     }
 
   @Test
+  fun `a lease has a revision from one and pixels only with a Bitmap`() {
+    val representation = ReaderRepresentation()
+    val region = ReaderImageRegion(0, 0, 10, 5)
+    val coverage = ReaderImageCoverage(10, 10, region, finalQuality = false)
+
+    assertThrowsExactly(IllegalArgumentException::class.java) {
+      ReaderOutputLease(representation, coverage, revision = 0, TestTarget()) {}
+    }
+
+    val lease =
+      ReaderOutputLease(representation, coverage, revision = 3, TestTarget()) {}
+
+    assertEquals(3, lease.revision)
+    assertThrowsExactly(IllegalStateException::class.java) { lease.bitmap }
+  }
+
+  @Test
   fun `regions and coverage reject impossible geometry`() {
     assertThrowsExactly(IllegalArgumentException::class.java) {
       ReaderImageRegion(-1, 0, 1, 1)
