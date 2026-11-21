@@ -56,7 +56,8 @@ class ReaderResourceOwnerTest {
       val creation = san.calls.single()
 
       assertEquals("engineCreate", creation.name)
-      assertEquals("hakusan-reader", creation.thread.name)
+      // A coroutine that still runs on the thread appends its own name.
+      assertTrue(creation.thread.name.startsWith("hakusan-reader"))
       assertTrue(creation.thread.isDaemon)
       owner.close()
     }
