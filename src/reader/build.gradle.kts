@@ -19,6 +19,10 @@ android {
 }
 
 tasks.withType<Test>().configureEach {
+  // The loader's test calls System.loadLibrary, which the JDK restricts to
+  // code with native access.
+  jvmArgs("--enable-native-access=ALL-UNNAMED")
+
   jvmArgumentProviders.add(
     objects.newInstance<FilePropertyArgument>().apply {
       property = "app.hakusan.reader.fixtureManifest"
