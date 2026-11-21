@@ -11,6 +11,7 @@ A trace also records other processes of the device. Keep it local.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import pathlib
@@ -27,6 +28,11 @@ MEMORY_MARKER = "# memory"
 
 # The names that reach a device command line: no character that a shell reads.
 WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+# The system setting that keeps a display from lowering its refresh rate, and
+# the values that it holds: a rate, or the word that stands for no value.
+MIN_REFRESH = "min_refresh_rate"
+SETTING = re.compile(r"[0-9]+(\.[0-9]+)?|null")
 
 # The harness stops a block at the first request over ten seconds, so a
 # request that the tool still waits for after this long has hung.
@@ -176,6 +182,31 @@ def plain(value: str) -> str:
     return value
 
 
+def hold_refresh(refresh: int) -> str:
+    """Sets the lowest refresh rate of the display to the rate, and returns
+    the value that the setting held.
+
+    A device lowers the rate of a display on which nothing changes, and a
+    harness that draws one frame per request is such a display.
+    """
+    previous = shell(f"settings get system {MIN_REFRESH}").strip()
+
+    if not SETTING.fullmatch(previous):
+        raise Failure(f"the setting {MIN_REFRESH} holds {previous!r}")
+
+    shell(f"settings put system {MIN_REFRESH} {refresh}")
+
+    return previous
+
+
+def restore_refresh(previous: str) -> None:
+    """Gives the lowest refresh rate the value that hold_refresh returned."""
+    if previous == "null":
+        shell(f"settings delete system {MIN_REFRESH}")
+    else:
+        shell(f"settings put system {MIN_REFRESH} {previous}")
+
+
 def install(arguments: argparse.Namespace) -> None:
     """Installs the harness and compiles all of it ahead of time."""
     adb("install", "-r", str(arguments.apk))
@@ -202,10 +233,24 @@ def block(arguments: argparse.Namespace) -> None:
         "transport": arguments.transport,
     }
 
-    recorder = start_trace(configuration)
+    # Every step that changes the device registers its undo, and an undo that
+    # fails does not keep the ones registered before it from running.
+    with contextlib.ExitStack() as device:
+        if arguments.hold_refresh:
+            previous = hold_refresh(arguments.refresh_hz)
 
-    try:
-        try:
+            device.callback(restore_refresh, previous)
+            notes["held_refresh_hz"] = arguments.refresh_hz
+
+        recorder = start_trace(configuration)
+
+        # The trace holds other processes too, so none stays on the device.
+        device.callback(shell, f"rm -f {TRACE} {RECORDS}/{name}.json", check=False)
+
+        with contextlib.ExitStack() as run:
+            run.callback(stop_harness)
+            run.callback(stop_trace, recorder)
+
             shell(
                 f"am start -W -n {ACTIVITY}"
                 f" --es cell {arguments.cell} --es backend {arguments.backend}"
@@ -219,17 +264,8 @@ def block(arguments: argparse.Namespace) -> None:
             record = wait_for_record(
                 f"{name}.json", START_SECONDS + requests * REQUEST_SECONDS
             )
-        finally:
-            # The harness stops also when the recorder does not.
-            try:
-                stop_trace(recorder)
-            finally:
-                stop_harness()
 
         trace = read(TRACE)
-    finally:
-        # The trace holds other processes too, so none stays on the device.
-        shell(f"rm -f {TRACE} {RECORDS}/{name}.json", check=False)
 
     (output / f"{name}.json").write_bytes(record)
     (output / f"{name}.perfetto-trace").write_bytes(trace)
@@ -262,6 +298,13 @@ def main() -> int:
         type=int,
         required=True,
         help="the refresh rate of the display mode that the block requests",
+    )
+
+    runner.add_argument(
+        "--hold-refresh",
+        action="store_true",
+        help="keep the display at that rate through a system setting, which"
+        " the tool restores after the block",
     )
 
     runner.add_argument("--name", type=plain, required=True, help="the file stem")
