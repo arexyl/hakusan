@@ -1,0 +1,62 @@
+# The system trace of one block of the measurement harness.
+#
+# The host stops the trace, so it has no duration. A full buffer discards new
+# data instead of old data, and the analysis rejects a trace that lost any.
+#
+# block.py removes every line that ends with the memory marker to build the
+# configuration of an overhead check without the memory events.
+
+buffers {
+  size_kb: 131072
+  fill_policy: DISCARD
+}
+
+buffers {
+  size_kb: 4096
+  fill_policy: DISCARD
+}
+
+# The expected and actual timelines of every display and surface frame.
+data_sources {
+  config {
+    name: "android.surfaceflinger.frametimeline"
+    target_buffer: 0
+  }
+}
+
+data_sources {
+  config {
+    name: "linux.ftrace"
+    target_buffer: 0
+
+    ftrace_config {
+      # The trace sections of the harness and of the renderer.
+      atrace_apps: "app.hakusan.bench"
+      atrace_categories: "gfx"
+      atrace_categories: "view"
+      atrace_categories: "dalvik"
+
+      # Where the decode thread ran, and at which frequency.
+      ftrace_events: "sched/sched_switch"
+      ftrace_events: "sched/sched_waking"
+      ftrace_events: "power/cpu_frequency"
+      ftrace_events: "power/cpu_idle"
+
+      ftrace_events: "kmem/rss_stat"  # memory
+      throttle_rss_stat: true  # memory
+      ftrace_events: "gpu_mem/gpu_mem_total"  # memory
+    }
+  }
+}
+
+# Process and thread names, for the queries that select the harness.
+data_sources {
+  config {
+    name: "linux.process_stats"
+    target_buffer: 1
+
+    process_stats_config {
+      scan_all_processes_on_start: true
+    }
+  }
+}

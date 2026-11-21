@@ -49,6 +49,7 @@ include(
   ":titles",
   ":extensions",
   ":reader",
+  ":bench",
 )
 
 project(":app").projectDir = file("src/app")
@@ -62,3 +63,5 @@ project(":titles").projectDir = file("src/titles")
 project(":extensions").projectDir = file("src/extensions")
 
 project(":reader").projectDir = file("src/reader")
+
+project(":bench").projectDir = file("src/bench")

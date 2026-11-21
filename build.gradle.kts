@@ -102,7 +102,15 @@ tasks.register<JavaExec>("ktfmtFormat") {
 }
 
 val hostMatrixProjects =
-  listOf(":app", ":app:sdk", ":app:ui", ":titles", ":extensions", ":reader")
+  listOf(
+    ":app",
+    ":app:sdk",
+    ":app:ui",
+    ":titles",
+    ":extensions",
+    ":reader",
+    ":bench",
+  )
 
 val hostMatrixTasks =
   listOf(

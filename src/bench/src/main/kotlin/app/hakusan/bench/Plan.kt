@@ -1,0 +1,128 @@
+package app.hakusan.bench
+
+import android.content.Intent
+import androidx.compose.ui.unit.IntSize
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
+
+/** A workload: one fixture and the requests of one attempt on it. */
+internal enum class Cell(val id: String, val fixture: String) {
+  /** The ordinary page at 1:1, which the viewport scales. */
+  ORDINARY("ordinary", "journey/ordinary.png"),
+
+  /** The large page, decoded at the width of the viewport. */
+  LARGE("large", "qualification/timed/large.png"),
+
+  /** The first band of the long segment, from a new input. */
+  LONG_FIRST("long-first", "journey/long.png"),
+
+  /**
+   * A scroll over the long segment on one input: three bands forward from the
+   * top, a seek to the middle and one to the end, two bands backward, and the
+   * return to the top.
+   */
+  LONG_SCROLL("long-scroll", "journey/long.png");
+
+  /**
+   * The requests of one attempt, in order.
+   *
+   * A band holds the image rows that fill the viewport at its width, so one
+   * band is one screen of the segment.
+   */
+  fun steps(image: IntSize, viewport: IntSize): List<Step> {
+    val band = (viewport.height.toLong() * image.width / viewport.width).toInt()
+    val last = image.height - band
+
+    val tops =
+      when (this) {
+        ORDINARY -> return listOf(Whole(width = null))
+        LARGE -> return listOf(Whole(width = viewport.width))
+        LONG_FIRST -> listOf(0)
+        LONG_SCROLL ->
+          listOf(
+            0,
+            band,
+            2 * band,
+            last / 2,
+            last,
+            last - band,
+            last - 2 * band,
+            0,
+          )
+      }
+
+    return tops.map { Band(top = it, bottom = it + band) }
+  }
+}
+
+/** The decode backends of the harness. */
+internal enum class BackendKind(val id: String) {
+  IMAGE_DECODER("image-decoder"),
+  REGION_DECODER("region-decoder");
+
+  fun create(): Backend =
+    when (this) {
+      IMAGE_DECODER -> ImageDecoderBackend()
+      REGION_DECODER -> RegionDecoderBackend()
+    }
+}
+
+/**
+ * One block as the host requested it.
+ *
+ * The host passes every value as an extra of the launch intent, so a block
+ * needs no input on the device.
+ */
+internal data class Plan(
+  val cell: Cell,
+  val backend: BackendKind,
+  /** The attempts before the measured ones, which run the same sequence. */
+  val warmups: Int,
+  val attempts: Int,
+  /** The wait between the close of an attempt and its settled mark. */
+  val settle: Duration,
+  /** The display frames that an output stays up after its first draw. */
+  val hold: Int,
+  /** The file name of the record in the external files directory. */
+  val record: String,
+) {
+  init {
+    require(warmups >= 0 && attempts > 0) { "A block needs attempts." }
+    require(hold > 0 && !settle.isNegative()) { "The waits must be valid." }
+
+    require(RECORD_NAME.matches(record)) {
+      "The record must be a plain file name."
+    }
+  }
+
+  companion object {
+    private val RECORD_NAME = Regex("[A-Za-z0-9][A-Za-z0-9._-]*")
+
+    /**
+     * Reads the plan of [intent], or returns null when it names no cell, as
+     * when the launcher starts the harness.
+     *
+     * @throws IllegalArgumentException when an extra has no valid value.
+     */
+    fun of(intent: Intent): Plan? {
+      val cell = intent.getStringExtra("cell") ?: return null
+      val backend = intent.getStringExtra("backend")
+
+      return Plan(
+        cell =
+          requireNotNull(Cell.entries.find { it.id == cell }) {
+            "No such cell."
+          },
+        backend =
+          requireNotNull(BackendKind.entries.find { it.id == backend }) {
+            "No such backend."
+          },
+        warmups = intent.getIntExtra("warmups", 5),
+        attempts = intent.getIntExtra("attempts", 20),
+        settle = intent.getIntExtra("settle_ms", 500).milliseconds,
+        hold = intent.getIntExtra("hold", 3),
+        record = requireNotNull(intent.getStringExtra("record")),
+      )
+    }
+  }
+}

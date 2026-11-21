@@ -214,9 +214,12 @@
 
         device = shellWith {
           sdk = deviceSdk;
+          # The tools of Perfetto bring trace_processor_shell, which reads the
+          # system traces of the measurement harness.
           tools = sdk: [
             (createDevices sdk)
             (withDevice sdk)
+            pkgs.perfetto.tools
           ];
         };
       };

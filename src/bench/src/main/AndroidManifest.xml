@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest
+  xmlns:android="http://schemas.android.com/apk/res/android"
+  xmlns:tools="http://schemas.android.com/tools">
+  <!-- The harness holds only fixtures and records of its runs, so it needs
+       no backup rules, and it is never published, so it needs no icon. -->
+  <application
+    android:allowBackup="false"
+    android:label="Hakusan Bench"
+    android:theme="@android:style/Theme.Material.NoActionBar"
+    tools:ignore="DataExtractionRules,MissingApplicationIcon">
+    <!-- A system trace shows the trace sections of a non-debuggable
+         package only when the shell may profile it. -->
+    <profileable android:shell="true" />
+
+    <!-- The host starts a block by the component name, so the activity is
+         exported. The viewport of the reference workload is taller than
+         wide and fits a phone only upright, so the activity keeps the
+         portrait orientation, which a phone honors. It handles the
+         configuration changes itself, because a recreation would end the
+         block of its process. -->
+    <activity
+      android:name=".BenchActivity"
+      android:configChanges="density|fontScale|keyboard|keyboardHidden|layoutDirection|locale|navigation|orientation|screenLayout|screenSize|smallestScreenSize|uiMode"
+      android:exported="true"
+      android:screenOrientation="portrait"
+      tools:ignore="DiscouragedApi,LockedOrientationActivity">
+      <intent-filter>
+        <action android:name="android.intent.action.MAIN" />
+
+        <category android:name="android.intent.category.LAUNCHER" />
+      </intent-filter>
+    </activity>
+  </application>
+</manifest>
