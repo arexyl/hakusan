@@ -10,6 +10,23 @@ import app.hakusan.reader.ReaderContentWarning
 // the library, and it throws instead of ending a request as if San had decided.
 
 /**
+ * The failure that `engineCreate` reported with [status], or null after
+ * success. A refused limit and a second engine are defects of the caller, which
+ * selected the limits and owns the one engine of the process.
+ *
+ * @throws IllegalStateException for any other status.
+ */
+internal fun engineCreateFailure(status: Int): ReaderContentFailure? =
+  when (status) {
+    SanAbi.STATUS_OK -> null
+
+    SanAbi.STATUS_ALLOCATION_FAILED,
+    SanAbi.STATUS_ENGINE_FAILURE -> failureCategory(status)
+
+    else -> defect("engineCreate", status)
+  }
+
+/**
  * The failure that `contentOpen` reported with [status], or null after success.
  *
  * @throws IllegalStateException for any other status.

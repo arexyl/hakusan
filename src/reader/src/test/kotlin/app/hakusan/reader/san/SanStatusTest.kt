@@ -14,6 +14,19 @@ import org.junit.jupiter.api.Test
  */
 class SanStatusTest {
   @Test
+  fun `a creation reports two failures and no refusal of its limits`() {
+    assertEquals(
+      expected(
+        SanAbi.STATUS_OK to null,
+        SanAbi.STATUS_ALLOCATION_FAILED to
+          ReaderContentFailure.ALLOCATION_FAILED,
+        SanAbi.STATUS_ENGINE_FAILURE to ReaderContentFailure.ENGINE_FAILURE,
+      ),
+      outcomes(::engineCreateFailure),
+    )
+  }
+
+  @Test
   fun `an open reports its three failures and no other status`() {
     assertEquals(
       expected(
