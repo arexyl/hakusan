@@ -13,6 +13,7 @@ import androidx.compose.ui.graphics.FilterQuality
 import androidx.compose.ui.graphics.drawscope.DrawScope
 import androidx.compose.ui.graphics.drawscope.clipRect
 import androidx.compose.ui.layout.layout
+import androidx.compose.ui.preferredFrameRate
 import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.IntSize
 import kotlin.math.floor
@@ -27,8 +28,14 @@ import kotlin.math.roundToInt
  * background shows where coverage is missing.
  */
 @Composable
-internal fun Viewport(consumer: DisplayConsumer, size: IntSize) {
+internal fun Viewport(consumer: DisplayConsumer, size: IntSize, refresh: Int?) {
   LaunchedEffect(consumer) { consumer.present() }
+
+  // Without a vote of its own, the system gives a frame of a view that
+  // rarely changes the frame rate of a lower category.
+  val rate =
+    if (refresh == null) Modifier
+    else Modifier.preferredFrameRate(refresh.toFloat())
 
   Box(Modifier.fillMaxSize().background(Color.Black)) {
     Spacer(
@@ -38,6 +45,7 @@ internal fun Viewport(consumer: DisplayConsumer, size: IntSize) {
 
           layout(size.width, size.height) { placeable.place(0, 0) }
         }
+        .then(rate)
         .drawBehind { draw(consumer) }
     )
   }

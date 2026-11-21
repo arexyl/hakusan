@@ -83,12 +83,15 @@ internal data class Plan(
   val settle: Duration,
   /** The display frames that an output stays up after its first draw. */
   val hold: Int,
+  /** The refresh rate of the display mode that the block requests, in Hz. */
+  val refresh: Int,
   /** The file name of the record in the external files directory. */
   val record: String,
 ) {
   init {
     require(warmups >= 0 && attempts > 0) { "A block needs attempts." }
     require(hold > 0 && !settle.isNegative()) { "The waits must be valid." }
+    require(refresh > 0) { "A block names its refresh rate." }
 
     require(RECORD_NAME.matches(record)) {
       "The record must be a plain file name."
@@ -121,6 +124,7 @@ internal data class Plan(
         attempts = intent.getIntExtra("attempts", 20),
         settle = intent.getIntExtra("settle_ms", 500).milliseconds,
         hold = intent.getIntExtra("hold", 3),
+        refresh = intent.getIntExtra("refresh_hz", 0),
         record = requireNotNull(intent.getStringExtra("record")),
       )
     }

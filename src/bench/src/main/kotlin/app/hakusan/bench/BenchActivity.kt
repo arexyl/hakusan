@@ -36,7 +36,6 @@ internal class BenchActivity : ComponentActivity() {
     }
 
     val conditions = Conditions(this)
-    val pinned = conditions.pinDisplayMode()
     val corpus = Corpus.open(assets, File(filesDir, "corpus"))
     val consumer = DisplayConsumer()
 
@@ -44,11 +43,11 @@ internal class BenchActivity : ComponentActivity() {
     val plan = if (savedInstanceState == null) Plan.of(intent) else null
 
     setContent {
-      Viewport(consumer, corpus.viewport)
+      Viewport(consumer, corpus.viewport, plan?.refresh)
 
       if (plan != null) {
         LaunchedEffect(plan) {
-          val runner = TrialRunner(plan, corpus, consumer, conditions, pinned)
+          val runner = TrialRunner(plan, corpus, consumer, conditions)
 
           // The record is also written when the composition leaves before
           // the block ends, so the host learns how far the block came.

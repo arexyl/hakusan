@@ -2,10 +2,12 @@ package app.hakusan.bench
 
 import android.os.Process
 import android.os.SystemClock
-import android.view.Display
 import androidx.compose.runtime.withFrameNanos
 import java.util.concurrent.Executors
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.random.Random
+import kotlin.time.Duration.Companion.microseconds
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
@@ -38,7 +40,6 @@ internal class TrialRunner(
   private val corpus: Corpus,
   private val consumer: DisplayConsumer,
   private val conditions: Conditions,
-  private val pinned: Display.Mode,
 ) {
   private val executor = Executors.newSingleThreadExecutor {
     Thread(it, Conditions.DECODE_THREAD)
@@ -51,6 +52,9 @@ internal class TrialRunner(
   private val decodes = CoroutineScope(SupervisorJob() + decode)
 
   private val requests = JSONArray()
+
+  // The name of the record seeds the offsets, so a block repeats its own.
+  private val offsets = Random(plan.record.hashCode())
 
   /**
    * The record of the block. It is complete once [run] has returned or thrown,
@@ -66,6 +70,7 @@ internal class TrialRunner(
       .put("attempts", plan.attempts)
       .put("settle_ms", plan.settle.inWholeMilliseconds)
       .put("hold", plan.hold)
+      .put("refresh_hz", plan.refresh)
       .put("requests", requests)
 
   /** The input of the running attempt and the decode of its last request. */
@@ -86,7 +91,17 @@ internal class TrialRunner(
       val nice =
         withContext(decode) { Process.getThreadPriority(Process.myTid()) }
 
-      record.put("conditions", conditions.block(pinned, nice))
+      val mode = conditions.requestDisplayMode(plan.refresh)
+
+      // A block whose display stays in another mode still runs: the record
+      // states the mode that the display reached, and the frames show it.
+      withTimeoutOrNull(MODE_SWITCH) {
+        while (!conditions.displays(mode)) {
+          withFrameNanos {}
+        }
+      }
+
+      record.put("conditions", conditions.block(mode, nice))
       record.put("outcome", block())
     } catch (failure: CancellationException) {
       record.put("outcome", "aborted")
@@ -158,9 +173,18 @@ internal class TrialRunner(
     backend: Backend,
     fixture: Fixture,
   ): JSONObject {
+    // A request at a fixed time after the last frame would keep one phase to
+    // the frames of the display. Its draw waits for the next frame, so a
+    // millisecond of decode time would then move every request of a block
+    // by a whole frame period.
+    val offset = offsets.nextLong(OFFSET.inWholeMicroseconds).microseconds
+
+    delay(offset)
+
     val entry =
       JSONObject()
         .put("request", request)
+        .put("offset_us", offset.inWholeMicroseconds)
         .put("conditions", conditions.request())
 
     val clock = JSONObject().put("request", SystemClock.elapsedRealtimeNanos())
@@ -277,6 +301,16 @@ internal class TrialRunner(
   private companion object {
     /** A request that takes longer is a timeout, which stops its block. */
     val WATCHDOG = 10.seconds
+
+    /**
+     * The bound of the pseudo-random wait before a request. It is a whole
+     * number of frame periods at 60, 90, and 120 Hz, so the requests of a block
+     * spread evenly over the phases of a frame.
+     */
+    val OFFSET = 100.milliseconds
+
+    /** The longest wait for the display to reach the requested mode. */
+    val MODE_SWITCH = 2.seconds
 
     /** The longest wait for the display frames that end an attempt. */
     val TEARDOWN = 2.seconds

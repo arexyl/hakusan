@@ -12,6 +12,7 @@ import android.system.Os
 import android.system.OsConstants
 import android.view.Display
 import androidx.compose.ui.unit.IntSize
+import kotlin.math.roundToInt
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -27,32 +28,41 @@ internal class Conditions(private val activity: Activity) {
   private val battery = activity.getSystemService(BatteryManager::class.java)
 
   /**
-   * Requests the display mode of the current resolution with the highest
-   * refresh rate, and returns it.
+   * Requests the display mode of the current resolution that refreshes
+   * [refresh] times per second, and returns it.
    *
-   * A display that lowers its refresh rate while nothing changes would give an
-   * output that publishes once a longer frame period than an output that
-   * publishes every frame.
+   * Left alone, a display lowers its refresh rate while nothing changes, and an
+   * output that publishes once would then get a longer frame period than an
+   * output that publishes every frame. Whether the system honors the request
+   * shows only in the frames that a trace records.
+   *
+   * @throws IllegalStateException when the display has no such mode.
    */
-  fun pinDisplayMode(): Display.Mode {
+  fun requestDisplayMode(refresh: Int): Display.Mode {
     val display = checkNotNull(activity.display)
     val current = display.mode
 
-    val fastest =
-      display.supportedModes
-        .filter {
-          it.physicalWidth == current.physicalWidth &&
-            it.physicalHeight == current.physicalHeight
-        }
-        .maxBy { it.refreshRate }
+    val mode =
+      display.supportedModes.firstOrNull {
+        it.physicalWidth == current.physicalWidth &&
+          it.physicalHeight == current.physicalHeight &&
+          it.refreshRate.roundToInt() == refresh
+      }
+
+    checkNotNull(mode) { "The display has no mode at $refresh Hz." }
 
     activity.window.attributes =
       activity.window.attributes.apply {
-        preferredDisplayModeId = fastest.modeId
+        preferredDisplayModeId = mode.modeId
+        preferredRefreshRate = mode.refreshRate
       }
 
-    return fastest
+    return mode
   }
+
+  /** Whether the display runs in [mode] now. */
+  fun displays(mode: Display.Mode): Boolean =
+    checkNotNull(activity.display).mode.modeId == mode.modeId
 
   /**
    * Checks that the window holds the whole [viewport].
@@ -70,7 +80,7 @@ internal class Conditions(private val activity: Activity) {
   }
 
   /** The conditions that hold for a whole block, read at its start. */
-  fun block(pinned: Display.Mode, decodeNice: Int): JSONObject {
+  fun block(requested: Display.Mode, decodeNice: Int): JSONObject {
     val display = checkNotNull(activity.display)
     val bounds = activity.windowManager.currentWindowMetrics.bounds
     val resolver = activity.contentResolver
@@ -112,7 +122,7 @@ internal class Conditions(private val activity: Activity) {
         "display",
         JSONObject()
           .put("window", JSONArray(listOf(bounds.width(), bounds.height())))
-          .put("pinned_refresh_hz", pinned.refreshRate.toDouble())
+          .put("requested_refresh_hz", requested.refreshRate.toDouble())
           .put("refresh_hz", display.refreshRate.toDouble())
           .put("modes", JSONArray(modes))
           .put(

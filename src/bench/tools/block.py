@@ -211,7 +211,9 @@ def block(arguments: argparse.Namespace) -> None:
                 f" --es cell {arguments.cell} --es backend {arguments.backend}"
                 f" --ei warmups {arguments.warmups}"
                 f" --ei attempts {arguments.attempts}"
-                f" --ei settle_ms {arguments.settle_ms} --es record {name}.json"
+                f" --ei settle_ms {arguments.settle_ms}"
+                f" --ei refresh_hz {arguments.refresh_hz}"
+                f" --es record {name}.json"
             )
 
             record = wait_for_record(
@@ -254,6 +256,14 @@ def main() -> int:
     runner.add_argument("--warmups", type=int, default=5)
     runner.add_argument("--attempts", type=int, default=20)
     runner.add_argument("--settle-ms", type=int, default=500)
+
+    runner.add_argument(
+        "--refresh-hz",
+        type=int,
+        required=True,
+        help="the refresh rate of the display mode that the block requests",
+    )
+
     runner.add_argument("--name", type=plain, required=True, help="the file stem")
     runner.add_argument("--output", type=pathlib.Path, required=True)
     runner.add_argument("--transport", required=True, help="how adb is attached")
