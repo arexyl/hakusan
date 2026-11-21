@@ -121,7 +121,7 @@ val hostMatrixTasks =
     "assembleRelease",
   )
 
-val hostMatrixAndroidTestProjects = listOf(":titles", ":app")
+val hostMatrixAndroidTestProjects = listOf(":titles", ":app", ":reader")
 
 tasks.register("hostMatrix") {
   group = "verification"

@@ -10,6 +10,14 @@ plugins {
 android {
   namespace = "app.hakusan.reader"
 
+  defaultConfig {
+    testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+  }
+
+  testOptions {
+    targetSdk = libs.versions.sdk.target.get().toInt()
+  }
+
   sourceSets {
     named("main") {
       kotlin.directories +=
@@ -45,6 +53,10 @@ dependencies {
   testImplementation(libs.kotlinx.serialization.json)
   testRuntimeOnly(libs.junit.jupiter.engine)
   testRuntimeOnly(libs.junit.platform.launcher)
+
+  androidTestImplementation(libs.androidx.test.core)
+  androidTestImplementation(libs.androidx.test.junit)
+  androidTestRuntimeOnly(libs.androidx.test.runner)
 }
 
 val checkBindings =
