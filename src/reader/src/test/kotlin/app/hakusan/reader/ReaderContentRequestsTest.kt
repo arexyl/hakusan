@@ -164,8 +164,6 @@ class ReaderContentRequestsTest {
       List(3) { index -> testLease(bound.representation) { releases[index]++ } }
 
     assertEquals(PUBLISHED, requests.publish(bound.request, outputs[0]))
-    assertEquals(BUSY, requests.publish(bound.request, outputs[1]))
-    assertTrue(outputs[1].claimable())
 
     val shown = checkNotNull(requests.takePublication())
 
@@ -173,7 +171,10 @@ class ReaderContentRequestsTest {
     assertSame(bound.request, shown.request)
     assertEquals(PUBLISHED, requests.publish(bound.request, outputs[1]))
     assertSame(outputs[1], requests.takePublication()?.output)
+
+    // Presentation holds both live outputs.
     assertEquals(BUSY, requests.publish(bound.request, outputs[2]))
+    assertTrue(outputs[2].claimable())
     outputs[0].close()
     assertEquals(PUBLISHED, requests.publish(bound.request, outputs[2]))
     assertEquals(listOf(1, 0, 0), releases.toList())
@@ -183,6 +184,50 @@ class ReaderContentRequestsTest {
     requests.awaitClosed()
     assertEquals(listOf(1, 1, 1), releases.toList())
   }
+
+  @Test
+  fun `a newer output takes the place of one that presentation did not take`() =
+    readerTest {
+      val owner = TestOwner.start()
+
+      val requests = owner.requests
+
+      val bound = owner.execute(book.descriptor(0))
+
+      val releases = IntArray(3)
+
+      val outputs =
+        List(3) { index ->
+          testLease(bound.representation) { releases[index]++ }
+        }
+
+      var wakeups = 0
+
+      requests.setPresentationWakeup { wakeups++ }
+
+      assertEquals(PUBLISHED, requests.publish(bound.request, outputs[0]))
+      assertEquals(PUBLISHED, requests.publish(bound.request, outputs[1]))
+
+      // The owner released the first output, and one publication waits.
+      assertEquals(listOf(1, 0, 0), releases.toList())
+      assertFalse(outputs[0].claimable())
+      assertEquals(2, wakeups)
+      assertEquals(PUBLISHED, requests.publish(bound.request, outputs[2]))
+      assertEquals(listOf(1, 1, 0), releases.toList())
+      assertSame(outputs[2], requests.takePublication()?.output)
+      assertNull(requests.takePublication())
+
+      // An output that presentation took stays beside its successor.
+      val last = testLease(bound.representation) {}
+
+      assertEquals(PUBLISHED, requests.publish(bound.request, last))
+      assertEquals(listOf(1, 1, 0), releases.toList())
+      outputs[2].close()
+      requests.acknowledgeTerminal(bound.request, completed())
+      requests.beginClose()
+      requests.awaitClosed()
+      assertEquals(listOf(1, 1, 1), releases.toList())
+    }
 
   @Test
   fun `a failed release keeps counting against the live outputs`() =
@@ -575,7 +620,9 @@ class ReaderContentRequestsTest {
 
   @Test
   fun `only a queued publication wakes presentation`() = readerTest {
-    val owner = TestOwner.start()
+    val limits = ReaderOutputLimits(liveOutputs = 1, awaitingPublications = 1)
+
+    val owner = TestOwner.start(limits)
 
     val requests = owner.requests
 
@@ -593,9 +640,11 @@ class ReaderContentRequestsTest {
 
     assertEquals(PUBLISHED, requests.publish(bound.request, outputs[0]))
     assertEquals(listOf(Wakeup(queued = true, monitorHeld = false)), wakeups)
+    // The one live output is held, so the next one is not queued.
     assertEquals(BUSY, requests.publish(bound.request, outputs[1]))
     assertSame(outputs[0], requests.takePublication()?.output)
     assertEquals(1, wakeups.size)
+    outputs[0].close()
 
     requests.setPresentationWakeup(null)
 

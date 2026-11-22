@@ -282,7 +282,9 @@ public class ReaderContentRequests(
    * Publishes [output] of the executing [request].
    *
    * A stale publication passes the output to the owner, which releases it. A
-   * busy one leaves the output with its producer.
+   * busy one leaves the output with its producer. A published one supersedes an
+   * output of the request that presentation has not taken yet: the owner
+   * releases that one, and the newer one takes its place.
    *
    * @throws IllegalArgumentException if [request] is not executing in this
    *   owner, or if [output] is claimed, closing, or released. The owner state
@@ -293,15 +295,20 @@ public class ReaderContentRequests(
     output: ReaderOutputLease,
   ): ReaderPublishResult {
     var wakeup: (() -> Unit)? = null
+    var superseded: ReaderOutputLease? = null
 
     val result =
       synchronized(monitor) {
         requireExecuting(request)
 
+        // A newer output takes the place of its predecessor in the queue.
+        val predecessor = queued.firstOrNull { it.request === request }
+        val waiting = queued.size - if (predecessor == null) 0 else 1
+
         val result =
           when {
             !publishable(request, output) -> ReaderPublishResult.STALE
-            atLimit() -> ReaderPublishResult.BUSY
+            atLimit(waiting) -> ReaderPublishResult.BUSY
             else -> ReaderPublishResult.PUBLISHED
           }
 
@@ -318,6 +325,11 @@ public class ReaderContentRequests(
           ReaderPublishResult.STALE -> request.stale = true
 
           ReaderPublishResult.PUBLISHED -> {
+            if (predecessor != null) {
+              queued.remove(predecessor)
+              superseded = predecessor.output
+            }
+
             queued.addLast(ReaderPublication(request, output))
             wakeup = presentationWakeup
           }
@@ -329,6 +341,9 @@ public class ReaderContentRequests(
       }
 
     wakeup?.invoke()
+
+    // Releases run outside the monitor, as every release of the owner does.
+    superseded?.close()
 
     if (result == ReaderPublishResult.STALE) {
       output.close()
@@ -504,13 +519,14 @@ public class ReaderContentRequests(
       request.output.admits(output.coverage)
 
   /**
-   * Whether another publication would exceed an output limit. An output whose
-   * release failed still counts, because its backing was never reclaimed. The
-   * caller holds the monitor.
+   * Whether another publication would exceed an output limit, with [waiting]
+   * publications queued beside it. An output whose release failed still counts,
+   * because its backing was never reclaimed, and so does a superseded one until
+   * its release has settled. The caller holds the monitor.
    */
-  private fun atLimit(): Boolean =
+  private fun atLimit(waiting: Int): Boolean =
     held.size + failedReleases >= limits.liveOutputs ||
-      queued.size >= limits.awaitingPublications
+      waiting >= limits.awaitingPublications
 
   /**
    * Claims [output] for the owner and returns whether it could. [published]
