@@ -2,6 +2,7 @@ package app.hakusan.bench
 
 import android.content.Intent
 import androidx.compose.ui.unit.IntSize
+import app.hakusan.reader.ReaderBackwardVariant
 import kotlin.time.Duration
 import kotlin.time.Duration.Companion.milliseconds
 
@@ -17,9 +18,10 @@ internal enum class Cell(val id: String, val fixture: String) {
   LONG_FIRST("long-first", "journey/long.png"),
 
   /**
-   * A scroll over the long segment on one input: three bands forward from the
-   * top, a seek to the middle and one to the end, two bands backward, and the
-   * return to the top.
+   * A scroll over the long segment in one attempt: three bands forward from the
+   * top, the two above the last one again in backward order, a seek to the
+   * middle and one to the end, and the band above the end, which the attempt
+   * has not decoded before.
    */
   LONG_SCROLL("long-scroll", "journey/long.png");
 
@@ -43,11 +45,11 @@ internal enum class Cell(val id: String, val fixture: String) {
             0,
             band,
             2 * band,
+            band,
+            0,
             last / 2,
             last,
             last - band,
-            last - 2 * band,
-            0,
           )
       }
 
@@ -59,14 +61,20 @@ internal enum class Cell(val id: String, val fixture: String) {
 internal enum class BackendKind(val id: String) {
   IMAGE_DECODER("image-decoder"),
   REGION_DECODER("region-decoder"),
-  SAN("san");
+
+  /** The native path, which decodes a band again at every request of it. */
+  SAN("san"),
+
+  /** The native path with the decoded strips of its bands retained. */
+  SAN_STRIPS("san-strips");
 
   /** Creates the backend of a block whose display has [viewport]. */
   fun create(viewport: IntSize): Backend =
     when (this) {
       IMAGE_DECODER -> ImageDecoderBackend()
       REGION_DECODER -> RegionDecoderBackend()
-      SAN -> SanBackend(viewport)
+      SAN -> SanBackend(viewport, ReaderBackwardVariant.REDECODE)
+      SAN_STRIPS -> SanBackend(viewport, ReaderBackwardVariant.RETAIN_STRIPS)
     }
 }
 

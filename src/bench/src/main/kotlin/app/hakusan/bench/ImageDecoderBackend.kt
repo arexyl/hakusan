@@ -21,7 +21,7 @@ internal class ImageDecoderBackend : Backend {
         request: Int,
         step: Step,
         publish: suspend (Publication) -> Unit,
-      ) {
+      ): Acquired? {
         require(step is Whole) { "ImageDecoder decodes whole images only." }
 
         var grid = IntSize.Zero
@@ -56,6 +56,8 @@ internal class ImageDecoderBackend : Backend {
             release = bitmap::recycle,
           )
         )
+
+        return null
       }
 
       override suspend fun close() {}

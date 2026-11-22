@@ -63,7 +63,7 @@ internal class TrialRunner(
    */
   val record: JSONObject =
     JSONObject()
-      .put("schema", 1)
+      .put("schema", SCHEMA)
       .put("cell", plan.cell.id)
       .put("backend", plan.backend.id)
       .put("fixture", plan.cell.fixture)
@@ -83,8 +83,15 @@ internal class TrialRunner(
     var entry: JSONObject? = null
   }
 
-  /** The last output of a request and the counters of its backend, if any. */
-  private class Decoded(val output: Publication, val ledger: JSONObject?)
+  /**
+   * The last output of a request, with the counters of its backend and the
+   * bytes of its inputs, where the backend has them.
+   */
+  private class Decoded(
+    val output: Publication,
+    val ledger: JSONObject?,
+    val input: Acquired?,
+  )
 
   /**
    * Runs the block. A failed request does not end it, and a failure of the
@@ -179,6 +186,7 @@ internal class TrialRunner(
             entry
               .put("attempt", attempt)
               .put("step", index)
+              .put("wanted", describe(step))
               .put("warmup", attempt <= plan.warmups)
           )
 
@@ -256,6 +264,15 @@ internal class TrialRunner(
       } else {
         entry.put("outcome", "ok").put("output", describe(finished.output))
         finished.ledger?.let { entry.put("ledger", it) }
+
+        finished.input?.let { input ->
+          entry.put(
+            "input",
+            JSONObject()
+              .put("acquired_bytes", input.bytes)
+              .put("reacquired_bytes", input.again),
+          )
+        }
       }
     } catch (failure: CancellationException) {
       throw failure
@@ -268,7 +285,8 @@ internal class TrialRunner(
 
   /**
    * Decodes one step on the decode thread and returns its last output, with the
-   * counters of the backend before the decode and at its end.
+   * counters of the backend before the decode and at its end, and with the
+   * bytes of its inputs.
    */
   private suspend fun decode(
     request: Int,
@@ -287,19 +305,20 @@ internal class TrialRunner(
       val offset = SystemClock.elapsedRealtimeNanos() - marked
       var last: Publication? = null
 
-      content.decode(request, step) { output ->
-        try {
-          // The one output of a reference never waits here.
-          consumer.room()
-          consumer.queue(output)
-        } catch (failure: Throwable) {
-          output.release()
+      val input =
+        content.decode(request, step) { output ->
+          try {
+            // The one output of a reference never waits here.
+            consumer.room()
+            consumer.queue(output)
+          } catch (failure: Throwable) {
+            output.release()
 
-          throw failure
+            throw failure
+          }
+
+          last = output
         }
-
-        last = output
-      }
 
       val output = checkNotNull(last) { "The backend published no output." }
 
@@ -315,7 +334,7 @@ internal class TrialRunner(
             .put("terminal", terminal)
         }
 
-      Decoded(output, ledger)
+      Decoded(output, ledger, input)
     }
 
   /**
@@ -372,6 +391,12 @@ internal class TrialRunner(
     return cleared && idle
   }
 
+  private fun describe(step: Step): JSONObject =
+    when (step) {
+      is Whole -> JSONObject().put("width", step.width ?: JSONObject.NULL)
+      is Band -> JSONObject().put("top", step.top).put("bottom", step.bottom)
+    }
+
   private fun describe(output: Publication): JSONObject =
     JSONObject()
       .put("width", output.bitmap.width)
@@ -382,6 +407,12 @@ internal class TrialRunner(
       .put("alpha", output.bitmap.hasAlpha())
 
   private companion object {
+    /**
+     * The version of the record. It rises with every change of a field or of
+     * the steps of a cell, so the analysis never pools blocks that differ.
+     */
+    const val SCHEMA = 2
+
     /** A request that takes longer is a timeout, which stops its block. */
     val WATCHDOG = 10.seconds
 

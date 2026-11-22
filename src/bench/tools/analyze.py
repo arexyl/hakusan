@@ -97,6 +97,10 @@ ANON = "mem.rss.anon"
 SWAP = "mem.swap"
 GPU = "GPU Memory"
 
+# The version of the records that this analysis reads, which the harness
+# raises with every change of a field or of the steps of a cell.
+SCHEMA = 2
+
 # The longest distance of two frame callbacks that still count as consecutive.
 CADENCE_LIMIT_NS = 100_000_000
 
@@ -417,6 +421,10 @@ def analyze_block(
     record = json.loads((directory / f"{name}.json").read_text(encoding="utf-8"))
     host = json.loads((directory / f"{name}.host.json").read_text(encoding="utf-8"))
 
+    # Another version has other fields or other steps in a cell of this name.
+    if record["schema"] != SCHEMA:
+        raise Failure(f"{name}: a record of version {record['schema']}, not {SCHEMA}")
+
     ending = {
         "block": name,
         "outcome": record["outcome"],
@@ -485,6 +493,12 @@ def analyze_block(
 
         if decode is not None:
             row["decode_ms"] = decode["dur"] / 1e6
+
+        # Only a backend that reads the file itself counts its bytes, with up
+        # to one portion per input that its decoder no longer took.
+        if "input" in entry:
+            row["acquired_bytes"] = entry["input"]["acquired_bytes"]
+            row["reacquired_bytes"] = entry["input"]["reacquired_bytes"]
 
         # A block of an overhead check without the memory events has no
         # memory values, which is no gap.
@@ -556,6 +570,8 @@ COLUMNS = [
     "draw_ms",
     "display_ms",
     "frame_period_ms",
+    "acquired_bytes",
+    "reacquired_bytes",
     "anon_peak_bytes",
     "anon_retained_close_bytes",
     "anon_retained_settled_bytes",

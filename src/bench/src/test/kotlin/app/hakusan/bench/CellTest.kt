@@ -41,10 +41,10 @@ internal class CellTest {
   }
 
   @Test
-  fun `the scroll moves forward, seeks, moves backward, and returns`() {
+  fun `the scroll moves forward, revisits two bands, and seeks twice`() {
     val tops = Cell.LONG_SCROLL.steps(long, viewport).map { (it as Band).top }
 
-    assertEquals(listOf(0, 2560, 5120, 18720, 37440, 34880, 32320, 0), tops)
+    assertEquals(listOf(0, 2560, 5120, 2560, 0, 18720, 37440, 34880), tops)
   }
 
   @Test

@@ -66,6 +66,14 @@ internal interface Backend {
   suspend fun close() {}
 }
 
+/**
+ * What the inputs of one request delivered: [bytes] in all, and [again] of them
+ * that an input of the same attempt had delivered before. They are the bytes
+ * read from the file, so each input may count one portion that the decoder no
+ * longer took.
+ */
+internal data class Acquired(val bytes: Long, val again: Long)
+
 /** The input and the decoder state of one attempt. */
 internal interface Content {
   /**
@@ -74,6 +82,9 @@ internal interface Content {
    * queued for presentation, which waits for the display frame that promotes an
    * output queued before it.
    *
+   * It returns what its inputs delivered for the request, or null when the
+   * platform reads the file and the backend sees no byte of it.
+   *
    * @throws IllegalArgumentException when the backend has no such step.
    * @throws IllegalStateException when an output differs from the request.
    */
@@ -81,7 +92,7 @@ internal interface Content {
     request: Int,
     step: Step,
     publish: suspend (Publication) -> Unit,
-  )
+  ): Acquired?
 
   /**
    * Ends the attempt. Presentation holds none of its outputs by then, unless

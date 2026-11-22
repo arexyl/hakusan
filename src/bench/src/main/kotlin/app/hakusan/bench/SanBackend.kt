@@ -2,6 +2,7 @@ package app.hakusan.bench
 
 import androidx.compose.ui.unit.IntSize
 import app.hakusan.reader.ReaderAcquisitionFailure
+import app.hakusan.reader.ReaderBackwardVariant
 import app.hakusan.reader.ReaderByteInput
 import app.hakusan.reader.ReaderChapter
 import app.hakusan.reader.ReaderChapterContent
@@ -30,6 +31,7 @@ import java.io.FileInputStream
 import java.io.FileNotFoundException
 import java.io.IOException
 import java.util.Objects
+import java.util.concurrent.atomic.AtomicReference
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
@@ -42,19 +44,29 @@ import org.json.JSONObject
  * The native path: San through the reader, as the reader runs it.
  *
  * It decodes a whole image, at a scale of 1:1 or scaled down to the width of
- * its step, and a band of rows at a scale of 1:1, each band in a job of its own
- * that reads the file from its start. One engine with the first-iteration
- * profile serves the block, and each attempt has a session and a content owner
- * of its own, so no attempt finds an output of an earlier one. The worker of
- * the reader decodes. The decode thread only opens the input and hands each
- * publication to presentation, which the reader paces: it copies the next
- * revision only into a target that presentation has returned.
+ * its step, and a band of rows at a scale of 1:1. A band has a job of its own
+ * that reads the file from its start, unless the block retains strips and the
+ * attempt decoded the band before: the reader then copies it from its strip and
+ * opens no input. One engine with the first-iteration profile and the
+ * [backward] variant serves the block, and each attempt has a session and a
+ * content owner of its own, so no attempt finds an output or a strip of an
+ * earlier one. The worker of the reader decodes. The decode thread only opens
+ * the input and hands each publication to presentation, which the reader paces:
+ * it copies the next revision only into a target that presentation has
+ * returned.
  *
  * The decode section of a request therefore spans waits for display frames
  * here. The sections of the reader on its worker hold the time of the engine.
  */
-internal class SanBackend(private val viewport: IntSize) : Backend {
-  private val owner = ReaderResourceOwner(ReaderEngineSettings.FIRST_ITERATION)
+internal class SanBackend(
+  private val viewport: IntSize,
+  backward: ReaderBackwardVariant,
+) : Backend {
+  private val owner =
+    ReaderResourceOwner(
+      ReaderEngineSettings.FIRST_ITERATION.copy(backwardVariant = backward)
+    )
+
   private val gate = ReaderSessionGate()
 
   override val worker: String
@@ -108,6 +120,12 @@ private class SanContent(
   /** The geometry that the first band of the attempt learned. */
   private var image: ReaderImageGeometry? = null
 
+  /** The bytes that the inputs of the running request delivered so far. */
+  private var acquired = Acquired(bytes = 0, again = 0)
+
+  /** The end of the longest prefix that an input of the attempt delivered. */
+  private var reach = 0L
+
   init {
     // The reader runs the wakeup on its worker.
     requests.setPresentationWakeup { published.trySend(Unit) }
@@ -117,10 +135,12 @@ private class SanContent(
     request: Int,
     step: Step,
     publish: suspend (Publication) -> Unit,
-  ) {
+  ): Acquired {
     val wanted: ReaderOutputRequest
     val size: IntSize
     val top: Int
+
+    acquired = Acquired(bytes = 0, again = 0)
 
     when (step) {
       is Whole -> {
@@ -142,6 +162,8 @@ private class SanContent(
     check(terminal is ReaderContentTerminal.Completed) {
       "The request ended as $terminal."
     }
+
+    return acquired
   }
 
   /**
@@ -180,7 +202,8 @@ private class SanContent(
 
   /**
    * Runs one request to its terminal outcome, which it returns, and hands every
-   * publication to [take].
+   * publication to [take]. It counts what the input of the request delivered,
+   * if the reader opened one.
    */
   private suspend fun execute(
     wanted: ReaderOutputRequest,
@@ -191,26 +214,58 @@ private class SanContent(
         "The content is closed."
       }
 
-    coroutineScope {
-      val execution = async {
-        owner.execute(requests) { open(fixture.file, representation) }
-      }
+    // The reader opens one input at most, and it has closed the input when
+    // its execution ends.
+    val input = AtomicReference<FileInput>()
 
-      // The reader publishes the last copy before the execution ends, and
-      // one publication at most waits for its take.
-      do {
-        val ended = select {
-          execution.onJoin { true }
-          published.onReceive { false }
+    try {
+      coroutineScope {
+        val execution = async {
+          owner.execute(requests) {
+            val opened = open(fixture.file, representation)
+
+            if (opened != null) {
+              input.set(opened)
+              ReaderInputOpenResult.Opened(opened)
+            } else {
+              ReaderInputOpenResult.Failed(ReaderAcquisitionFailure.UNAVAILABLE)
+            }
+          }
         }
 
-        requests.takePublication()?.let { take(it.output) }
-      } while (!ended)
+        // The reader publishes the last copy before the execution ends, and
+        // one publication at most waits for its take.
+        do {
+          val ended = select {
+            execution.onJoin { true }
+            published.onReceive { false }
+          }
 
-      execution.await()
+          requests.takePublication()?.let { take(it.output) }
+        } while (!ended)
+
+        execution.await()
+      }
+    } finally {
+      input.get()?.let { count(it.position) }
     }
 
     return submitted.terminal
+  }
+
+  /**
+   * Counts an input that delivered the bytes before [end]. Every input of the
+   * attempt reads the same file from its start, so the bytes that the attempt
+   * acquires again are the ones below [reach].
+   */
+  private fun count(end: Long) {
+    acquired =
+      Acquired(
+        bytes = acquired.bytes + end,
+        again = acquired.again + minOf(end, reach),
+      )
+
+    reach = maxOf(reach, end)
   }
 
   /**
@@ -264,24 +319,26 @@ private class SanContent(
 
     /**
      * Opens [file] as an input of [representation] with the length that the
-     * file has now.
+     * file has now, or returns null when no such file exists.
      */
-    fun open(
-      file: File,
-      representation: ReaderRepresentation,
-    ): ReaderInputOpenResult {
+    fun open(file: File, representation: ReaderRepresentation): FileInput? {
       val stream =
         try {
           FileInputStream(file)
         } catch (_: FileNotFoundException) {
-          return ReaderInputOpenResult.Failed(
-            ReaderAcquisitionFailure.UNAVAILABLE
-          )
+          return null
         }
 
-      return ReaderInputOpenResult.Opened(
-        FileInput(stream, stream.channel.size(), representation)
-      )
+      val length =
+        try {
+          stream.channel.size()
+        } catch (failure: IOException) {
+          stream.close()
+
+          throw failure
+        }
+
+      return FileInput(stream, length, representation)
     }
 
     /** The fixture as the one page of a title with one chapter. */
