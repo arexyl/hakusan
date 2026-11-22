@@ -27,8 +27,8 @@ internal class RegionDecoderBackend : Backend {
       override suspend fun decode(
         request: Int,
         step: Step,
-        publish: suspend (Publication) -> Unit,
-      ): Acquired? {
+        display: Display,
+      ): Report {
         require(step is Band) { "BitmapRegionDecoder decodes bands only." }
 
         val options =
@@ -50,7 +50,7 @@ internal class RegionDecoderBackend : Backend {
           throw failure
         }
 
-        publish(
+        display.publish(
           Publication(
             bitmap = bitmap,
             request = request,
@@ -60,7 +60,7 @@ internal class RegionDecoderBackend : Backend {
           )
         )
 
-        return null
+        return Report()
       }
 
       override suspend fun close() {

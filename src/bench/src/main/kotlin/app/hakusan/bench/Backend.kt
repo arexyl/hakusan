@@ -3,6 +3,7 @@ package app.hakusan.bench
 import android.graphics.Bitmap
 import android.graphics.ColorSpace
 import androidx.compose.ui.unit.IntSize
+import kotlin.time.Duration.Companion.seconds
 import org.json.JSONObject
 
 /** One request of a workload. */
@@ -32,6 +33,57 @@ internal data class Band(val top: Int, val bottom: Int) : Step {
     require(top in 0..<bottom) { "A band must have rows." }
   }
 }
+
+/** How a held step goes on once the display has shown its useful output. */
+internal enum class Ending(val id: String) {
+  /** The input delivers the rest, and the request completes. */
+  RELEASE("release")
+}
+
+/**
+ * The whole image at 1:1 from an input that withholds every byte behind the
+ * hold point of the fixture until the display has shown the output with every
+ * row that the bytes before it decode, and then goes on as [ending] says. The
+ * top [rows] of the image are its first useful output, which that output must
+ * contain.
+ */
+internal data class Held(val rows: Int, val ending: Ending) : Step {
+  init {
+    require(rows > 0) { "A useful output must have rows." }
+  }
+
+  companion object {
+    /**
+     * The longest time from the last byte before the hold point to the shown
+     * output. A longer one fails the request.
+     */
+    val LIMIT = 10.seconds
+  }
+}
+
+/** Presentation as a backend sees it. */
+internal interface Display {
+  /**
+   * Queues [output] for presentation and returns once it is queued, which waits
+   * for the display frame that promotes an output queued before it.
+   */
+  suspend fun publish(output: Publication)
+
+  /**
+   * Suspends until a display frame has drawn an output of [request] with at
+   * least [rows] rows, and the draw has stayed for the hold frames of the
+   * block.
+   */
+  suspend fun shown(request: Int, rows: Int)
+}
+
+/** What a backend reports of one request beside its outputs. */
+internal data class Report(
+  /** The bytes of its inputs, or null when the platform reads the file. */
+  val input: Acquired? = null,
+  /** When a held input went on, on the clock of the record. */
+  val resumed: Long? = null,
+)
 
 /**
  * A decode backend behind the display consumer.
@@ -77,22 +129,13 @@ internal data class Acquired(val bytes: Long, val again: Long)
 /** The input and the decoder state of one attempt. */
 internal interface Content {
   /**
-   * Decodes [step] and hands each output to [publish], the last one with every
-   * row of the step, before it returns. [publish] returns once the output is
-   * queued for presentation, which waits for the display frame that promotes an
-   * output queued before it.
-   *
-   * It returns what its inputs delivered for the request, or null when the
-   * platform reads the file and the backend sees no byte of it.
+   * Decodes [step] and publishes each output on [display], the last one with
+   * every row of the step, before it returns.
    *
    * @throws IllegalArgumentException when the backend has no such step.
    * @throws IllegalStateException when an output differs from the request.
    */
-  suspend fun decode(
-    request: Int,
-    step: Step,
-    publish: suspend (Publication) -> Unit,
-  ): Acquired?
+  suspend fun decode(request: Int, step: Step, display: Display): Report
 
   /**
    * Ends the attempt. Presentation holds none of its outputs by then, unless

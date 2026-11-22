@@ -16,6 +16,9 @@ internal object Marks {
   /** The decode of a request, on the decode thread. */
   fun decode(request: Int): String = "bench.decode $request"
 
+  /** The held input of a request goes on, after its useful output. */
+  fun resume(request: Int): String = "bench.resume $request"
+
   /** The backend of the attempt that ends with [request] has closed. */
   fun close(request: Int): String = "bench.close $request"
 

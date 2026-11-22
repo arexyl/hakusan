@@ -20,8 +20,8 @@ internal class ImageDecoderBackend : Backend {
       override suspend fun decode(
         request: Int,
         step: Step,
-        publish: suspend (Publication) -> Unit,
-      ): Acquired? {
+        display: Display,
+      ): Report {
         require(step is Whole) { "ImageDecoder decodes whole images only." }
 
         var grid = IntSize.Zero
@@ -47,7 +47,7 @@ internal class ImageDecoderBackend : Backend {
           throw failure
         }
 
-        publish(
+        display.publish(
           Publication(
             bitmap = bitmap,
             request = request,
@@ -57,7 +57,7 @@ internal class ImageDecoderBackend : Backend {
           )
         )
 
-        return null
+        return Report()
       }
 
       override suspend fun close() {}

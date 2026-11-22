@@ -99,7 +99,7 @@ GPU = "GPU Memory"
 
 # The version of the records that this analysis reads, which the harness
 # raises with every change of a field or of the steps of a cell.
-SCHEMA = 2
+SCHEMA = 3
 
 # The longest distance of two frame callbacks that still count as consecutive.
 CADENCE_LIMIT_NS = 100_000_000

@@ -11,6 +11,13 @@ internal enum class Cell(val id: String, val fixture: String) {
   /** The ordinary page at 1:1, which the viewport scales. */
   ORDINARY("ordinary", "journey/ordinary.png"),
 
+  /**
+   * The ordinary page from an input that withholds the bytes behind its hold
+   * point until the display has shown the first useful output, and then
+   * delivers them.
+   */
+  EARLY("early", "journey/ordinary.png"),
+
   /** The large page, decoded at the width of the viewport. */
   LARGE("large", "qualification/timed/large.png"),
 
@@ -29,15 +36,25 @@ internal enum class Cell(val id: String, val fixture: String) {
    * The requests of one attempt, in order.
    *
    * A band holds the image rows that fill the viewport at its width, so one
-   * band is one screen of the segment.
+   * band is one screen of the segment. The first useful output holds the image
+   * rows that fill the top [useful] rows of the viewport, rounded up.
    */
-  fun steps(image: IntSize, viewport: IntSize): List<Step> {
+  fun steps(image: IntSize, viewport: IntSize, useful: Int): List<Step> {
     val band = (viewport.height.toLong() * image.width / viewport.width).toInt()
     val last = image.height - band
 
     val tops =
       when (this) {
         ORDINARY -> return listOf(Whole(width = null))
+
+        EARLY -> {
+          val rows =
+            (useful.toLong() * image.width + viewport.width - 1) /
+              viewport.width
+
+          return listOf(Held(rows.toInt(), Ending.RELEASE))
+        }
+
         LARGE -> return listOf(Whole(width = viewport.width))
         LONG_FIRST -> listOf(0)
         LONG_SCROLL ->

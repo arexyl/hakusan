@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test
 internal class CellTest {
   private val viewport = IntSize(1080, 1920)
   private val long = IntSize(1440, 40000)
+  private val useful = 960
 
   @Test
   fun `the grid of a wider image keeps the aspect with a rounded height`() {
@@ -36,22 +37,37 @@ internal class CellTest {
   fun `a band is one viewport of the long segment`() {
     assertEquals(
       listOf(Band(top = 0, bottom = 2560)),
-      Cell.LONG_FIRST.steps(long, viewport),
+      Cell.LONG_FIRST.steps(long, viewport, useful),
     )
   }
 
   @Test
   fun `the scroll moves forward, revisits two bands, and seeks twice`() {
-    val tops = Cell.LONG_SCROLL.steps(long, viewport).map { (it as Band).top }
+    val tops =
+      Cell.LONG_SCROLL.steps(long, viewport, useful).map { (it as Band).top }
 
     assertEquals(listOf(0, 2560, 5120, 2560, 0, 18720, 37440, 34880), tops)
+  }
+
+  @Test
+  fun `the useful output is the image rows of the top of the viewport`() {
+    // 960 viewport rows are 1422.2 rows of an image 1600 columns wide.
+    assertEquals(
+      listOf(Held(rows = 1423, Ending.RELEASE)),
+      Cell.EARLY.steps(IntSize(1600, 2400), viewport, useful),
+    )
+
+    assertEquals(
+      listOf(Held(rows = 960, Ending.RELEASE)),
+      Cell.EARLY.steps(IntSize(1080, 1620), viewport, useful),
+    )
   }
 
   @Test
   fun `every band lies in the image and fits one pixel backing`() {
     val backing = 16L * 1024 * 1024
 
-    for (step in Cell.LONG_SCROLL.steps(long, viewport)) {
+    for (step in Cell.LONG_SCROLL.steps(long, viewport, useful)) {
       val band = step as Band
 
       assertTrue(band.bottom <= long.height)

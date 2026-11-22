@@ -4,6 +4,7 @@ import android.os.Process
 import android.os.SystemClock
 import androidx.compose.runtime.withFrameNanos
 import java.util.concurrent.Executors
+import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.random.Random
 import kotlin.time.Duration.Companion.microseconds
@@ -12,11 +13,13 @@ import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Deferred
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.job
@@ -84,13 +87,13 @@ internal class TrialRunner(
   }
 
   /**
-   * The last output of a request, with the counters of its backend and the
-   * bytes of its inputs, where the backend has them.
+   * The last output of a request, with the counters of its backend, where it
+   * has them, and with its report.
    */
   private class Decoded(
     val output: Publication,
     val ledger: JSONObject?,
-    val input: Acquired?,
+    val report: Report,
   )
 
   /**
@@ -133,7 +136,9 @@ internal class TrialRunner(
     val fixture =
       withContext(Dispatchers.IO) { corpus.fixture(plan.cell.fixture) }
 
-    val steps = plan.cell.steps(fixture.image, corpus.viewport)
+    val steps =
+      plan.cell.steps(fixture.image, corpus.viewport, corpus.usefulRows)
+
     val backend = plan.backend.create(corpus.viewport)
 
     conditions.requireWindow(corpus.viewport)
@@ -240,15 +245,22 @@ internal class TrialRunner(
 
     Marks.instant(Marks.request(request))
 
+    // The decode thread waits for display frames on the clock of this context.
+    val frames = currentCoroutineContext().minusKey(Job)
+
     val decoding = decodes.async {
-      decode(request, marked, step, session, backend, fixture)
+      decode(request, marked, step, session, backend, fixture, frames)
     }
 
     session.decoding = decoding
 
+    // A held step may wait its own limit for its useful output, and that
+    // limit fails the request before the watchdog stops the block.
+    val watchdog = if (step is Held) WATCHDOG + Held.LIMIT else WATCHDOG
+
     try {
       val finished =
-        withTimeoutOrNull(WATCHDOG) {
+        withTimeoutOrNull(watchdog) {
           val decoded = decoding.await()
 
           clock.put("decoded", SystemClock.elapsedRealtimeNanos())
@@ -265,7 +277,7 @@ internal class TrialRunner(
         entry.put("outcome", "ok").put("output", describe(finished.output))
         finished.ledger?.let { entry.put("ledger", it) }
 
-        finished.input?.let { input ->
+        finished.report.input?.let { input ->
           entry.put(
             "input",
             JSONObject()
@@ -273,6 +285,8 @@ internal class TrialRunner(
               .put("reacquired_bytes", input.again),
           )
         }
+
+        finished.report.resumed?.let { clock.put("resumed", it) }
       }
     } catch (failure: CancellationException) {
       throw failure
@@ -286,7 +300,8 @@ internal class TrialRunner(
   /**
    * Decodes one step on the decode thread and returns its last output, with the
    * counters of the backend before the decode and at its end, and with the
-   * bytes of its inputs.
+   * report of the backend. [frames] is a context with the frame clock of the
+   * display.
    */
   private suspend fun decode(
     request: Int,
@@ -295,6 +310,7 @@ internal class TrialRunner(
     session: Session,
     backend: Backend,
     fixture: Fixture,
+    frames: CoroutineContext,
   ): Decoded =
     Marks.section(Marks.decode(request)) {
       val content =
@@ -305,21 +321,34 @@ internal class TrialRunner(
       val offset = SystemClock.elapsedRealtimeNanos() - marked
       var last: Publication? = null
 
-      val input =
-        content.decode(request, step) { output ->
-          try {
-            // The one output of a reference never waits here.
-            consumer.room()
-            consumer.queue(output)
-          } catch (failure: Throwable) {
-            output.release()
+      val display =
+        object : Display {
+          override suspend fun publish(output: Publication) {
+            try {
+              // The one output of a reference never waits here.
+              consumer.room()
+              consumer.queue(output)
+            } catch (failure: Throwable) {
+              output.release()
 
-            throw failure
+              throw failure
+            }
+
+            last = output
           }
 
-          last = output
+          override suspend fun shown(request: Int, rows: Int) {
+            consumer.drawn.first { drawn ->
+              drawn is Publication &&
+                drawn.request == request &&
+                drawn.rows >= rows
+            }
+
+            withContext(frames) { repeat(plan.hold) { withFrameNanos {} } }
+          }
         }
 
+      val report = content.decode(request, step, display)
       val output = checkNotNull(last) { "The backend published no output." }
 
       check(output.request == request && output.rows == output.bitmap.height) {
@@ -334,7 +363,7 @@ internal class TrialRunner(
             .put("terminal", terminal)
         }
 
-      Decoded(output, ledger, input)
+      Decoded(output, ledger, report)
     }
 
   /**
@@ -395,6 +424,9 @@ internal class TrialRunner(
     when (step) {
       is Whole -> JSONObject().put("width", step.width ?: JSONObject.NULL)
       is Band -> JSONObject().put("top", step.top).put("bottom", step.bottom)
+
+      is Held ->
+        JSONObject().put("useful_rows", step.rows).put("ending", step.ending.id)
     }
 
   private fun describe(output: Publication): JSONObject =
@@ -411,7 +443,7 @@ internal class TrialRunner(
      * The version of the record. It rises with every change of a field or of
      * the steps of a cell, so the analysis never pools blocks that differ.
      */
-    const val SCHEMA = 2
+    const val SCHEMA = 3
 
     /** A request that takes longer is a timeout, which stops its block. */
     val WATCHDOG = 10.seconds

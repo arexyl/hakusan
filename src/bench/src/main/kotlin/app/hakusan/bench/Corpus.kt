@@ -6,6 +6,12 @@ import java.io.File
 import java.security.MessageDigest
 import org.json.JSONObject
 
+/**
+ * The frozen hold point of a fixture: the bytes before [offset] decode the top
+ * [rows] of the image, and every later row needs a byte behind them.
+ */
+internal data class Hold(val offset: Long, val rows: Int)
+
 /** One fixture as a local file whose bytes the manifest confirmed. */
 internal class Fixture(
   /** The path of the fixture in the corpus, which the record names. */
@@ -13,6 +19,8 @@ internal class Fixture(
   val file: File,
   /** The dimensions of the encoded image. */
   val image: IntSize,
+  /** The hold point, when the manifest freezes one for the fixture. */
+  val hold: Hold?,
 )
 
 /**
@@ -34,6 +42,24 @@ private constructor(
       val viewport = manifest.getJSONObject("display").getJSONArray("viewport")
 
       return IntSize(viewport.getInt(0), viewport.getInt(1))
+    }
+
+  /**
+   * The rows of the viewport, from its top and at its full width, that the
+   * first useful output of an image fills.
+   */
+  val usefulRows: Int
+    get() {
+      val region =
+        manifest.getJSONObject("display").getJSONArray("first_useful_region")
+
+      val edges = List(region.length(), region::getInt)
+
+      check(edges.take(3) == listOf(0, 0, viewport.width)) {
+        "The first useful region is not the top of the viewport."
+      }
+
+      return edges[3]
     }
 
   /**
@@ -72,7 +98,25 @@ private constructor(
       path = path,
       file = file,
       image = IntSize(artifact.getInt("width"), artifact.getInt("height")),
+      hold = hold(file, artifact),
     )
+  }
+
+  /**
+   * Reads the hold point of [artifact], or returns null when it has none.
+   *
+   * @throws IllegalStateException when the bytes of [file] before the hold
+   *   point differ from the manifest.
+   */
+  private fun hold(file: File, artifact: JSONObject): Hold? {
+    val stated = artifact.optJSONObject("hold") ?: return null
+    val hold = Hold(stated.getLong("offset"), stated.getInt("source_rows"))
+
+    check(sha256(file, hold.offset) == stated.getString("prefix_sha256")) {
+      "The prefix of ${artifact.getString("path")} differs from the manifest."
+    }
+
+    return hold
   }
 
   private fun artifact(path: String): JSONObject {
@@ -94,17 +138,21 @@ private constructor(
       file.length() == artifact.getLong("bytes") &&
       sha256(file) == artifact.getString("sha256")
 
-  private fun sha256(file: File): String {
+  /** Hashes the first [limit] bytes of [file], or all that it has of them. */
+  private fun sha256(file: File, limit: Long = Long.MAX_VALUE): String {
     val digest = MessageDigest.getInstance("SHA-256")
     val buffer = ByteArray(1 shl 16)
+    var left = limit
 
     file.inputStream().use { input ->
-      while (true) {
-        val read = input.read(buffer)
+      while (left > 0) {
+        val wanted = minOf(left, buffer.size.toLong()).toInt()
+        val read = input.read(buffer, 0, wanted)
 
         if (read < 0) break
 
         digest.update(buffer, 0, read)
+        left -= read
       }
     }
 

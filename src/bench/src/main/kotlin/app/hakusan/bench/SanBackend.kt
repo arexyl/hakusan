@@ -1,5 +1,6 @@
 package app.hakusan.bench
 
+import android.os.SystemClock
 import androidx.compose.ui.unit.IntSize
 import app.hakusan.reader.ReaderAcquisitionFailure
 import app.hakusan.reader.ReaderBackwardVariant
@@ -32,10 +33,13 @@ import java.io.FileNotFoundException
 import java.io.IOException
 import java.util.Objects
 import java.util.concurrent.atomic.AtomicReference
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.time.Duration.Companion.seconds
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
@@ -134,11 +138,13 @@ private class SanContent(
   override suspend fun decode(
     request: Int,
     step: Step,
-    publish: suspend (Publication) -> Unit,
-  ): Acquired {
+    display: Display,
+  ): Report {
     val wanted: ReaderOutputRequest
     val size: IntSize
     val top: Int
+    val hold: Withheld?
+    var resumed: Long? = null
 
     acquired = Acquired(bytes = 0, again = 0)
 
@@ -147,23 +153,93 @@ private class SanContent(
         wanted = ReaderOutputRequest.Whole(maxOutputWidth = step.width)
         size = step.grid(fixture.image)
         top = 0
+        hold = null
       }
 
       is Band -> {
         wanted = ReaderOutputRequest.Band(discovered(), step.top, step.bottom)
         size = IntSize(fixture.image.width, step.bottom - step.top)
         top = step.top
+        hold = null
+      }
+
+      is Held -> {
+        wanted = ReaderOutputRequest.Whole()
+        size = fixture.image
+        top = 0
+        hold = withheld(step)
       }
     }
 
+    val watch: (suspend () -> Unit)? = hold?.let {
+      { resumed = resume(request, it, display) }
+    }
+
     val terminal =
-      execute(wanted) { publish(publication(it, request, size, top)) }
+      execute(wanted, hold, watch) { lease ->
+        val output = publication(lease, request, size, top)
+        val held = hold?.waits == true
+
+        display.publish(output)
+
+        // More rows than the prefix holds would need a withheld byte.
+        check(!held || output.rows <= checkNotNull(hold).rows) {
+          "An output has ${output.rows} rows before the hold point ended."
+        }
+      }
 
     check(terminal is ReaderContentTerminal.Completed) {
       "The request ended as $terminal."
     }
 
-    return acquired
+    return Report(input = acquired, resumed = resumed)
+  }
+
+  /**
+   * The hold of the input of [step] at the hold point of the fixture.
+   *
+   * @throws IllegalStateException when the fixture has no hold point, or one
+   *   whose prefix decodes less than the useful output.
+   */
+  private fun withheld(step: Held): Withheld {
+    val point = checkNotNull(fixture.hold) { "The fixture has no hold point." }
+
+    check(point.rows >= step.rows) {
+      "The hold point leaves ${point.rows} rows, and ${step.rows} are useful."
+    }
+
+    return Withheld(point.offset, point.rows)
+  }
+
+  /**
+   * Waits until the display has shown the output with every row of the prefix
+   * of [hold], lets the input go on, and returns the time of that. No copy and
+   * no publication of the request is on its way by then, because the adapter
+   * has no row left to copy.
+   *
+   * @throws IllegalStateException when the output takes longer than its limit
+   *   after the input delivered the prefix.
+   */
+  private suspend fun resume(
+    request: Int,
+    hold: Withheld,
+    display: Display,
+  ): Long {
+    hold.awaitPrefix()
+
+    val shown =
+      withTimeoutOrNull(Held.LIMIT) { display.shown(request, hold.rows) }
+
+    checkNotNull(shown) {
+      "No output with the ${hold.rows} rows of the prefix in ${Held.LIMIT}."
+    }
+
+    val resumed = SystemClock.elapsedRealtimeNanos()
+
+    Marks.instant(Marks.resume(request))
+    hold.release()
+
+    return resumed
   }
 
   /**
@@ -202,11 +278,15 @@ private class SanContent(
 
   /**
    * Runs one request to its terminal outcome, which it returns, and hands every
-   * publication to [take]. It counts what the input of the request delivered,
+   * publication to [take]. Its input withholds what [hold] names, if anything,
+   * and [watch] runs beside the takes until the request ends, where a failure
+   * of it ends the request. It counts what the input of the request delivered,
    * if the reader opened one.
    */
   private suspend fun execute(
     wanted: ReaderOutputRequest,
+    hold: Withheld? = null,
+    watch: (suspend () -> Unit)? = null,
     take: suspend (ReaderOutputLease) -> Unit,
   ): ReaderContentTerminal? {
     val submitted =
@@ -222,7 +302,7 @@ private class SanContent(
       coroutineScope {
         val execution = async {
           owner.execute(requests) {
-            val opened = open(fixture.file, representation)
+            val opened = open(fixture.file, representation, hold)
 
             if (opened != null) {
               input.set(opened)
@@ -233,18 +313,24 @@ private class SanContent(
           }
         }
 
-        // The reader publishes the last copy before the execution ends, and
-        // one publication at most waits for its take.
-        do {
-          val ended = select {
-            execution.onJoin { true }
-            published.onReceive { false }
-          }
+        val watching = watch?.let { launch { it() } }
 
-          requests.takePublication()?.let { take(it.output) }
-        } while (!ended)
+        try {
+          // The reader publishes the last copy before the execution ends, and
+          // one publication at most waits for its take.
+          do {
+            val ended = select {
+              execution.onJoin { true }
+              published.onReceive { false }
+            }
 
-        execution.await()
+            requests.takePublication()?.let { take(it.output) }
+          } while (!ended)
+
+          execution.await()
+        } finally {
+          watching?.cancel()
+        }
       }
     } finally {
       input.get()?.let { count(it.position) }
@@ -319,9 +405,14 @@ private class SanContent(
 
     /**
      * Opens [file] as an input of [representation] with the length that the
-     * file has now, or returns null when no such file exists.
+     * file has now, or returns null when no such file exists. The input
+     * withholds what [hold] names, if anything.
      */
-    fun open(file: File, representation: ReaderRepresentation): FileInput? {
+    fun open(
+      file: File,
+      representation: ReaderRepresentation,
+      hold: Withheld?,
+    ): FileInput? {
       val stream =
         try {
           FileInputStream(file)
@@ -338,7 +429,7 @@ private class SanContent(
           throw failure
         }
 
-      return FileInput(stream, length, representation)
+      return FileInput(stream, length, representation, hold)
     }
 
     /** The fixture as the one page of a title with one chapter. */
@@ -354,19 +445,60 @@ private class SanContent(
 }
 
 /**
- * The local file of a fixture as a sequential input of known length. Its reads
- * block, and the reader runs them off its worker.
+ * What an input withholds: every byte from [offset] on, until [release]. The
+ * bytes before it, the prefix, decode the top [rows] of the image. Every call
+ * is safe from any thread.
+ */
+private class Withheld(val offset: Long, val rows: Int) {
+  private val delivered = CompletableDeferred<Unit>()
+  private val released = CompletableDeferred<Unit>()
+
+  /** Whether the input still withholds its bytes. */
+  val waits: Boolean
+    get() = !released.isCompleted
+
+  /** The input has delivered the prefix and has nothing to deliver now. */
+  fun prefixDelivered() {
+    delivered.complete(Unit)
+  }
+
+  suspend fun awaitPrefix() {
+    delivered.await()
+  }
+
+  /** Lets the input deliver the rest. */
+  fun release() {
+    released.complete(Unit)
+  }
+
+  suspend fun awaitRelease() {
+    released.await()
+  }
+}
+
+/**
+ * The local file of a fixture as a sequential input. Its reads block, and the
+ * reader runs them off its worker.
+ *
+ * Without a [hold] it declares the [size] of the file as its length. With one
+ * it declares no length, as a stream does, and while the hold withholds bytes
+ * it has none behind the offset of the hold and waits there.
  */
 private class FileInput(
   private val stream: FileInputStream,
-  private val declared: Long,
+  private val size: Long,
   override val representation: ReaderRepresentation,
+  private val hold: Withheld?,
 ) : ReaderByteInput {
-  /** The failure that every read after it repeats. */
-  private var failure: ReaderInputRead.InputFailure? = null
+  /** The failure or the cancellation that every read after it repeats. */
+  private var terminal: ReaderInputRead? = null
 
   override val capabilities =
-    ReaderInputCapabilities(length = declared, rewind = false, seek = false)
+    ReaderInputCapabilities(
+      length = size.takeIf { hold == null },
+      rewind = false,
+      seek = false,
+    )
 
   @Volatile
   override var position = 0L
@@ -379,15 +511,25 @@ private class FileInput(
   ): ReaderInputRead {
     Objects.checkFromIndexSize(offset, length, destination.size)
 
-    val left = declared - position
+    val end = if (hold?.waits == true) minOf(hold.offset, size) else size
+    val left = end - position
+
+    terminal?.let {
+      return it
+    }
 
     when {
       length == 0 -> return ReaderInputRead.NoOp
-      failure != null -> return checkNotNull(failure)
-      left == 0L -> return ReaderInputRead.EndOfInput
+      left == 0L && end == size -> return ReaderInputRead.EndOfInput
     }
 
-    // A file that ends before its length did not deliver what it declared.
+    if (left == 0L) {
+      checkNotNull(hold).prefixDelivered()
+
+      return ReaderInputRead.AwaitInput
+    }
+
+    // A file that ends before its size is not the file of the fixture.
     val count =
       try {
         stream.read(destination, offset, minOf(length.toLong(), left).toInt())
@@ -397,7 +539,7 @@ private class FileInput(
 
     if (count < 0) {
       return ReaderInputRead.InputFailure(ReaderAcquisitionFailure.FAILED)
-        .also { failure = it }
+        .also { terminal = it }
     }
 
     position += count
@@ -405,7 +547,19 @@ private class FileInput(
     return ReaderInputRead.Data(count)
   }
 
-  override suspend fun awaitInput() {}
+  override suspend fun awaitInput() {
+    if (hold == null || position != hold.offset) {
+      return
+    }
+
+    try {
+      hold.awaitRelease()
+    } catch (failure: CancellationException) {
+      terminal = ReaderInputRead.Canceled
+
+      throw failure
+    }
+  }
 
   override suspend fun seek(position: Long): ReaderInputSeek =
     ReaderInputSeek.Unsupported
