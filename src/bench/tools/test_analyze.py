@@ -138,5 +138,93 @@ class Overhead(unittest.TestCase):
         self.assertEqual(analyze.overhead([row("a", True, 100.0)]), [])
 
 
+class Entries(unittest.TestCase):
+    def test_a_terminal_names_the_category_of_a_failure(self) -> None:
+        failed = {"terminal": {"outcome": "failed", "failure": "input_failed"}}
+        canceled = {"terminal": {"outcome": "canceled", "failure": None}}
+
+        self.assertEqual(analyze.terminal(failed), "failed input_failed")
+        self.assertEqual(analyze.terminal(canceled), "canceled")
+        self.assertEqual(analyze.terminal({}), "")
+
+    def test_the_peaks_come_from_the_terminal_read_and_the_rest_from_the_close(
+        self,
+    ) -> None:
+        reads = {
+            "reset": {"peak_live_bytes": 1, "peak_committed_bytes": 2, "live_bytes": 3},
+            "terminal": {
+                "peak_live_bytes": 40,
+                "peak_committed_bytes": 50,
+                "live_bytes": 60,
+            },
+            "close": {"peak_live_bytes": 40, "peak_committed_bytes": 50, "live_bytes": 7},
+        }
+
+        self.assertEqual(
+            analyze.ledger({"ledger": reads}),
+            {
+                "ledger_peak_live_bytes": 40,
+                "ledger_peak_committed_bytes": 50,
+                "ledger_close_live_bytes": 7,
+            },
+        )
+
+        self.assertEqual(analyze.ledger({}), {})
+
+    def test_the_useful_draw_is_the_first_one_with_the_rows(self) -> None:
+        draws = [
+            {"ts": 30, "rest": [3, 1536]},
+            {"ts": 10, "rest": [1, 800]},
+            {"ts": 20, "rest": [2, 1423]},
+        ]
+
+        self.assertEqual(analyze.useful_draw(draws, 1423), draws[2])
+        self.assertIsNone(analyze.useful_draw(draws, 1537))
+
+
+class Cancellations(unittest.TestCase):
+    def test_the_quiescent_job_ends_between_the_cancellation_and_the_return(
+        self,
+    ) -> None:
+        jobs = [analyze.Job(90, 0, 2400), analyze.Job(120, 7, 199)]
+
+        self.assertEqual(analyze.quiescence(jobs, 100, 130), jobs[1])
+        self.assertIsNone(analyze.quiescence(jobs, 100, 110))
+        self.assertIsNone(analyze.quiescence(jobs, 80, 130))
+
+    def test_the_rows_after_a_cancellation_exclude_the_last_copy_before_it(
+        self,
+    ) -> None:
+        job = analyze.Job(120, 7, 260)
+        copies = [analyze.Copy(50, 0, 64), analyze.Copy(90, 64, 135)]
+
+        self.assertEqual(analyze.rows_after(job, copies, 100), 61)
+        self.assertEqual(analyze.rows_after(job, copies, 60), 196)
+        self.assertEqual(analyze.rows_after(job, [], 100), 260)
+
+    def test_a_summary_counts_only_a_completed_request_without_a_time_as_a_gap(
+        self,
+    ) -> None:
+        canceled = {
+            "block": "a",
+            "cell": "cancel-wait",
+            "backend": "san",
+            "step": 0,
+            "warmup": False,
+            "outcome": "ok",
+            "terminal": "canceled",
+            "gaps": "",
+            "cancel_settled_ms": 2.0,
+            "cancel_rows_bound": 0,
+        }
+
+        (summary,) = analyze.summarize([canceled, {**canceled, "terminal": "completed"}])
+
+        self.assertEqual(summary["terminals"], {"canceled": 1, "completed": 1})
+        self.assertEqual(summary["timing_gaps"], 1)
+        self.assertEqual(summary["cancel_settled_ms"]["count"], 2)
+        self.assertEqual(summary["cancel_rows_bound"]["maximum"], 0)
+
+
 if __name__ == "__main__":
     unittest.main()

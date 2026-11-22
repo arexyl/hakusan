@@ -17,6 +17,7 @@ display frame, and the end of that display frame is the presentation.
 from __future__ import annotations
 
 import argparse
+import collections
 import csv
 import io
 import json
@@ -91,6 +92,14 @@ select name, count(*) as count
 from ftrace_event
 where name in ('rss_stat_throttled', 'rss_stat', 'gpu_mem_total')
 group by name;
+
+select s.ts, s.dur, s.name
+from slice s
+join thread_track tt on s.track_id = tt.id
+join thread t using (utid)
+where (s.name glob 'reader.job *' or s.name glob 'reader.copy *')
+  and t.upid in (select upid from harness)
+order by s.ts;
 """
 
 ANON = "mem.rss.anon"
@@ -117,6 +126,23 @@ SETTLE_CANDIDATES_MS = (125, 250, 500, 1000)
 
 class Failure(Exception):
     """The blocks cannot be analyzed. The message names the reason."""
+
+
+class Job(NamedTuple):
+    """The end of a job of the reader: its time, the status of its last step,
+    and the image rows that it decoded."""
+
+    end: int
+    status: int
+    decoded: int
+
+
+class Copy(NamedTuple):
+    """The start of a copy of the reader, and the rows that it copies."""
+
+    start: int
+    first: int
+    count: int
 
 
 class Interval(NamedTuple):
@@ -271,7 +297,23 @@ class Trace:
     """What one trace holds about the harness."""
 
     def __init__(self, path: pathlib.Path) -> None:
-        marks, surfaces, displays, counters, frames, losses, events = tables(path)
+        marks, surfaces, displays, counters, frames, losses, events, sections = tables(
+            path
+        )
+
+        # The sections of the reader's worker name no request, so a request
+        # finds its own by their times.
+        self.jobs = [
+            Job(int(row["ts"]) + int(row["dur"]), *map(int, row["name"].split(" ")[1:]))
+            for row in sections
+            if row["name"].startswith("reader.job ")
+        ]
+
+        self.copies = [
+            Copy(int(row["ts"]), *map(int, row["name"].split(" ")[2:]))
+            for row in sections
+            if row["name"].startswith("reader.copy ")
+        ]
 
         self.marks: dict[tuple[str, int], list[dict[str, Any]]] = {}
 
@@ -414,6 +456,132 @@ def settle(counter: Counter, close: int, settled: int) -> int | None:
     return None
 
 
+def terminal(entry: dict[str, Any]) -> str:
+    """Returns how the request of an entry ended, a failure with its
+    category. A request that did not end as its step expects has none."""
+    ended = entry.get("terminal")
+
+    if ended is None:
+        return ""
+
+    if ended["failure"] is None:
+        return ended["outcome"]
+
+    return f"{ended['outcome']} {ended['failure']}"
+
+
+def ledger(entry: dict[str, Any]) -> dict[str, int]:
+    """Returns the values of the ledger reads of an entry: the peaks of the
+    request from its terminal read, and what the engine holds once the
+    attempt has closed."""
+    reads = entry.get("ledger", {})
+    values = {}
+
+    if "terminal" in reads:
+        values["ledger_peak_live_bytes"] = reads["terminal"]["peak_live_bytes"]
+        values["ledger_peak_committed_bytes"] = reads["terminal"]["peak_committed_bytes"]
+
+    if "close" in reads:
+        values["ledger_close_live_bytes"] = reads["close"]["live_bytes"]
+
+    return values
+
+
+def useful_draw(draws: list[dict[str, Any]], rows: int) -> dict[str, Any] | None:
+    """Returns the first draw of an output with at least the useful rows. The
+    rest of a draw mark is its revision and its rows."""
+    useful = [draw for draw in draws if draw["rest"][1] >= rows]
+
+    return min(useful, key=lambda draw: draw["ts"]) if useful else None
+
+
+def quiescence(jobs: list[Job], cancel: int, returned: int) -> Job | None:
+    """Returns the job that ended between the cancellation of its request
+    and the return of the execution, where the request is quiescent."""
+    ended = [job for job in jobs if cancel <= job.end <= returned]
+
+    return ended[0] if len(ended) == 1 else None
+
+
+def rows_after(job: Job, copies: list[Copy], cancel: int) -> int:
+    """Returns an upper bound of the rows that a job decoded after the
+    cancellation of its request: its decoded rows without the ones that the
+    last copy before the cancellation already covered. Copies of an earlier
+    request cover rows too, so the caller passes the ones of this request."""
+    covered = [copy.first + copy.count for copy in copies if copy.start < cancel]
+
+    return max(job.decoded - (covered[-1] if covered else 0), 0)
+
+
+def early(
+    trace: Trace, entry: dict[str, Any], start: dict[str, Any], row: dict[str, Any]
+) -> list[str]:
+    """Adds the times of the useful output of a held request to its row, and
+    returns the gaps. The useful output counts only when its frame was
+    presented before the held input went on or the request was cancelled."""
+    useful = entry.get("wanted", {}).get("useful_rows")
+
+    if useful is None:
+        return []
+
+    request = entry["request"]
+    draw = useful_draw(trace.marks.get(("bench.present", request), []), useful)
+
+    if draw is None:
+        return ["no draw of the useful output"]
+
+    presented, gaps = trace.presentation(draw)
+    resume = trace.mark("bench.resume", request)
+    went_on = resume or trace.mark("bench.cancel", request)
+
+    row["useful_draw_ms"] = (draw["ts"] - start["ts"]) / 1e6
+
+    if presented is not None:
+        row["useful_display_ms"] = (presented - start["ts"]) / 1e6
+
+    if went_on is None:
+        gaps.append("no mark of the end of the hold")
+    elif presented is not None and presented > went_on["ts"]:
+        gaps.append("the useful output was presented after the hold ended")
+
+    # The time from the request contains the hold of the harness.
+    if resume is not None and "display_ms" in row:
+        row["final_after_resume_ms"] = (
+            row["display_ms"] - (resume["ts"] - start["ts"]) / 1e6
+        )
+
+    return gaps
+
+
+def cancellation(trace: Trace, request: int, row: dict[str, Any]) -> list[str]:
+    """Adds the latencies of a cancelled request to its row, and returns the
+    gaps. A request that completed before its cancellation has none."""
+    cancel = trace.mark("bench.cancel", request)
+
+    if cancel is None or row["terminal"] != "canceled":
+        return []
+
+    returned = trace.mark("bench.returned", request)
+
+    if returned is None:
+        return ["no return of the cancelled request"]
+
+    row["cancel_settled_ms"] = (returned["ts"] - cancel["ts"]) / 1e6
+
+    job = quiescence(trace.jobs, cancel["ts"], returned["ts"])
+
+    if job is None:
+        return ["no one job ended between the cancellation and the return"]
+
+    start = trace.mark("bench.request", request)
+    own = [copy for copy in trace.copies if start is None or copy.start >= start["ts"]]
+
+    row["cancel_quiescent_ms"] = (job.end - cancel["ts"]) / 1e6
+    row["cancel_rows_bound"] = rows_after(job, own, cancel["ts"])
+
+    return []
+
+
 def analyze_block(
     directory: pathlib.Path, name: str
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -466,6 +634,7 @@ def analyze_block(
             "step": entry["step"],
             "warmup": entry["warmup"],
             "outcome": entry["outcome"],
+            "terminal": terminal(entry),
             "thermal_status": entry["conditions"]["thermal_status"],
         }
 
@@ -477,6 +646,10 @@ def analyze_block(
             gaps.append("no request mark")
         elif entry["outcome"] != "ok":
             gaps.append(f"the request ended as {entry['outcome']}")
+        elif row["terminal"] != "completed":
+            # Its last output is a partial one or none, so it has no time to
+            # a final output.
+            pass
         elif not draws:
             gaps.append("no draw of an output")
         else:
@@ -499,6 +672,17 @@ def analyze_block(
         if "input" in entry:
             row["acquired_bytes"] = entry["input"]["acquired_bytes"]
             row["reacquired_bytes"] = entry["input"]["reacquired_bytes"]
+
+        row.update(ledger(entry))
+
+        # The close of the content of the attempt, which the harness times
+        # itself, after presentation released every output.
+        if "closing" in entry["clock"]:
+            row["close_ms"] = (entry["clock"]["closed"] - entry["clock"]["closing"]) / 1e6
+
+        if start is not None and entry["outcome"] == "ok":
+            gaps.extend(early(trace, entry, start, row))
+            gaps.extend(cancellation(trace, request, row))
 
         # A block of an overhead check without the memory events has no
         # memory values, which is no gap.
@@ -566,12 +750,23 @@ COLUMNS = [
     "step",
     "warmup",
     "outcome",
+    "terminal",
     "decode_ms",
     "draw_ms",
     "display_ms",
     "frame_period_ms",
+    "useful_draw_ms",
+    "useful_display_ms",
+    "final_after_resume_ms",
+    "cancel_quiescent_ms",
+    "cancel_settled_ms",
+    "cancel_rows_bound",
+    "close_ms",
     "acquired_bytes",
     "reacquired_bytes",
+    "ledger_peak_live_bytes",
+    "ledger_peak_committed_bytes",
+    "ledger_close_live_bytes",
     "anon_peak_bytes",
     "anon_retained_close_bytes",
     "anon_retained_settled_bytes",
@@ -582,6 +777,17 @@ COLUMNS = [
     "thermal_status",
     "gaps",
 ]
+
+
+# The times beside the display time that a summary describes as it does that
+# one, each over the requests that have it.
+LATENCIES = (
+    "useful_display_ms",
+    "final_after_resume_ms",
+    "cancel_quiescent_ms",
+    "cancel_settled_ms",
+    "close_ms",
+)
 
 
 def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -603,13 +809,24 @@ def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for row in timed:
             blocks.setdefault(row["block"], []).append(row["display_ms"])
 
+        # Only a request that completed has a final output to time. One that
+        # ended otherwise as its step expects is no gap.
+        untimed = sum(
+            row["outcome"] != "ok" or row["terminal"] == "completed"
+            for row in group
+            if "display_ms" not in row
+        )
+
         summary: dict[str, Any] = {
             "cell": cell,
             "backend": backend,
             "step": step,
             "requests": len(group),
             "not_ok": sum(row["outcome"] != "ok" for row in group),
-            "timing_gaps": len(group) - len(timed),
+            "terminals": dict(
+                sorted(collections.Counter(row["terminal"] for row in group).items())
+            ),
+            "timing_gaps": untimed,
             "with_any_gap": sum(row["gaps"] != "" for row in group),
             "block_medians_ms": {
                 block: statistics.median(values) for block, values in blocks.items()
@@ -636,8 +853,14 @@ def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
             summary["settle_ms"] = None if None in intervals else max(intervals)
 
+        for column in LATENCIES:
+            values = [row[column] for row in group if column in row]
+
+            if values:
+                summary[column] = describe(values)
+
         for column in COLUMNS:
-            if column.endswith("_bytes"):
+            if column.endswith("_bytes") or column == "cancel_rows_bound":
                 values = [row[column] for row in group if row.get(column) is not None]
 
                 if values:
