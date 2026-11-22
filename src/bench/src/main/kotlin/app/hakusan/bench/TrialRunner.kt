@@ -91,7 +91,7 @@ internal class TrialRunner(
    * has them, and with its report.
    */
   private class Decoded(
-    val output: Publication,
+    val output: Publication?,
     val ledger: JSONObject?,
     val report: Report,
   )
@@ -161,7 +161,15 @@ internal class TrialRunner(
           }
 
         if (ended != null) {
+          val closing = SystemClock.elapsedRealtimeNanos()
+
           backend.close()
+
+          // The end of the backend with nothing of an attempt left in it.
+          record.put(
+            "backend_close_us",
+            (SystemClock.elapsedRealtimeNanos() - closing) / 1000,
+          )
         }
       }
     }
@@ -264,8 +272,13 @@ internal class TrialRunner(
           val decoded = decoding.await()
 
           clock.put("decoded", SystemClock.elapsedRealtimeNanos())
-          consumer.drawn.first { it === decoded.output }
-          clock.put("drawn", SystemClock.elapsedRealtimeNanos())
+
+          // A request without an output still stays for the hold frames.
+          if (decoded.output != null) {
+            consumer.drawn.first { it === decoded.output }
+            clock.put("drawn", SystemClock.elapsedRealtimeNanos())
+          }
+
           repeat(plan.hold) { withFrameNanos {} }
 
           decoded
@@ -274,29 +287,8 @@ internal class TrialRunner(
       if (finished == null) {
         entry.put("outcome", "timeout")
       } else {
-        entry.put("outcome", "ok").put("output", describe(finished.output))
-        finished.ledger?.let { entry.put("ledger", it) }
-
-        finished.report.input?.let { input ->
-          entry.put(
-            "input",
-            JSONObject()
-              .put("acquired_bytes", input.bytes)
-              .put("reacquired_bytes", input.again),
-          )
-        }
-
-        finished.report.resumed?.let { clock.put("resumed", it) }
-
-        entry.put(
-          "terminal",
-          JSONObject()
-            .put("outcome", finished.report.terminal.outcome)
-            .put(
-              "failure",
-              finished.report.terminal.failure ?: JSONObject.NULL,
-            ),
-        )
+        entry.put("outcome", "ok")
+        record(finished, entry, clock)
       }
     } catch (failure: CancellationException) {
       throw failure
@@ -305,6 +297,34 @@ internal class TrialRunner(
     }
 
     return entry.put("clock", clock)
+  }
+
+  /** Adds what [finished] reports to the [entry] of its request. */
+  private fun record(finished: Decoded, entry: JSONObject, clock: JSONObject) {
+    val report = finished.report
+
+    finished.output?.let { entry.put("output", describe(it)) }
+    finished.ledger?.let { entry.put("ledger", it) }
+
+    report.input?.let { input ->
+      entry.put(
+        "input",
+        JSONObject()
+          .put("acquired_bytes", input.bytes)
+          .put("reacquired_bytes", input.again),
+      )
+    }
+
+    entry.put(
+      "terminal",
+      JSONObject()
+        .put("outcome", report.terminal.outcome)
+        .put("failure", report.terminal.failure ?: JSONObject.NULL),
+    )
+
+    report.resumed?.let { clock.put("resumed", it) }
+    report.canceled?.let { clock.put("canceled", it) }
+    report.returned?.let { clock.put("returned", it) }
   }
 
   /**
@@ -359,15 +379,20 @@ internal class TrialRunner(
         }
 
       val report = content.decode(request, step, display)
-      val output = checkNotNull(last) { "The backend published no output." }
+      val output = last
 
-      val partial = report.terminal != Terminal.COMPLETED
+      // A request that did not complete may end with a partial output, and
+      // one cancelled before its first take with none.
+      if (report.terminal == Terminal.COMPLETED) {
+        checkNotNull(output) { "The backend published no output." }
 
-      check(
-        output.request == request &&
-          (partial || output.rows == output.bitmap.height)
-      ) {
-        "The last output of the request lacks rows."
+        check(output.rows == output.bitmap.height) {
+          "The last output of the request lacks rows."
+        }
+      }
+
+      check(output == null || output.request == request) {
+        "The last output belongs to another request."
       }
 
       val ledger =
@@ -413,15 +438,25 @@ internal class TrialRunner(
     }
 
     if (idle) {
+      val entry = session.entry
+      val closing = SystemClock.elapsedRealtimeNanos()
+      var ended = closing
+
       val closed =
         withContext(decode) {
           session.content?.close()
+          ended = SystemClock.elapsedRealtimeNanos()
           backend.ledger(reset = false)
         }
 
+      // The close of the attempt, after presentation released its outputs.
+      entry
+        ?.optJSONObject("clock")
+        ?.put("closing", closing)
+        ?.put("closed", ended)
+
       // What the backend still holds once the attempt has ended.
       if (closed != null) {
-        val entry = session.entry
         val ledger = entry?.optJSONObject("ledger") ?: JSONObject()
 
         entry?.put("ledger", ledger.put("close", closed))
@@ -442,6 +477,8 @@ internal class TrialRunner(
 
       is Held ->
         JSONObject().put("useful_rows", step.rows).put("ending", step.ending.id)
+
+      is Interrupted -> JSONObject().put("canceled", step.moment.id)
     }
 
   private fun describe(output: Publication): JSONObject =
@@ -458,7 +495,7 @@ internal class TrialRunner(
      * The version of the record. It rises with every change of a field or of
      * the steps of a cell, so the analysis never pools blocks that differ.
      */
-    const val SCHEMA = 4
+    const val SCHEMA = 5
 
     /** A request that takes longer is a timeout, which stops its block. */
     val WATCHDOG = 10.seconds

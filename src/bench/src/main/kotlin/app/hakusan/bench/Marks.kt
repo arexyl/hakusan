@@ -19,6 +19,12 @@ internal object Marks {
   /** The held input of a request goes on, after its useful output. */
   fun resume(request: Int): String = "bench.resume $request"
 
+  /** The backend requests the cancellation of a request. */
+  fun cancel(request: Int): String = "bench.cancel $request"
+
+  /** The execution of a cancelled request has returned. */
+  fun returned(request: Int): String = "bench.returned $request"
+
   /** The backend of the attempt that ends with [request] has closed. */
   fun close(request: Int): String = "bench.close $request"
 

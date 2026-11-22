@@ -76,6 +76,26 @@ internal class CellTest {
       listOf(Held(rows = 1423, Ending.FAIL)),
       Cell.EARLY_FAILED.steps(ordinary, viewport, useful),
     )
+
+    assertEquals(
+      listOf(Held(rows = 1423, Ending.CANCEL)),
+      Cell.CANCEL_WAIT.steps(ordinary, viewport, useful),
+    )
+  }
+
+  @Test
+  fun `a cancellation without a hold names its moment`() {
+    val ordinary = IntSize(1600, 2400)
+
+    assertEquals(
+      listOf(Interrupted(Moment.DECODING)),
+      Cell.CANCEL_DECODE.steps(ordinary, viewport, useful),
+    )
+
+    assertEquals(
+      listOf(Interrupted(Moment.PUBLISHED)),
+      Cell.CANCEL_PUBLICATION.steps(ordinary, viewport, useful),
+    )
   }
 
   @Test

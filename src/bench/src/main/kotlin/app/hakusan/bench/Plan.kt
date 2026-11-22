@@ -27,6 +27,18 @@ internal enum class Cell(val id: String, val fixture: String) {
   /** As [EARLY_TRUNCATED], with an input whose next read fails. */
   EARLY_FAILED("early-failed", "journey/ordinary.png"),
 
+  /**
+   * As [EARLY] up to the shown output, after which the request is cancelled
+   * while its input waits.
+   */
+  CANCEL_WAIT("cancel-wait", "journey/ordinary.png"),
+
+  /** The ordinary page, cancelled while its decode runs. */
+  CANCEL_DECODE("cancel-decode", "journey/ordinary.png"),
+
+  /** The ordinary page, cancelled with its first output queued. */
+  CANCEL_PUBLICATION("cancel-publication", "journey/ordinary.png"),
+
   /** The large page, decoded at the width of the viewport. */
   LARGE("large", "qualification/timed/large.png"),
 
@@ -63,6 +75,9 @@ internal enum class Cell(val id: String, val fixture: String) {
         EARLY -> return listOf(Held(shown, Ending.RELEASE))
         EARLY_TRUNCATED -> return listOf(Held(shown, Ending.TRUNCATE))
         EARLY_FAILED -> return listOf(Held(shown, Ending.FAIL))
+        CANCEL_WAIT -> return listOf(Held(shown, Ending.CANCEL))
+        CANCEL_DECODE -> return listOf(Interrupted(Moment.DECODING))
+        CANCEL_PUBLICATION -> return listOf(Interrupted(Moment.PUBLISHED))
         LARGE -> return listOf(Whole(width = viewport.width))
         LONG_FIRST -> listOf(0)
         LONG_SCROLL ->

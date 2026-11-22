@@ -131,6 +131,15 @@ private class SanContent(
   /** The end of the longest prefix that an input of the attempt delivered. */
   private var reach = 0L
 
+  /** The cancellation of the running request, if the backend requests one. */
+  private var cancellation = Cancellation(request = 0)
+
+  /** The times of one cancellation, on the clock of the record. */
+  private class Cancellation(val request: Int) {
+    var requested: Long? = null
+    var returned: Long? = null
+  }
+
   init {
     // The reader runs the wakeup on its worker.
     requests.setPresentationWakeup { published.trySend(Unit) }
@@ -146,8 +155,10 @@ private class SanContent(
     val top: Int
     val hold: Withheld?
     var resumed: Long? = null
+    var taken = 0
 
     acquired = Acquired(bytes = 0, again = 0)
+    cancellation = Cancellation(request)
 
     when (step) {
       is Whole -> {
@@ -170,16 +181,36 @@ private class SanContent(
         top = 0
         hold = withheld(step)
       }
+
+      is Interrupted -> {
+        wanted = ReaderOutputRequest.Whole()
+        size = fixture.image
+        top = 0
+        hold = null
+      }
     }
+
+    val moment = (step as? Interrupted)?.moment
 
     val watch: (suspend () -> Unit)? = hold?.let {
       { resumed = resume(request, it, display) }
     }
 
+    // The first publication is queued and not taken when this thread
+    // learns of it.
+    val arrived = if (moment == Moment.PUBLISHED) ::cancelOnce else null
+
     val terminal =
-      execute(wanted, hold, watch) { lease ->
+      execute(wanted, hold, watch, arrived) { lease ->
         val output = publication(lease, request, size, top)
         val held = hold?.waits == true
+
+        taken += 1
+
+        // Before the output goes on: this thread still holds its target.
+        if (moment == Moment.DECODING && taken == 2) {
+          cancelOnce()
+        }
 
         display.publish(output)
 
@@ -194,38 +225,66 @@ private class SanContent(
         is ReaderContentTerminal.Completed -> Terminal.COMPLETED
         is ReaderContentTerminal.Canceled -> Terminal.CANCELED
 
-        is ReaderContentTerminal.Failed ->
-          Terminal.failed(terminal.failure.name.lowercase())
+        is ReaderContentTerminal.Failed -> failed(terminal.failure)
 
         is ReaderContentTerminal.Oversized,
         null -> error("The request ended as $terminal.")
       }
 
-    check(ended == expected(step)) { "The request ended as $terminal." }
+    check(ended in expected(step)) { "The request ended as $terminal." }
 
-    return Report(terminal = ended, input = acquired, resumed = resumed)
+    return Report(
+      terminal = ended,
+      input = acquired,
+      resumed = resumed,
+      canceled = cancellation.requested,
+      returned = cancellation.returned,
+    )
   }
 
-  /** The terminal outcome that [step] must end as. */
-  private fun expected(step: Step): Terminal =
+  /** The terminal outcomes that [step] may end as. */
+  private fun expected(step: Step): Set<Terminal> =
     when (step) {
       is Whole,
-      is Band -> Terminal.COMPLETED
+      is Band -> setOf(Terminal.COMPLETED)
+
+      // A decode that ended before the cancellation reached it completed.
+      is Interrupted -> setOf(Terminal.CANCELED, Terminal.COMPLETED)
 
       is Held ->
         when (step.ending) {
-          Ending.RELEASE -> Terminal.COMPLETED
+          Ending.RELEASE -> setOf(Terminal.COMPLETED)
 
           // The stream ends inside the image data, and the decoder says so.
           Ending.TRUNCATE ->
-            Terminal.failed(
-              ReaderContentFailure.TRUNCATED_CONTENT.name.lowercase()
-            )
+            setOf(failed(ReaderContentFailure.TRUNCATED_CONTENT))
 
-          Ending.FAIL ->
-            Terminal.failed(ReaderContentFailure.INPUT_FAILED.name.lowercase())
+          Ending.FAIL -> setOf(failed(ReaderContentFailure.INPUT_FAILED))
+          Ending.CANCEL -> setOf(Terminal.CANCELED)
         }
     }
+
+  private fun failed(failure: ReaderContentFailure): Terminal =
+    Terminal.failed(failure.name.lowercase())
+
+  /**
+   * Cancels the executing request once, as a controller does that moves on: it
+   * submits a replacement, and the content owner notifies the cancellation of
+   * the executing request. The replacement never executes, and the close of the
+   * attempt drops it.
+   */
+  private fun cancelOnce() {
+    if (cancellation.requested != null) {
+      return
+    }
+
+    cancellation.requested = SystemClock.elapsedRealtimeNanos()
+    Marks.instant(Marks.cancel(cancellation.request))
+
+    checkNotNull(requests.submit(descriptor(fixture))) {
+      "The content is closed."
+    }
+  }
 
   /**
    * The hold of the input of [step] at the hold point of the fixture.
@@ -245,9 +304,10 @@ private class SanContent(
 
   /**
    * Waits until the display has shown the output with every row of the prefix
-   * of [hold], lets the input go on to its ending, and returns the time of
-   * that. No copy and no publication of the request is on its way by then,
-   * because the adapter has no row left to copy.
+   * of [hold], and then lets the input go on to its ending and returns the time
+   * of that, or cancels the request and returns null. No copy and no
+   * publication of the request is on its way by then, because the adapter has
+   * no row left to copy.
    *
    * @throws IllegalStateException when the output takes longer than its limit
    *   after the input delivered the prefix.
@@ -256,7 +316,7 @@ private class SanContent(
     request: Int,
     hold: Withheld,
     display: Display,
-  ): Long {
+  ): Long? {
     hold.awaitPrefix()
 
     val shown =
@@ -264,6 +324,13 @@ private class SanContent(
 
     checkNotNull(shown) {
       "No output with the ${hold.rows} rows of the prefix in ${Held.LIMIT}."
+    }
+
+    // A cancellation finds the input waiting, so the hold stays.
+    if (hold.ending == Ending.CANCEL) {
+      cancelOnce()
+
+      return null
     }
 
     val resumed = SystemClock.elapsedRealtimeNanos()
@@ -312,13 +379,15 @@ private class SanContent(
    * Runs one request to its terminal outcome, which it returns, and hands every
    * publication to [take]. Its input withholds what [hold] names, if anything,
    * and [watch] runs beside the takes until the request ends, where a failure
-   * of it ends the request. It counts what the input of the request delivered,
-   * if the reader opened one.
+   * of it ends the request. [arrived] runs when this thread learns of a queued
+   * publication, before it takes it. It counts what the input of the request
+   * delivered, if the reader opened one.
    */
   private suspend fun execute(
     wanted: ReaderOutputRequest,
     hold: Withheld? = null,
     watch: (suspend () -> Unit)? = null,
+    arrived: (() -> Unit)? = null,
     take: suspend (ReaderOutputLease) -> Unit,
   ): ReaderContentTerminal? {
     val submitted =
@@ -343,6 +412,12 @@ private class SanContent(
               ReaderInputOpenResult.Failed(ReaderAcquisitionFailure.UNAVAILABLE)
             }
           }
+
+          // The request has settled here, back on this thread.
+          if (cancellation.requested != null) {
+            cancellation.returned = SystemClock.elapsedRealtimeNanos()
+            Marks.instant(Marks.returned(cancellation.request))
+          }
         }
 
         val watching = watch?.let { launch { it() } }
@@ -354,6 +429,10 @@ private class SanContent(
             val ended = select {
               execution.onJoin { true }
               published.onReceive { false }
+            }
+
+            if (!ended) {
+              arrived?.invoke()
             }
 
             requests.takePublication()?.let { take(it.output) }
@@ -589,6 +668,7 @@ private class FileInput(
 
     return when (hold.ending) {
       Ending.RELEASE -> error("A released hold delivers the rest.")
+      Ending.CANCEL -> error("A cancelled request never releases its hold.")
       Ending.TRUNCATE -> ReaderInputRead.EndOfInput
 
       Ending.FAIL ->

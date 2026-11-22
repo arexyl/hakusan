@@ -44,7 +44,30 @@ internal enum class Ending(val id: String) {
 
   /** The next read of the input fails. */
   FAIL("fail"),
+
+  /** The request is cancelled while its input waits. */
+  CANCEL("cancel"),
 }
+
+/** The state of a request with a local input in which it is cancelled. */
+internal enum class Moment(val id: String) {
+  /**
+   * Right after the second publication was taken. The display holds the first
+   * output and the backend the second, so none can be queued, and the decoder
+   * is inside the image.
+   */
+  DECODING("decoding"),
+
+  /** With the first publication queued and not taken. */
+  PUBLISHED("published"),
+}
+
+/**
+ * The whole image at 1:1 from the local file, and a cancellation of the request
+ * at [moment]. A decode that ends before the cancellation reaches it completes,
+ * so the step ends as canceled or as completed.
+ */
+internal data class Interrupted(val moment: Moment) : Step
 
 /**
  * The whole image at 1:1 from an input that withholds every byte behind the
@@ -105,6 +128,13 @@ internal data class Report(
   val input: Acquired? = null,
   /** When a held input went on, on the clock of the record. */
   val resumed: Long? = null,
+  /** When the backend requested the cancellation, on that clock. */
+  val canceled: Long? = null,
+  /**
+   * When the cancelled request had settled: its execution had returned, with
+   * its job, its input, and its content ended.
+   */
+  val returned: Long? = null,
 )
 
 /**
