@@ -7,8 +7,6 @@ import app.hakusan.reader.san.SanCalls
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.atomic.AtomicBoolean
-import kotlin.time.Duration
-import kotlinx.coroutines.delay
 
 /**
  * An engine for device tests that decodes nothing and writes pixels from
@@ -181,55 +179,4 @@ internal class PixelEngine(
     fun colorOf(row: Int): Int =
       Color.rgb(row and 0xFF, 0x5A, 0xFF - (row and 0xFF))
   }
-}
-
-/**
- * An input of [length] zero bytes that delivers at most [portion] bytes per
- * read, each after [pause], so that frames fall between the reads.
- */
-internal class PacedInput(
-  private val length: Int,
-  private val portion: Int,
-  private val pause: Duration,
-) : ReaderByteInput {
-  override val representation = ReaderRepresentation()
-
-  override val capabilities =
-    ReaderInputCapabilities(length.toLong(), rewind = false, seek = false)
-
-  @Volatile
-  override var position = 0L
-    private set
-
-  override suspend fun read(
-    destination: ByteArray,
-    offset: Int,
-    length: Int,
-  ): ReaderInputRead {
-    val left = (this.length - position).toInt()
-
-    if (length == 0) {
-      return ReaderInputRead.NoOp
-    }
-
-    if (left == 0) {
-      return ReaderInputRead.EndOfInput
-    }
-
-    delay(pause)
-
-    val count = minOf(length, portion, left)
-
-    destination.fill(0, offset, offset + count)
-    position += count
-
-    return ReaderInputRead.Data(count)
-  }
-
-  override suspend fun awaitInput() {}
-
-  override suspend fun seek(position: Long): ReaderInputSeek =
-    ReaderInputSeek.Unsupported
-
-  override fun close() {}
 }

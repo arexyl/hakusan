@@ -92,11 +92,12 @@ class ReaderTargetDeviceTest {
         val requests = ReaderContentRequests(session, limits)
 
         // Sixteen portions of four rows, each after more than one frame.
-        val input = PacedInput(HEIGHT * BYTES_PER_ROW, 16, 40.milliseconds)
+        val input =
+          PacedInput(ByteArray(HEIGHT * BYTES_PER_ROW), 16, 40.milliseconds)
 
         view.present(requests)
 
-        val request = checkNotNull(requests.submit(descriptor()))
+        val request = checkNotNull(requests.submit(pageDescriptor()))
 
         withTimeout(TIMEOUT_MILLIS) {
           owner.execute(requests) { ReaderInputOpenResult.Opened(input) }
@@ -138,16 +139,6 @@ class ReaderTargetDeviceTest {
         assertTrue(created.all { it.isRecycled })
       }
     }
-
-  /** The one page of a title with one chapter. */
-  private fun descriptor(): ReaderContentDescriptor {
-    val title = ReaderTitleKey("source", "title")
-    val chapter = ReaderChapter(ReaderChapterKey(title, "chapter"), "1")
-    val page = ReaderContentUnit(ReaderUnitKind.PAGE, "page")
-    val content = ReaderChapterContent.of(chapter, listOf(page))
-
-    return ReaderContentDescriptor.of(content, content.positionAt(0))
-  }
 
   private companion object {
     const val WIDTH = 32

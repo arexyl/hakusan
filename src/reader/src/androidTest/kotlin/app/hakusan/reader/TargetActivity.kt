@@ -39,6 +39,12 @@ class TargetActivity : Activity() {
  */
 internal class TargetView(context: Context) : View(context) {
   private val superseded = mutableListOf<ReaderOutputLease>()
+
+  /**
+   * The leases that a posted message releases, behind the draw without them.
+   */
+  private val returning = mutableListOf<ReaderOutputLease>()
+
   private val drawnRows = MutableStateFlow(0)
   private var shown: ReaderOutputLease? = null
 
@@ -68,8 +74,9 @@ internal class TargetView(context: Context) : View(context) {
    * renderer keeps the pixels of its last frame alive until the next one.
    */
   fun clear() {
-    val held = superseded + listOfNotNull(shown)
+    val held = returning + superseded + listOfNotNull(shown)
 
+    returning.clear()
     superseded.clear()
     shown = null
     held.forEach(::release)
@@ -86,15 +93,21 @@ internal class TargetView(context: Context) : View(context) {
       canvas.drawBitmap(lease.bitmap, covered, covered, null)
     }
 
-    val absent = superseded.toList()
-
-    superseded.clear()
-
-    if (absent.isNotEmpty()) {
-      post { absent.forEach(::release) }
+    // The message finds nothing when [clear] ran before it.
+    if (superseded.isNotEmpty()) {
+      returning += superseded
+      superseded.clear()
+      post(::releaseReturning)
     }
 
     drawnRows.value = rows ?: 0
+  }
+
+  private fun releaseReturning() {
+    val absent = returning.toList()
+
+    returning.clear()
+    absent.forEach(::release)
   }
 
   private fun show(lease: ReaderOutputLease) {

@@ -1,17 +1,28 @@
 import app.hakusan.build.CheckBindings
 import app.hakusan.build.FilePropertyArgument
 import app.hakusan.build.PromoteFixtures
+import app.hakusan.build.StageFixtures
+import app.hakusan.build.StageLocalSan
 import app.hakusan.build.VerifyFixtures
+import app.hakusan.build.localSan
 
 plugins {
   id("hakusan.android.library")
 }
+
+// The staged set of a local San build, which this project then packages.
+val localSan = localSan()
 
 android {
   namespace = "app.hakusan.reader"
 
   defaultConfig {
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+
+    // The tests of the San library run only in a build that packages it.
+    if (localSan.isPresent) {
+      testInstrumentationRunnerArguments["app.hakusan.reader.san"] = "local"
+    }
   }
 
   testOptions {
@@ -23,6 +34,50 @@ android {
       kotlin.directories +=
         layout.settingsDirectory.dir("share/bindings/kotlin").asFile.path
     }
+  }
+}
+
+// Each variant has tasks of its own, because the plugin gives the staged
+// directory of a task to one variant.
+androidComponents {
+  onVariants { variant ->
+    val name = variant.name.replaceFirstChar { it.uppercase() }
+
+    if (localSan.isPresent) {
+      val stageLocalSan =
+        tasks.register<StageLocalSan>("stage${name}LocalSan") {
+          group = "build"
+          description = "Stages the San library of a checked local San build."
+          localSet = localSan.map { layout.settingsDirectory.dir(it) }
+          repository = layout.settingsDirectory
+        }
+
+      variant.sources.jniLibs?.addGeneratedSourceDirectory(
+        stageLocalSan,
+        StageLocalSan::jniLibs,
+      )
+    }
+
+    // The pages that the device tests decode, with the manifest that states
+    // their hashes. The tests check each file against it.
+    val stageFixtures =
+      tasks.register<StageFixtures>("stage${name}AndroidTestFixtures") {
+        group = "build"
+        description = "Stages the fixtures of the device tests as assets."
+        corpus = layout.settingsDirectory.dir("share/reader")
+
+        paths =
+          listOf(
+            "manifest.json",
+            "journey/ordinary.png",
+            "qualification/fault/png-truncated-prefix.png",
+          )
+      }
+
+    variant.androidTest
+      ?.sources
+      ?.assets
+      ?.addGeneratedSourceDirectory(stageFixtures, StageFixtures::staged)
   }
 }
 

@@ -1,8 +1,12 @@
+import app.hakusan.build.refuseLocalSanInRelease
+
 plugins {
   id("hakusan.android.application")
   alias(libs.plugins.compose.compiler)
   alias(libs.plugins.metro)
 }
+
+refuseLocalSanInRelease()
 
 android {
   namespace = "app.hakusan"
