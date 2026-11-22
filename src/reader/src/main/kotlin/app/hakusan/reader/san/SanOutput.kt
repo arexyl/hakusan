@@ -3,6 +3,7 @@ package app.hakusan.reader.san
 import app.hakusan.reader.ReaderContentFailure
 import app.hakusan.reader.ReaderContentRequest
 import app.hakusan.reader.ReaderContentRequests
+import app.hakusan.reader.ReaderContentTerminal
 import app.hakusan.reader.ReaderEngineSettings
 import app.hakusan.reader.ReaderImageCoverage
 import app.hakusan.reader.ReaderImageGeometry
@@ -12,6 +13,7 @@ import app.hakusan.reader.ReaderOutputRequest
 import app.hakusan.reader.ReaderPublishResult
 import app.hakusan.reader.ReaderRepresentation
 import app.hakusan.reader.ReaderResourceOwner
+import app.hakusan.reader.ReaderStripStore
 import app.hakusan.reader.ReaderTargetPool
 import app.hakusan.reader.section
 
@@ -181,6 +183,47 @@ internal class SanOutput(
     }
   }
 
+  /** Whether presentation received every covered row of the lease. */
+  val published: Boolean
+    get() = publishedRows > 0 && publishedRows == covered()
+
+  /**
+   * Gives the claim on the lease to a strip of [key] in place of its release,
+   * after the last copy of a job that ended as [completed]. Returns null, with
+   * the claim kept, unless the lease holds every one of its rows.
+   */
+  fun toStrip(
+    key: ReaderStripStore.Key,
+    completed: ReaderContentTerminal.Completed,
+  ): ReaderStripStore.Strip? {
+    val claimed = lease
+    val covered = covered()
+
+    if (
+      claimed == SanAbi.NO_HANDLE ||
+        covered != element(SanAbi.JOB_REPORT_LEASE_HEIGHT)
+    ) {
+      return null
+    }
+
+    lease = SanAbi.NO_HANDLE
+
+    return ReaderStripStore.Strip(
+      key = key,
+      san = san,
+      lease = claimed,
+      representation = representation,
+      coverage = coverage(covered),
+      opaque = element(SanAbi.JOB_REPORT_ALPHA) == SanAbi.ALPHA_OPAQUE,
+      completed = completed,
+    )
+  }
+
+  /** Ends the claim on a lease that a strip owns, without a release. */
+  fun surrender() {
+    lease = SanAbi.NO_HANDLE
+  }
+
   /** Ends the use of the targets, which presentation may still draw. */
   fun releaseTargets() {
     targets.forEach(pool::release)
@@ -338,8 +381,38 @@ internal class SanOutput(
 
   private fun element(index: Int): Int = Math.toIntExact(report[index])
 
-  private companion object {
+  companion object {
     /** The bytes of one pixel of a lease. */
-    const val PIXEL_BYTES = 4
+    private const val PIXEL_BYTES = 4
+
+    /**
+     * The report of a job that would have just completed the band of [strip]:
+     * its lease with every row covered, as one revision that publishes only at
+     * its end. With it, an output serves a strip as it serves a final copy.
+     */
+    fun reportOf(strip: ReaderStripStore.Strip): LongArray {
+      val coverage = strip.coverage
+      val region = coverage.region
+      val rows = region.bottom - region.top
+      val alpha =
+        if (strip.opaque) SanAbi.ALPHA_OPAQUE else SanAbi.ALPHA_PREMULTIPLIED
+      val report = LongArray(SanAbi.JOB_REPORT_LENGTH)
+
+      report[SanAbi.JOB_REPORT_LEASE] = strip.lease
+      report[SanAbi.JOB_REPORT_REVISION] = 1L
+      report[SanAbi.JOB_REPORT_COVERED_ROWS] = rows.toLong()
+      report[SanAbi.JOB_REPORT_LEASE_WIDTH] =
+        (region.right - region.left).toLong()
+      report[SanAbi.JOB_REPORT_LEASE_HEIGHT] = rows.toLong()
+      report[SanAbi.JOB_REPORT_LEASE_LEFT] = region.left.toLong()
+      report[SanAbi.JOB_REPORT_LEASE_TOP] = region.top.toLong()
+      report[SanAbi.JOB_REPORT_ALPHA] = alpha.toLong()
+      report[SanAbi.JOB_REPORT_IMAGE_WIDTH] = coverage.image.width.toLong()
+      report[SanAbi.JOB_REPORT_IMAGE_HEIGHT] = coverage.image.height.toLong()
+      report[SanAbi.JOB_REPORT_OUTPUT_WIDTH] = coverage.grid.width.toLong()
+      report[SanAbi.JOB_REPORT_OUTPUT_HEIGHT] = coverage.grid.height.toLong()
+
+      return report
+    }
   }
 }

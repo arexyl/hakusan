@@ -66,6 +66,10 @@ internal sealed interface ReaderEngineAccess {
  * **Targets.** The owner holds every target of the output copies until
  * presentation has returned it, also after the request that created it.
  *
+ * **Strips.** Under [ReaderBackwardVariant.RETAIN_STRIPS], the owner keeps the
+ * lease of a completed band after its job, until a job needs its room, its
+ * session closes, or the owner closes.
+ *
  * **Closing.** [close] waits for the executing request and shuts the engine
  * down. The worker stops once presentation has returned the last target. The
  * sessions end first: a request after it is a defect of the caller.
@@ -87,6 +91,9 @@ internal constructor(
 
   internal val targets: ReaderTargetPool =
     ReaderTargetPool(platform, settings.targetBytes, settings.targetCount)
+
+  /** The decoded strips, which only the worker uses. */
+  internal val strips: ReaderStripStore = ReaderStripStore(settings)
 
   /**
    * Runs on the thread that returns a target, for the executing request. It
@@ -229,6 +236,18 @@ internal constructor(
     }
   }
 
+  /**
+   * Brings the release of the strips of [scope] to the worker. The thread that
+   * closes the session of [scope] calls it.
+   */
+  internal fun dropStrips(scope: ReaderContentRequests) {
+    try {
+      executor.execute { strips.drop(scope) }
+    } catch (_: RejectedExecutionException) {
+      // The shutdown released every strip before the worker stopped.
+    }
+  }
+
   /** Fails a use of the owner after [close]. The caller holds the gate. */
   internal fun checkOpen() {
     check(!closed) { CLOSED }
@@ -346,13 +365,19 @@ internal constructor(
     state = State.Closed
 
     if (live != null) {
-      val status = live.san.engineShutdown(live.engine)
+      // The strips are the leases that the owner itself still holds. The
+      // engine shuts down also after a strip that failed its release.
+      try {
+        strips.clear()
+      } finally {
+        val status = live.san.engineShutdown(live.engine)
 
-      check(status != SanAbi.STATUS_PENDING) {
-        "The engine shutdown stays pending while the owner holds nothing."
+        check(status != SanAbi.STATUS_PENDING) {
+          "The engine shutdown stays pending while the owner holds nothing."
+        }
+
+        checkSettled("engineShutdown", status)
       }
-
-      checkSettled("engineShutdown", status)
     }
   }
 

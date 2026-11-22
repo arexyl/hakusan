@@ -193,6 +193,7 @@ public class ReaderContentRequests(
   private var closeFailure: ReaderOutputReleaseException? = null
   private var producerWakeup: (() -> Unit)? = null
   private var presentationWakeup: (() -> Unit)? = null
+  private val closeActions = mutableListOf<() -> Unit>()
 
   init {
     session.invokeOnEnd(::beginClose)
@@ -471,6 +472,8 @@ public class ReaderContentRequests(
    * [VirtualMachineError] of a release.
    */
   public fun beginClose() {
+    val actions: List<() -> Unit>
+
     val withdrawn =
       synchronized(monitor) {
         if (closing) {
@@ -478,6 +481,8 @@ public class ReaderContentRequests(
         }
 
         closing = true
+        actions = closeActions.toList()
+        closeActions.clear()
 
         val settlement = withdraw(executing, pending)
 
@@ -487,8 +492,23 @@ public class ReaderContentRequests(
       }
 
     withdrawn.complete()
+    actions.forEach { it() }
     completeIfClosed()
   }
+
+  /**
+   * Registers [action] to run once when closing begins, on the thread that
+   * begins it and outside the monitor. Returns false, without a registration,
+   * once closing has begun. The action must be short and must not throw.
+   */
+  internal fun invokeOnClose(action: () -> Unit): Boolean =
+    synchronized(monitor) {
+      if (!closing) {
+        closeActions += action
+      }
+
+      !closing
+    }
 
   /**
    * Suspends until closing has begun, the executing request has acknowledged

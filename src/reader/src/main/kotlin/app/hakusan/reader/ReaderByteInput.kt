@@ -6,6 +6,11 @@ package app.hakusan.reader
  * The source adapter issues it. Equality is identity, so a token never proves
  * that another fetch returns identical bytes. It is process-local and never
  * persisted.
+ *
+ * A source that knows two acquisitions of a unit to deliver the same bytes
+ * gives both the same token. Decoded strips of the unit stay only then: an
+ * acquisition with another token tells the reader that the bytes may differ,
+ * and it drops what it decoded from the earlier ones.
  */
 public class ReaderRepresentation
 

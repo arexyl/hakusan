@@ -177,6 +177,67 @@ class ReaderEngineDeviceTest {
   }
 
   @Test
+  fun bandsOfTheSegmentStayAsStripsThatAnswerThemAgain() =
+    onStage(RETAINING) {
+      val segment = DeviceCorpus.file(LONG)
+      val image = ReaderImageGeometry(segment.width, segment.height)
+      val bytes = ReaderRepresentation()
+
+      fun band(index: Int) =
+        ReaderOutputRequest.Band(
+          image,
+          index * BAND_ROWS,
+          (index + 1) * BAND_ROWS,
+        )
+
+      /** The hash of the samples of the band that the view shows. */
+      suspend fun shown(): String =
+        rgbSha256(assertShown(image.width, BAND_ROWS), image.width).also {
+          clearView()
+        }
+
+      suspend fun decode(index: Int): String {
+        val request = submit(band(index))
+
+        execute(PacedInput(segment.bytes, representation = bytes))
+
+        assertEquals(ReaderContentTerminal.Completed.of(), request.terminal)
+
+        return shown()
+      }
+
+      suspend fun hit(index: Int): String {
+        val request = submit(band(index))
+
+        executeFromStrip()
+
+        assertEquals(ReaderContentTerminal.Completed.of(), request.terminal)
+
+        return shown()
+      }
+
+      // Four leases: the fourth band decodes beside three strips, and all
+      // four stay while no job runs.
+      val samples = List(4) { decode(it) }
+
+      assertEquals(4, samples.toSet().size)
+      assertEquals(4L, checkNotNull(owner.counters()).leaseCount)
+
+      // The second band again, from its strip: the samples of its decode.
+      assertEquals(samples[1], hit(1))
+
+      // A fifth band takes the lease of the first one, which was used
+      // longest ago, so the first band needs its input again, and takes the
+      // lease of the third.
+      decode(4)
+
+      assertEquals(4L, checkNotNull(owner.counters()).leaseCount)
+      assertEquals(samples[0], decode(0))
+      assertEquals(samples[3], hit(3))
+      assertEquals(samples[1], hit(1))
+    }
+
+  @Test
   fun longSegmentAtAWidthIsRefusedWithItsGeometry() = onStage {
     val segment = DeviceCorpus.file(LONG)
     val image = ReaderImageGeometry(segment.width, segment.height)
@@ -330,6 +391,13 @@ class ReaderEngineDeviceTest {
       }
     }
 
+    /** Executes a request that a strip answers, which opens no input. */
+    suspend fun executeFromStrip() {
+      withTimeout(TIMEOUT_MILLIS) {
+        owner.execute(requests) { error("A strip needs no input.") }
+      }
+    }
+
     /**
      * Waits for the frame of the whole [page], checks its samples against the
      * manifest, and returns its pixels.
@@ -402,7 +470,10 @@ class ReaderEngineDeviceTest {
     }
   }
 
-  private fun onStage(block: suspend Stage.() -> Unit): Unit = runBlocking {
+  private fun onStage(
+    settings: ReaderEngineSettings = ReaderEngineSettings.FIRST_ITERATION,
+    block: suspend Stage.() -> Unit,
+  ): Unit = runBlocking {
     ActivityScenario.launch(TargetActivity::class.java).use { scenario ->
       lateinit var view: TargetView
 
@@ -434,8 +505,7 @@ class ReaderEngineDeviceTest {
           }
         }
 
-      val owner =
-        ReaderResourceOwner(ReaderEngineSettings.FIRST_ITERATION, platform)
+      val owner = ReaderResourceOwner(settings, platform)
 
       val gate = ReaderSessionGate()
       val session = gate.start()
@@ -514,6 +584,14 @@ class ReaderEngineDeviceTest {
   private companion object {
     const val ORDINARY = "journey/ordinary.png"
     const val LONG = "journey/long.png"
+
+    /** The rows of one band of the long segment: one viewport at 1:1. */
+    const val BAND_ROWS = 2560
+
+    val RETAINING =
+      ReaderEngineSettings.FIRST_ITERATION.copy(
+        backwardVariant = ReaderBackwardVariant.RETAIN_STRIPS
+      )
     const val TRUNCATED = "qualification/fault/png-truncated-prefix.png"
     const val TIMEOUT_MILLIS = 30_000L
   }

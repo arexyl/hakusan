@@ -126,10 +126,9 @@ internal class PacedInput(
   private val portion: Int = Int.MAX_VALUE,
   private val pause: Duration = Duration.ZERO,
   private val hold: Int? = null,
+  override val representation: ReaderRepresentation = ReaderRepresentation(),
 ) : ReaderByteInput {
   private val end = hold ?: bytes.size
-
-  override val representation = ReaderRepresentation()
 
   override val capabilities =
     ReaderInputCapabilities(

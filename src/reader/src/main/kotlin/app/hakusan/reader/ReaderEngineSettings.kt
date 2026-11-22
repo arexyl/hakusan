@@ -1,5 +1,19 @@
 package app.hakusan.reader
 
+/** How the reader serves a band of an image that it decoded before. */
+public enum class ReaderBackwardVariant {
+  /** Every request of a band decodes it again, from the first byte. */
+  REDECODE,
+
+  /**
+   * The lease of a completed band stays as a decoded strip within the output
+   * ceilings of the engine, and a later request of the same band in the same
+   * session copies from it. The least recently used strip leaves when a job
+   * needs its lease.
+   */
+  RETAIN_STRIPS,
+}
+
 /**
  * The limits of the native engine and the ceilings of the adapter around it, as
  * named, replaceable settings.
@@ -60,6 +74,8 @@ public data class ReaderEngineSettings(
    * engine takes no such limit.
    */
   public val bandMarginBytes: Long,
+  /** How a band that was decoded before is served again. */
+  public val backwardVariant: ReaderBackwardVariant,
 ) {
   init {
     val limits =
@@ -115,6 +131,14 @@ public data class ReaderEngineSettings(
       "The band margin must lie inside the ceiling of one lease."
     }
 
+    // A strip holds a lease slot beside the one of the running job.
+    require(
+      backwardVariant != ReaderBackwardVariant.RETAIN_STRIPS ||
+        outputLeaseCount > jobCount
+    ) {
+      "Retained strips need a lease slot beside every job."
+    }
+
     require(
       maxOf(metadataBytes, outputBytes, transferStagingBytes) <=
         aggregateBudgetBytes
@@ -129,7 +153,7 @@ public data class ReaderEngineSettings(
     /**
      * The first-iteration qualification profile: a budget of 128 MiB with one
      * job, three contents, and four leases of at most 16 MiB, and four targets
-     * within 64 MiB.
+     * within 64 MiB. It retains no strip.
      */
     public val FIRST_ITERATION: ReaderEngineSettings =
       ReaderEngineSettings(
@@ -153,6 +177,7 @@ public data class ReaderEngineSettings(
         targetBytes = 64L shl 20,
         targetCount = 4,
         bandMarginBytes = 4L shl 10,
+        backwardVariant = ReaderBackwardVariant.REDECODE,
       )
   }
 }

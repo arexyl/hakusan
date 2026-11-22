@@ -1,5 +1,6 @@
 package app.hakusan.reader.san
 
+import app.hakusan.reader.ReaderBackwardVariant
 import app.hakusan.reader.ReaderByteInput
 import app.hakusan.reader.ReaderContentFailure
 import app.hakusan.reader.ReaderContentRequest
@@ -11,6 +12,7 @@ import app.hakusan.reader.ReaderInputOpenResult
 import app.hakusan.reader.ReaderInputRead
 import app.hakusan.reader.ReaderOutputRequest
 import app.hakusan.reader.ReaderResourceOwner
+import app.hakusan.reader.ReaderStripStore
 import app.hakusan.reader.section
 import app.hakusan.reader.toContentFailure
 import kotlin.coroutines.cancellation.CancellationException
@@ -48,6 +50,14 @@ import kotlinx.coroutines.withContext
  * on the lease, closes the content and the input, joins the watcher, and only
  * then releases the job: every cancellation has returned by then.
  *
+ * **Strips.** Where the owner retains strips, the lease of a completed band at
+ * a scale of 1:1 goes to the store of the owner in place of its release. A
+ * later request of that band takes the strip out of the store, behind the gate,
+ * and is answered from it: no input opens, and no content or job exists. The
+ * output copies and publishes the rows as it makes a final copy, and the strip
+ * then returns to the store. An acquisition that binds other bytes of the unit
+ * drops the strips of its earlier bytes.
+ *
  * **Output.** After each step and each wakeup, the [SanOutput] of the job
  * copies and publishes what it can. Decoding never waits for presentation. Only
  * the final copy does, after the job ended and the pump is settled.
@@ -69,6 +79,12 @@ internal class SanExecution(
   @Volatile private var gateHeld = false
   @Volatile private var input: ReaderByteInput? = null
 
+  /** The strip that answers the request, out of its store for that time. */
+  @Volatile private var strip: ReaderStripStore.Strip? = null
+
+  /** Whether the use of [strip] threw anything but a cancellation. */
+  @Volatile private var stripFailed = false
+
   /** The job as the watcher needs it, from its request until its release. */
   @Volatile private var live: LiveJob? = null
 
@@ -83,6 +99,9 @@ internal class SanExecution(
   private var cancelCause: ReaderContentFailure? = null
   private var jobSettled = false
   private var pumping: Job? = null
+
+  /** The outcome of a band whose lease stays as a strip. */
+  private var kept: ReaderContentTerminal.Completed? = null
 
   /**
    * Executes the request to its one terminal outcome, with nothing of it left
@@ -113,6 +132,20 @@ internal class SanExecution(
         acquisition.cancelAndJoin()
         watcher.cancelAndJoin()
         closeInput()
+
+        // The strip returns to its store, unless its use failed: a lease
+        // that failed a copy leaves, so that no later request meets it.
+        strip?.let { held ->
+          strip = null
+
+          withContext(owner.worker) {
+            if (stripFailed) {
+              runCatching { owner.strips.release(held) }
+            } else {
+              owner.strips.adopt(held, owner::dropStrips)
+            }
+          }
+        }
       }
     }
   }
@@ -131,6 +164,21 @@ internal class SanExecution(
     gateHeld = true
     owner.checkOpen()
 
+    // A band that a strip holds needs no input. The field holds the strip
+    // from the take on, so no cancellation loses it.
+    stripKey()?.let { key ->
+      val held =
+        withContext(NonCancellable + owner.worker) {
+          owner.strips.take(key).also { strip = it }
+        }
+
+      if (held != null) {
+        val bound = requests.bindRepresentation(request, held.representation)
+
+        return if (bound) null else ReaderContentTerminal.Canceled
+      }
+    }
+
     // The field holds the input from here on, so no cancellation loses it.
     val opened =
       when (val opened = foreign { source.open(request.descriptor) }) {
@@ -140,12 +188,27 @@ internal class SanExecution(
         is ReaderInputOpenResult.Opened -> opened.input.also { input = it }
       }
 
-    return if (requests.bindRepresentation(request, opened.representation)) {
-      null
-    } else {
-      ReaderContentTerminal.Canceled
+    if (!requests.bindRepresentation(request, opened.representation)) {
+      return ReaderContentTerminal.Canceled
     }
+
+    // The strips of other bytes of this unit are stale from the bind on, also
+    // when the request is canceled before it decodes.
+    if (retains()) {
+      withContext(NonCancellable + owner.worker) {
+        owner.strips.dropOthers(
+          requests,
+          request.descriptor,
+          opened.representation,
+        )
+      }
+    }
+
+    return null
   }
+
+  private fun retains(): Boolean =
+    owner.settings.backwardVariant == ReaderBackwardVariant.RETAIN_STRIPS
 
   private suspend fun watch(acquisition: Job) {
     request.awaitCancellationRequested()
@@ -154,6 +217,10 @@ internal class SanExecution(
 
     if (job == null) {
       acquisition.cancel()
+
+      // A request that a strip answers has no job, and it waits on its
+      // mailbox for presentation.
+      mailbox.trySend(Event.Wakeup)
     } else {
       checkSettled("jobCancel", job.san.jobCancel(job.handle))
       mailbox.trySend(Event.Cancel)
@@ -162,6 +229,12 @@ internal class SanExecution(
 
   private suspend fun decode(watcher: Job): ReaderContentTerminal =
     withContext(owner.worker) {
+      val held = strip
+
+      if (held != null) {
+        return@withContext serve(held)
+      }
+
       when (val access = owner.engine()) {
         is ReaderEngineAccess.Failed ->
           ReaderContentTerminal.Failed(access.failure)
@@ -170,12 +243,91 @@ internal class SanExecution(
       }
     }
 
+  /**
+   * The key of the strip that answers the request or that its lease becomes:
+   * for a band at a scale of 1:1 under the retaining variant, and null
+   * otherwise.
+   */
+  private fun stripKey(): ReaderStripStore.Key? {
+    val band = request.output as? ReaderOutputRequest.Band
+
+    if (!retains() || band == null || band.maxOutputWidth != null) {
+      return null
+    }
+
+    val unit = request.descriptor
+
+    return ReaderStripStore.Key(requests, unit.position, unit.reference, band)
+  }
+
+  /**
+   * Answers the request from [held] without a job: the output copies the rows
+   * of the strip into a target and publishes them once, as it makes the final
+   * copy of a job, and waits for presentation as that copy does. A cancellation
+   * of the request ends the wait.
+   */
+  private suspend fun serve(
+    held: ReaderStripStore.Strip
+  ): ReaderContentTerminal {
+    val publishing =
+      SanOutput(
+        owner,
+        requests,
+        request,
+        held.representation,
+        held.san,
+        SanOutput.reportOf(held),
+      ) {
+        // No job runs, so nothing is to cancel.
+      }
+
+    output = publishing
+    requests.setProducerWakeup(request) { mailbox.trySend(Event.Wakeup) }
+    owner.returnListener = { mailbox.trySend(Event.Returned) }
+
+    try {
+      while (publishing.finish()) {
+        if (mailbox.receive() == Event.Returned) {
+          owner.targets.applyReturns()
+        }
+      }
+
+      return when {
+        publishing.published -> held.completed
+
+        publishing.refused ->
+          ReaderContentTerminal.Failed(ReaderContentFailure.BUDGET_EXCEEDED)
+
+        else -> ReaderContentTerminal.Canceled
+      }
+    } catch (failure: Throwable) {
+      stripFailed = failure !is CancellationException
+
+      throw failure
+    } finally {
+      // The lease stays with the strip, and the targets with presentation.
+      publishing.surrender()
+      publishing.releaseTargets()
+      owner.returnListener = null
+      mailbox.close()
+
+      while (mailbox.tryReceive().isSuccess) {
+        // Nothing of this request reaches the next one.
+      }
+    }
+  }
+
   private suspend fun CoroutineScope.decodeOn(
     engine: ReaderEngineAccess.Live,
     watcher: Job,
   ): ReaderContentTerminal {
     val san = engine.san
     val handle = LongArray(1)
+
+    // The job finds the lease slot and the bytes that a strip would hold.
+    if (retains()) {
+      owner.strips.makeRoom()
+    }
 
     contentOpenFailure(san.contentOpen(engine.engine, handle))?.let {
       return ReaderContentTerminal.Failed(it)
@@ -247,11 +399,18 @@ internal class SanExecution(
         route(san, mailbox.receive())
       }
 
-      return if (publishing.refused) {
-        ReaderContentTerminal.Failed(ReaderContentFailure.BUDGET_EXCEEDED)
-      } else {
-        outcome
+      if (publishing.refused) {
+        return ReaderContentTerminal.Failed(
+          ReaderContentFailure.BUDGET_EXCEEDED
+        )
       }
+
+      // A completed band of a request that still stands keeps its lease.
+      if (!request.cancellationRequested) {
+        kept = outcome as? ReaderContentTerminal.Completed
+      }
+
+      return outcome
     } finally {
       withContext(NonCancellable) { cleanUp(san, watcher) }
     }
@@ -467,7 +626,26 @@ internal class SanExecution(
 
     // The lease goes after the last copy, and the targets stay with
     // presentation for as long as it draws them.
-    settle(failures) { output?.releaseLease() }
+    settle(failures) {
+      val completed = kept
+      val key = stripKey()
+
+      // The lease of a completed band becomes a strip in place of its
+      // release, when the variant retains and every row is there.
+      val strip =
+        if (completed != null && key != null) {
+          output?.toStrip(key, completed)
+        } else {
+          null
+        }
+
+      if (strip != null) {
+        owner.strips.adopt(strip, owner::dropStrips)
+      } else {
+        output?.releaseLease()
+      }
+    }
+
     settle(failures) { output?.releaseTargets() }
 
     owner.returnListener = null
