@@ -39,6 +39,9 @@ internal enum class Cell(val id: String, val fixture: String) {
   /** The ordinary page, cancelled with its first output queued. */
   CANCEL_PUBLICATION("cancel-publication", "journey/ordinary.png"),
 
+  /** The ordinary page from an input that delivers it in slow chunks. */
+  THROTTLED("throttled", "journey/ordinary.png"),
+
   /** The large page, decoded at the width of the viewport. */
   LARGE("large", "qualification/timed/large.png"),
 
@@ -78,6 +81,7 @@ internal enum class Cell(val id: String, val fixture: String) {
         CANCEL_WAIT -> return listOf(Held(shown, Ending.CANCEL))
         CANCEL_DECODE -> return listOf(Interrupted(Moment.DECODING))
         CANCEL_PUBLICATION -> return listOf(Interrupted(Moment.PUBLISHED))
+        THROTTLED -> return listOf(Throttled)
         LARGE -> return listOf(Whole(width = viewport.width))
         LONG_FIRST -> listOf(0)
         LONG_SCROLL ->

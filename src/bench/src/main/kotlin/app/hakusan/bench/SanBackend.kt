@@ -35,11 +35,13 @@ import java.io.IOException
 import java.util.Objects
 import java.util.concurrent.atomic.AtomicReference
 import kotlin.coroutines.cancellation.CancellationException
+import kotlin.time.Duration.Companion.nanoseconds
 import kotlin.time.Duration.Companion.seconds
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
@@ -131,6 +133,9 @@ private class SanContent(
   /** The end of the longest prefix that an input of the attempt delivered. */
   private var reach = 0L
 
+  /** Whether the input of the running request delivers in slow chunks. */
+  private var throttled = false
+
   /** The cancellation of the running request, if the backend requests one. */
   private var cancellation = Cancellation(request = 0)
 
@@ -182,7 +187,8 @@ private class SanContent(
         hold = withheld(step)
       }
 
-      is Interrupted -> {
+      is Interrupted,
+      Throttled -> {
         wanted = ReaderOutputRequest.Whole()
         size = fixture.image
         top = 0
@@ -191,6 +197,8 @@ private class SanContent(
     }
 
     val moment = (step as? Interrupted)?.moment
+
+    throttled = step == Throttled
 
     val watch: (suspend () -> Unit)? = hold?.let {
       { resumed = resume(request, it, display) }
@@ -246,7 +254,8 @@ private class SanContent(
   private fun expected(step: Step): Set<Terminal> =
     when (step) {
       is Whole,
-      is Band -> setOf(Terminal.COMPLETED)
+      is Band,
+      Throttled -> setOf(Terminal.COMPLETED)
 
       // A decode that ended before the cancellation reached it completed.
       is Interrupted -> setOf(Terminal.CANCELED, Terminal.COMPLETED)
@@ -403,7 +412,7 @@ private class SanContent(
       coroutineScope {
         val execution = async {
           owner.execute(requests) {
-            val opened = open(fixture.file, representation, hold)
+            val opened = open(fixture.file, representation, hold, throttled)
 
             if (opened != null) {
               input.set(opened)
@@ -517,12 +526,14 @@ private class SanContent(
     /**
      * Opens [file] as an input of [representation] with the length that the
      * file has now, or returns null when no such file exists. The input
-     * withholds what [hold] names, if anything.
+     * withholds what [hold] names, if anything, and delivers in slow chunks
+     * when it is [throttled].
      */
     fun open(
       file: File,
       representation: ReaderRepresentation,
       hold: Withheld?,
+      throttled: Boolean,
     ): FileInput? {
       val stream =
         try {
@@ -540,7 +551,7 @@ private class SanContent(
           throw failure
         }
 
-      return FileInput(stream, length, representation, hold)
+      return FileInput(stream, length, representation, hold, throttled)
     }
 
     /** The fixture as the one page of a title with one chapter. */
@@ -593,16 +604,21 @@ private class Withheld(val offset: Long, val rows: Int, val ending: Ending) {
  *
  * Without a [hold] it declares the [size] of the file as its length. With one
  * it declares no length, as a stream does, and while the hold withholds bytes
- * it has none behind the offset of the hold and waits there.
+ * it has none behind the offset of the hold and waits there. A [throttled]
+ * input delivers the chunks of the throttled step at its interval.
  */
 private class FileInput(
   private val stream: FileInputStream,
   private val size: Long,
   override val representation: ReaderRepresentation,
   private val hold: Withheld?,
+  private val throttled: Boolean,
 ) : ReaderByteInput {
   /** The failure or the cancellation that every read after it repeats. */
   private var terminal: ReaderInputRead? = null
+
+  /** The earliest time of the next chunk of a throttled input. */
+  private var next = 0L
 
   override val capabilities =
     ReaderInputCapabilities(
@@ -640,10 +656,17 @@ private class FileInput(
       return behind(checkNotNull(hold))
     }
 
+    var wanted = minOf(length.toLong(), left).toInt()
+
+    if (throttled) {
+      wanted = minOf(wanted, Throttled.CHUNK)
+      pace()
+    }
+
     // A file that ends before its size is not the file of the fixture.
     val count =
       try {
-        stream.read(destination, offset, minOf(length.toLong(), left).toInt())
+        stream.read(destination, offset, wanted)
       } catch (_: IOException) {
         -1
       }
@@ -656,6 +679,24 @@ private class FileInput(
     position += count
 
     return ReaderInputRead.Data(count)
+  }
+
+  /**
+   * Waits until the interval of the throttled step has passed since the chunk
+   * before, and leaves the input terminal when the wait is cancelled.
+   */
+  private suspend fun pace() {
+    val now = SystemClock.elapsedRealtimeNanos()
+
+    try {
+      delay((next - now).nanoseconds)
+    } catch (failure: CancellationException) {
+      terminal = ReaderInputRead.Canceled
+
+      throw failure
+    }
+
+    next = maxOf(now, next) + Throttled.INTERVAL.inWholeNanoseconds
   }
 
   /** The read at the offset of [hold], which delivers no byte. */

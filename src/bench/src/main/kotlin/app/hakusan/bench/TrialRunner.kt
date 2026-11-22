@@ -263,8 +263,14 @@ internal class TrialRunner(
     session.decoding = decoding
 
     // A held step may wait its own limit for its useful output, and that
-    // limit fails the request before the watchdog stops the block.
-    val watchdog = if (step is Held) WATCHDOG + Held.LIMIT else WATCHDOG
+    // limit fails the request before the watchdog stops the block. A
+    // throttled step has twice the time that its input needs.
+    val watchdog =
+      when (step) {
+        is Held -> WATCHDOG + Held.LIMIT
+        Throttled -> WATCHDOG + Throttled.time(fixture.file.length()) * 2
+        else -> WATCHDOG
+      }
 
     try {
       val finished =
@@ -479,6 +485,11 @@ internal class TrialRunner(
         JSONObject().put("useful_rows", step.rows).put("ending", step.ending.id)
 
       is Interrupted -> JSONObject().put("canceled", step.moment.id)
+
+      Throttled ->
+        JSONObject()
+          .put("chunk_bytes", Throttled.CHUNK)
+          .put("interval_us", Throttled.INTERVAL.inWholeMicroseconds)
     }
 
   private fun describe(output: Publication): JSONObject =
@@ -495,7 +506,7 @@ internal class TrialRunner(
      * The version of the record. It rises with every change of a field or of
      * the steps of a cell, so the analysis never pools blocks that differ.
      */
-    const val SCHEMA = 5
+    const val SCHEMA = 6
 
     /** A request that takes longer is a timeout, which stops its block. */
     val WATCHDOG = 10.seconds

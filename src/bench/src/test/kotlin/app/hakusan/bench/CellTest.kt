@@ -1,6 +1,7 @@
 package app.hakusan.bench
 
 import androidx.compose.ui.unit.IntSize
+import kotlin.time.Duration.Companion.milliseconds
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
@@ -96,6 +97,19 @@ internal class CellTest {
       listOf(Interrupted(Moment.PUBLISHED)),
       Cell.CANCEL_PUBLICATION.steps(ordinary, viewport, useful),
     )
+  }
+
+  @Test
+  fun `a throttled input needs one interval for each started chunk`() {
+    assertEquals(
+      listOf(Throttled),
+      Cell.THROTTLED.steps(IntSize(1600, 2400), viewport, useful),
+    )
+
+    // The ordinary page of 919,513 bytes is 57 chunks of 16 KiB.
+    assertEquals(456.milliseconds, Throttled.time(bytes = 919_513))
+    assertEquals(8.milliseconds, Throttled.time(bytes = 16_384))
+    assertEquals(16.milliseconds, Throttled.time(bytes = 16_385))
   }
 
   @Test

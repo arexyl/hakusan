@@ -3,6 +3,8 @@ package app.hakusan.bench
 import android.graphics.Bitmap
 import android.graphics.ColorSpace
 import androidx.compose.ui.unit.IntSize
+import kotlin.time.Duration
+import kotlin.time.Duration.Companion.milliseconds
 import kotlin.time.Duration.Companion.seconds
 import org.json.JSONObject
 
@@ -88,6 +90,21 @@ internal data class Held(val rows: Int, val ending: Ending) : Step {
      */
     val LIMIT = 10.seconds
   }
+}
+
+/**
+ * The whole image at 1:1 from an input that delivers the file in chunks of at
+ * most [CHUNK] bytes, none sooner than [INTERVAL] after the one before. It is a
+ * diagnostic of output under a slow input, and no latency target applies to it.
+ */
+internal data object Throttled : Step {
+  const val CHUNK = 16 shl 10
+
+  val INTERVAL = 8.milliseconds
+
+  /** The shortest time in which the input delivers [bytes]. */
+  fun time(bytes: Long): Duration =
+    INTERVAL * ((bytes + CHUNK - 1) / CHUNK).toInt()
 }
 
 /** Presentation as a backend sees it. */
