@@ -139,7 +139,6 @@ internal data class Terminal(val outcome: String, val failure: String? = null) {
 
 /** What a backend reports of one request beside its outputs. */
 internal data class Report(
-  /** The last output has every row of the step only after `completed`. */
   val terminal: Terminal = Terminal.COMPLETED,
   /** The bytes of its inputs, or null when the platform reads the file. */
   val input: Acquired? = null,
@@ -198,8 +197,9 @@ internal data class Acquired(val bytes: Long, val again: Long)
 /** The input and the decoder state of one attempt. */
 internal interface Content {
   /**
-   * Decodes [step] and publishes each output on [display] before it returns,
-   * the last one with every row of the step when the step completes.
+   * Decodes [step] and publishes each output on [display] before it returns.
+   * The last one has every row of the step when the request completes and the
+   * backend requested no cancellation of it.
    *
    * @throws IllegalArgumentException when the backend has no such step.
    * @throws IllegalStateException when an output differs from the request.

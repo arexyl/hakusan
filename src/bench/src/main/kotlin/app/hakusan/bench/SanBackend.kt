@@ -57,10 +57,11 @@ import org.json.JSONObject
  * opens no input. One engine with the first-iteration profile and the
  * [backward] variant serves the block, and each attempt has a session and a
  * content owner of its own, so no attempt finds an output or a strip of an
- * earlier one. The worker of the reader decodes. The decode thread only opens
- * the input and hands each publication to presentation, which the reader paces:
- * it copies the next revision only into a target that presentation has
- * returned.
+ * earlier one. The worker of the reader decodes. The decode thread opens the
+ * input and hands each publication to presentation, which the reader paces: it
+ * copies the next revision only into a target that presentation has returned.
+ * Where a step asks for it, that thread also watches for the output that ends
+ * the hold of an input, and requests the cancellation of the request.
  *
  * The decode section of a request therefore spans waits for display frames
  * here. The sections of the reader on its worker hold the time of the engine.
@@ -162,8 +163,10 @@ private class SanContent(
     var resumed: Long? = null
     var taken = 0
 
+    // Before the first execution of the request, which reads all three.
     acquired = Acquired(bytes = 0, again = 0)
     cancellation = Cancellation(request)
+    throttled = step == Throttled
 
     when (step) {
       is Whole -> {
@@ -197,8 +200,6 @@ private class SanContent(
     }
 
     val moment = (step as? Interrupted)?.moment
-
-    throttled = step == Throttled
 
     val watch: (suspend () -> Unit)? = hold?.let {
       { resumed = resume(request, it, display) }
@@ -399,6 +400,10 @@ private class SanContent(
     arrived: (() -> Unit)? = null,
     take: suspend (ReaderOutputLease) -> Unit,
   ): ReaderContentTerminal? {
+    // The wakeup of the last publication of the request before may still be
+    // here, when the end of that execution was seen first.
+    published.tryReceive()
+
     val submitted =
       checkNotNull(requests.submit(descriptor(fixture), wanted)) {
         "The content is closed."

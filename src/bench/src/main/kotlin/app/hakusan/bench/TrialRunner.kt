@@ -334,10 +334,10 @@ internal class TrialRunner(
   }
 
   /**
-   * Decodes one step on the decode thread and returns its last output, with the
-   * counters of the backend before the decode and at its end, and with the
-   * report of the backend. [frames] is a context with the frame clock of the
-   * display.
+   * Decodes one step on the decode thread and returns its last output, if it
+   * has one, with the counters of the backend before the decode and at its end,
+   * and with the report of the backend. [frames] is a context with the frame
+   * clock of the display.
    */
   private suspend fun decode(
     request: Int,
@@ -388,8 +388,10 @@ internal class TrialRunner(
       val output = last
 
       // A request that did not complete may end with a partial output, and
-      // one cancelled before its first take with none.
-      if (report.terminal == Terminal.COMPLETED) {
+      // one cancelled before its first take with none. So may one whose
+      // decode ended before its cancellation reached it: the reader makes no
+      // final copy for a cancelled request, and it releases a queued output.
+      if (report.terminal == Terminal.COMPLETED && report.canceled == null) {
         checkNotNull(output) { "The backend published no output." }
 
         check(output.rows == output.bitmap.height) {

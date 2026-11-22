@@ -112,6 +112,15 @@ private constructor(
     val stated = artifact.optJSONObject("hold") ?: return null
     val hold = Hold(stated.getLong("offset"), stated.getInt("source_rows"))
 
+    // A hold at an end of the file or of the image would withhold nothing,
+    // or everything.
+    check(
+      hold.offset in 1..<artifact.getLong("bytes") &&
+        hold.rows in 1..<artifact.getInt("height")
+    ) {
+      "The hold point of ${artifact.getString("path")} lies outside it."
+    }
+
     check(sha256(file, hold.offset) == stated.getString("prefix_sha256")) {
       "The prefix of ${artifact.getString("path")} differs from the manifest."
     }

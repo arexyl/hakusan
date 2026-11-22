@@ -147,6 +147,23 @@ class Entries(unittest.TestCase):
         self.assertEqual(analyze.terminal(canceled), "canceled")
         self.assertEqual(analyze.terminal({}), "")
 
+    def test_a_request_that_completed_under_a_cancellation_is_named_apart(
+        self,
+    ) -> None:
+        completed = {"outcome": "completed", "failure": None}
+
+        self.assertEqual(
+            analyze.terminal({"terminal": completed, "clock": {"request": 1}}),
+            "completed",
+        )
+
+        self.assertEqual(
+            analyze.terminal(
+                {"terminal": completed, "clock": {"request": 1, "canceled": 2}}
+            ),
+            "completed before its cancellation",
+        )
+
     def test_the_peaks_come_from_the_terminal_read_and_the_rest_from_the_close(
         self,
     ) -> None:

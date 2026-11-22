@@ -464,10 +464,15 @@ def terminal(entry: dict[str, Any]) -> str:
     if ended is None:
         return ""
 
-    if ended["failure"] is None:
-        return ended["outcome"]
+    if ended["failure"] is not None:
+        return f"{ended['outcome']} {ended['failure']}"
 
-    return f"{ended['outcome']} {ended['failure']}"
+    # A decode that ended before its cancellation reached it has no final
+    # output: the reader makes no last copy for a cancelled request.
+    if ended["outcome"] == "completed" and "canceled" in entry.get("clock", {}):
+        return "completed before its cancellation"
+
+    return ended["outcome"]
 
 
 def ledger(entry: dict[str, Any]) -> dict[str, int]:
@@ -677,7 +682,7 @@ def analyze_block(
 
         # The close of the content of the attempt, which the harness times
         # itself, after presentation released every output.
-        if "closing" in entry["clock"]:
+        if "closing" in entry["clock"] and entry["outcome"] == "ok":
             row["close_ms"] = (entry["clock"]["closed"] - entry["clock"]["closing"]) / 1e6
 
         if start is not None and entry["outcome"] == "ok":
