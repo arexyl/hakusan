@@ -1,5 +1,6 @@
 package app.hakusan.bench
 
+import androidx.compose.ui.unit.IntSize
 import app.hakusan.reader.ReaderAcquisitionFailure
 import app.hakusan.reader.ReaderByteInput
 import app.hakusan.reader.ReaderChapter
@@ -16,6 +17,7 @@ import app.hakusan.reader.ReaderInputRead
 import app.hakusan.reader.ReaderInputSeek
 import app.hakusan.reader.ReaderOutputLease
 import app.hakusan.reader.ReaderOutputLimits
+import app.hakusan.reader.ReaderOutputRequest
 import app.hakusan.reader.ReaderRepresentation
 import app.hakusan.reader.ReaderResourceOwner
 import app.hakusan.reader.ReaderSession
@@ -38,12 +40,13 @@ import org.json.JSONObject
 /**
  * The native path: San through the reader, as the reader runs it.
  *
- * One engine with the first-iteration profile serves the block, and each
- * attempt has a session and a content owner of its own, so no attempt finds an
- * output of an earlier one. The worker of the reader decodes. The decode thread
- * only opens the input and hands each publication to presentation, which the
- * reader paces: it copies the next revision only into a target that
- * presentation has returned.
+ * It decodes a whole image, at a scale of 1:1 or scaled down to the width of
+ * its step. One engine with the first-iteration profile serves the block, and
+ * each attempt has a session and a content owner of its own, so no attempt
+ * finds an output of an earlier one. The worker of the reader decodes. The
+ * decode thread only opens the input and hands each publication to
+ * presentation, which the reader paces: it copies the next revision only into a
+ * target that presentation has returned.
  *
  * The decode section of a request therefore spans waits for display frames
  * here. The sections of the reader on its worker hold the time of the engine.
@@ -106,12 +109,13 @@ private class SanContent(
     step: Step,
     publish: suspend (Publication) -> Unit,
   ) {
-    require(step == Whole(width = null)) {
-      "San decodes whole images at 1:1 only."
-    }
+    require(step is Whole) { "The harness asks San for whole images only." }
+
+    val grid = step.grid(fixture.image)
+    val wanted = ReaderOutputRequest.Whole(maxOutputWidth = step.width)
 
     val submitted =
-      checkNotNull(requests.submit(descriptor(fixture))) {
+      checkNotNull(requests.submit(descriptor(fixture), wanted)) {
         "The content is closed."
       }
 
@@ -129,7 +133,7 @@ private class SanContent(
         }
 
         requests.takePublication()?.let {
-          publish(publication(it.output, request))
+          publish(publication(it.output, request, grid))
         }
       } while (!ended)
 
@@ -157,12 +161,19 @@ private class SanContent(
     checkNotNull(closed) { "An output of the attempt was never released." }
   }
 
-  /** Wraps [lease] once its target has the profile of the fixture's image. */
-  private fun publication(lease: ReaderOutputLease, request: Int): Publication {
+  /**
+   * Wraps [lease] once its target has the pixel profile at the size of [grid],
+   * which the harness computes for the step by its own rule.
+   */
+  private fun publication(
+    lease: ReaderOutputLease,
+    request: Int,
+    grid: IntSize,
+  ): Publication {
     val region = lease.coverage.region
 
     try {
-      lease.bitmap.requireProfile(fixture.image)
+      lease.bitmap.requireProfile(grid)
       check(region.top == 0) { "The output starts at row ${region.top}." }
     } catch (failure: IllegalStateException) {
       lease.close()
