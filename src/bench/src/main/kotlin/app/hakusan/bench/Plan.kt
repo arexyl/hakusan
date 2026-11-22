@@ -18,6 +18,15 @@ internal enum class Cell(val id: String, val fixture: String) {
    */
   EARLY("early", "journey/ordinary.png"),
 
+  /**
+   * As [EARLY] up to the shown output, after which the input ends inside the
+   * image data. The request fails, and the display keeps the output.
+   */
+  EARLY_TRUNCATED("early-truncated", "journey/ordinary.png"),
+
+  /** As [EARLY_TRUNCATED], with an input whose next read fails. */
+  EARLY_FAILED("early-failed", "journey/ordinary.png"),
+
   /** The large page, decoded at the width of the viewport. */
   LARGE("large", "qualification/timed/large.png"),
 
@@ -43,18 +52,17 @@ internal enum class Cell(val id: String, val fixture: String) {
     val band = (viewport.height.toLong() * image.width / viewport.width).toInt()
     val last = image.height - band
 
+    val shown =
+      ((useful.toLong() * image.width + viewport.width - 1) / viewport.width)
+        .toInt()
+
     val tops =
       when (this) {
         ORDINARY -> return listOf(Whole(width = null))
 
-        EARLY -> {
-          val rows =
-            (useful.toLong() * image.width + viewport.width - 1) /
-              viewport.width
-
-          return listOf(Held(rows.toInt(), Ending.RELEASE))
-        }
-
+        EARLY -> return listOf(Held(shown, Ending.RELEASE))
+        EARLY_TRUNCATED -> return listOf(Held(shown, Ending.TRUNCATE))
+        EARLY_FAILED -> return listOf(Held(shown, Ending.FAIL))
         LARGE -> return listOf(Whole(width = viewport.width))
         LONG_FIRST -> listOf(0)
         LONG_SCROLL ->

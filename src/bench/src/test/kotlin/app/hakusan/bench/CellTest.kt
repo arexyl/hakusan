@@ -64,6 +64,21 @@ internal class CellTest {
   }
 
   @Test
+  fun `the cells of an ended early output differ only in the ending`() {
+    val ordinary = IntSize(1600, 2400)
+
+    assertEquals(
+      listOf(Held(rows = 1423, Ending.TRUNCATE)),
+      Cell.EARLY_TRUNCATED.steps(ordinary, viewport, useful),
+    )
+
+    assertEquals(
+      listOf(Held(rows = 1423, Ending.FAIL)),
+      Cell.EARLY_FAILED.steps(ordinary, viewport, useful),
+    )
+  }
+
+  @Test
   fun `every band lies in the image and fits one pixel backing`() {
     val backing = 16L * 1024 * 1024
 

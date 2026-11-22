@@ -37,7 +37,13 @@ internal data class Band(val top: Int, val bottom: Int) : Step {
 /** How a held step goes on once the display has shown its useful output. */
 internal enum class Ending(val id: String) {
   /** The input delivers the rest, and the request completes. */
-  RELEASE("release")
+  RELEASE("release"),
+
+  /** The input ends at the hold point, inside the image data. */
+  TRUNCATE("truncate"),
+
+  /** The next read of the input fails. */
+  FAIL("fail"),
 }
 
 /**
@@ -77,8 +83,24 @@ internal interface Display {
   suspend fun shown(request: Int, rows: Int)
 }
 
+/**
+ * How a request ended: as `completed`, as `canceled`, or as `failed` with the
+ * category of the [failure]. Its step names the one that it must end as, and a
+ * backend fails a request that ends otherwise.
+ */
+internal data class Terminal(val outcome: String, val failure: String? = null) {
+  companion object {
+    val COMPLETED = Terminal("completed")
+    val CANCELED = Terminal("canceled")
+
+    fun failed(category: String): Terminal = Terminal("failed", category)
+  }
+}
+
 /** What a backend reports of one request beside its outputs. */
 internal data class Report(
+  /** The last output has every row of the step only after `completed`. */
+  val terminal: Terminal = Terminal.COMPLETED,
   /** The bytes of its inputs, or null when the platform reads the file. */
   val input: Acquired? = null,
   /** When a held input went on, on the clock of the record. */
@@ -129,8 +151,8 @@ internal data class Acquired(val bytes: Long, val again: Long)
 /** The input and the decoder state of one attempt. */
 internal interface Content {
   /**
-   * Decodes [step] and publishes each output on [display], the last one with
-   * every row of the step, before it returns.
+   * Decodes [step] and publishes each output on [display] before it returns,
+   * the last one with every row of the step when the step completes.
    *
    * @throws IllegalArgumentException when the backend has no such step.
    * @throws IllegalStateException when an output differs from the request.

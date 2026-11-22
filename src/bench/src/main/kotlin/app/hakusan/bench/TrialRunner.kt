@@ -287,6 +287,16 @@ internal class TrialRunner(
         }
 
         finished.report.resumed?.let { clock.put("resumed", it) }
+
+        entry.put(
+          "terminal",
+          JSONObject()
+            .put("outcome", finished.report.terminal.outcome)
+            .put(
+              "failure",
+              finished.report.terminal.failure ?: JSONObject.NULL,
+            ),
+        )
       }
     } catch (failure: CancellationException) {
       throw failure
@@ -351,7 +361,12 @@ internal class TrialRunner(
       val report = content.decode(request, step, display)
       val output = checkNotNull(last) { "The backend published no output." }
 
-      check(output.request == request && output.rows == output.bitmap.height) {
+      val partial = report.terminal != Terminal.COMPLETED
+
+      check(
+        output.request == request &&
+          (partial || output.rows == output.bitmap.height)
+      ) {
         "The last output of the request lacks rows."
       }
 
@@ -443,7 +458,7 @@ internal class TrialRunner(
      * The version of the record. It rises with every change of a field or of
      * the steps of a cell, so the analysis never pools blocks that differ.
      */
-    const val SCHEMA = 3
+    const val SCHEMA = 4
 
     /** A request that takes longer is a timeout, which stops its block. */
     val WATCHDOG = 10.seconds

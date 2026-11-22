@@ -9,6 +9,7 @@ import app.hakusan.reader.ReaderChapter
 import app.hakusan.reader.ReaderChapterContent
 import app.hakusan.reader.ReaderChapterKey
 import app.hakusan.reader.ReaderContentDescriptor
+import app.hakusan.reader.ReaderContentFailure
 import app.hakusan.reader.ReaderContentRequests
 import app.hakusan.reader.ReaderContentTerminal
 import app.hakusan.reader.ReaderContentUnit
@@ -188,12 +189,43 @@ private class SanContent(
         }
       }
 
-    check(terminal is ReaderContentTerminal.Completed) {
-      "The request ended as $terminal."
-    }
+    val ended =
+      when (terminal) {
+        is ReaderContentTerminal.Completed -> Terminal.COMPLETED
+        is ReaderContentTerminal.Canceled -> Terminal.CANCELED
 
-    return Report(input = acquired, resumed = resumed)
+        is ReaderContentTerminal.Failed ->
+          Terminal.failed(terminal.failure.name.lowercase())
+
+        is ReaderContentTerminal.Oversized,
+        null -> error("The request ended as $terminal.")
+      }
+
+    check(ended == expected(step)) { "The request ended as $terminal." }
+
+    return Report(terminal = ended, input = acquired, resumed = resumed)
   }
+
+  /** The terminal outcome that [step] must end as. */
+  private fun expected(step: Step): Terminal =
+    when (step) {
+      is Whole,
+      is Band -> Terminal.COMPLETED
+
+      is Held ->
+        when (step.ending) {
+          Ending.RELEASE -> Terminal.COMPLETED
+
+          // The stream ends inside the image data, and the decoder says so.
+          Ending.TRUNCATE ->
+            Terminal.failed(
+              ReaderContentFailure.TRUNCATED_CONTENT.name.lowercase()
+            )
+
+          Ending.FAIL ->
+            Terminal.failed(ReaderContentFailure.INPUT_FAILED.name.lowercase())
+        }
+    }
 
   /**
    * The hold of the input of [step] at the hold point of the fixture.
@@ -208,14 +240,14 @@ private class SanContent(
       "The hold point leaves ${point.rows} rows, and ${step.rows} are useful."
     }
 
-    return Withheld(point.offset, point.rows)
+    return Withheld(point.offset, point.rows, step.ending)
   }
 
   /**
    * Waits until the display has shown the output with every row of the prefix
-   * of [hold], lets the input go on, and returns the time of that. No copy and
-   * no publication of the request is on its way by then, because the adapter
-   * has no row left to copy.
+   * of [hold], lets the input go on to its ending, and returns the time of
+   * that. No copy and no publication of the request is on its way by then,
+   * because the adapter has no row left to copy.
    *
    * @throws IllegalStateException when the output takes longer than its limit
    *   after the input delivered the prefix.
@@ -445,11 +477,11 @@ private class SanContent(
 }
 
 /**
- * What an input withholds: every byte from [offset] on, until [release]. The
- * bytes before it, the prefix, decode the top [rows] of the image. Every call
- * is safe from any thread.
+ * What an input withholds: every byte from [offset] on, until [release], after
+ * which it goes on as [ending] says. The bytes before the offset, the prefix,
+ * decode the top [rows] of the image. Every call is safe from any thread.
  */
-private class Withheld(val offset: Long, val rows: Int) {
+private class Withheld(val offset: Long, val rows: Int, val ending: Ending) {
   private val delivered = CompletableDeferred<Unit>()
   private val released = CompletableDeferred<Unit>()
 
@@ -466,7 +498,7 @@ private class Withheld(val offset: Long, val rows: Int) {
     delivered.await()
   }
 
-  /** Lets the input deliver the rest. */
+  /** Lets the input go on to its ending. */
   fun release() {
     released.complete(Unit)
   }
@@ -511,7 +543,9 @@ private class FileInput(
   ): ReaderInputRead {
     Objects.checkFromIndexSize(offset, length, destination.size)
 
-    val end = if (hold?.waits == true) minOf(hold.offset, size) else size
+    // Only a released hold that delivers the rest reads behind its offset.
+    val whole = hold == null || (!hold.waits && hold.ending == Ending.RELEASE)
+    val end = if (whole) size else minOf(checkNotNull(hold).offset, size)
     val left = end - position
 
     terminal?.let {
@@ -520,13 +554,11 @@ private class FileInput(
 
     when {
       length == 0 -> return ReaderInputRead.NoOp
-      left == 0L && end == size -> return ReaderInputRead.EndOfInput
+      left == 0L && whole -> return ReaderInputRead.EndOfInput
     }
 
     if (left == 0L) {
-      checkNotNull(hold).prefixDelivered()
-
-      return ReaderInputRead.AwaitInput
+      return behind(checkNotNull(hold))
     }
 
     // A file that ends before its size is not the file of the fixture.
@@ -545,6 +577,25 @@ private class FileInput(
     position += count
 
     return ReaderInputRead.Data(count)
+  }
+
+  /** The read at the offset of [hold], which delivers no byte. */
+  private fun behind(hold: Withheld): ReaderInputRead {
+    if (hold.waits) {
+      hold.prefixDelivered()
+
+      return ReaderInputRead.AwaitInput
+    }
+
+    return when (hold.ending) {
+      Ending.RELEASE -> error("A released hold delivers the rest.")
+      Ending.TRUNCATE -> ReaderInputRead.EndOfInput
+
+      Ending.FAIL ->
+        ReaderInputRead.InputFailure(ReaderAcquisitionFailure.FAILED).also {
+          terminal = it
+        }
+    }
   }
 
   override suspend fun awaitInput() {
