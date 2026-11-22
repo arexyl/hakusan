@@ -65,6 +65,118 @@ class ReaderEngineDeviceTest {
   }
 
   @Test
+  fun pageAtHalfItsWidthIsTheAverageOfItsPixels() = onStage {
+    val page = DeviceCorpus.file(ORDINARY)
+
+    submit()
+    execute(PacedInput(page.bytes))
+
+    val whole = assertShows(page)
+
+    clearView()
+
+    val width = page.width / 2
+    val height = page.height / 2
+    val request = submit(ReaderOutputRequest.Whole(maxOutputWidth = width))
+
+    execute(PacedInput(page.bytes))
+
+    assertEquals(ReaderContentTerminal.Completed.of(), request.terminal)
+
+    val scaled = assertShown(width, height)
+
+    // Each pixel of the grid covers two by two pixels of the image.
+    for (y in 0..<height) {
+      for (x in 0..<width) {
+        val first = 2 * y * page.width + 2 * x
+        val below = first + page.width
+
+        val covered =
+          intArrayOf(
+            whole[first],
+            whole[first + 1],
+            whole[below],
+            whole[below + 1],
+          )
+
+        assertEquals(
+          "the pixel at $x, $y",
+          average(covered),
+          scaled[y * width + x],
+        )
+      }
+    }
+
+    assertIdle()
+  }
+
+  @Test
+  fun bandOfThePageHasTheRowsOfThePage() = onStage {
+    val page = DeviceCorpus.file(ORDINARY)
+
+    submit()
+    execute(PacedInput(page.bytes))
+
+    val whole = assertShows(page)
+
+    clearView()
+
+    val image = ReaderImageGeometry(page.width, page.height)
+    val top = page.height / 4
+    val bottom = page.height / 2
+    val request = submit(ReaderOutputRequest.Band(image, top, bottom))
+
+    execute(PacedInput(page.bytes))
+
+    assertEquals(ReaderContentTerminal.Completed.of(), request.terminal)
+
+    val band = assertShown(page.width, bottom - top)
+
+    assertArrayEquals(
+      whole.copyOfRange(top * page.width, bottom * page.width),
+      band,
+    )
+
+    assertIdle()
+  }
+
+  @Test
+  fun scaledBandHasTheRowsOfTheScaledPageInOneGrid() = onStage {
+    val page = DeviceCorpus.file(ORDINARY)
+    val image = ReaderImageGeometry(page.width, page.height)
+
+    // A third of the width, and edges inside a grid row, so that the grid
+    // and the rows of the lease come from divisions with a remainder.
+    val width = page.width / 3
+    val top = page.height / 4 + 1
+    val bottom = page.height / 2 + 1
+    val grid = image.grid(width)
+    val rows = image.gridRows(top, bottom, grid)
+    val whole = submit(ReaderOutputRequest.Whole(width))
+
+    execute(PacedInput(page.bytes))
+
+    assertEquals(ReaderContentTerminal.Completed.of(), whole.terminal)
+
+    val scaled = assertShown(grid.width, grid.height)
+
+    clearView()
+
+    val band = submit(ReaderOutputRequest.Band(image, top, bottom, width))
+
+    execute(PacedInput(page.bytes))
+
+    assertEquals(ReaderContentTerminal.Completed.of(), band.terminal)
+
+    assertArrayEquals(
+      scaled.copyOfRange(rows.first * grid.width, (rows.last + 1) * grid.width),
+      assertShown(grid.width, rows.count()),
+    )
+
+    assertIdle()
+  }
+
+  @Test
   fun closingDuringADecodeCancelsItAndFreesTheEngine() = onStage {
     val page = DeviceCorpus.file(ORDINARY)
     val request = submit()
@@ -144,8 +256,10 @@ class ReaderEngineDeviceTest {
     val requests: ReaderContentRequests,
     val created: List<Bitmap>,
   ) {
-    fun submit(): ReaderContentRequest =
-      checkNotNull(requests.submit(pageDescriptor()))
+    fun submit(
+      output: ReaderOutputRequest = ReaderOutputRequest.Whole()
+    ): ReaderContentRequest =
+      checkNotNull(requests.submit(pageDescriptor(), output))
 
     suspend fun execute(input: ReaderByteInput) {
       withTimeout(TIMEOUT_MILLIS) {
@@ -168,6 +282,21 @@ class ReaderEngineDeviceTest {
       assertEquals(page.samplesSha256, rgbSha256(pixels, shown.width))
 
       return pixels
+    }
+
+    /**
+     * Waits for the frame that draws [rows] rows, checks that its Bitmap has
+     * [width] columns and exactly those rows, and returns its pixels.
+     */
+    suspend fun assertShown(width: Int, rows: Int): IntArray {
+      withTimeout(TIMEOUT_MILLIS) { view.drawn.first { it == rows } }
+
+      val shown = onMain { checkNotNull(view.shownBitmap) }
+
+      assertEquals(width, shown.width)
+      assertEquals(rows, shown.height)
+
+      return shown.pixels()
     }
 
     /**
@@ -301,6 +430,22 @@ class ReaderEngineDeviceTest {
         destinationFirstRow,
       )
     }
+  }
+
+  /**
+   * The opaque pixel whose every sample is the mean of that sample over
+   * [pixels], rounded to the nearest value, halves up.
+   */
+  private fun average(pixels: IntArray): Int {
+    var result = 0xFF shl 24
+
+    for (shift in intArrayOf(16, 8, 0)) {
+      val sum = pixels.sumOf { (it ushr shift) and 0xFF }
+
+      result = result or ((sum + pixels.size / 2) / pixels.size shl shift)
+    }
+
+    return result
   }
 
   private companion object {

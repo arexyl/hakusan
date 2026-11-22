@@ -163,8 +163,11 @@ class ReaderOutputLeaseTest {
   @Test
   fun `a lease has a revision from one and pixels only with a Bitmap`() {
     val representation = ReaderRepresentation()
+    val square = ReaderImageGeometry(10, 10)
     val region = ReaderImageRegion(0, 0, 10, 5)
-    val coverage = ReaderImageCoverage(10, 10, region, finalQuality = false)
+
+    val coverage =
+      ReaderImageCoverage(square, square, region, finalQuality = false)
 
     assertThrowsExactly(IllegalArgumentException::class.java) {
       ReaderOutputLease(representation, coverage, revision = 0, TestTarget()) {}
@@ -188,13 +191,108 @@ class ReaderOutputLeaseTest {
     }
 
     assertThrowsExactly(IllegalArgumentException::class.java) {
-      ReaderImageCoverage(10, 10, ReaderImageRegion(0, 0, 11, 10), true)
+      ReaderImageGeometry(0, 1)
     }
 
-    val outer = ReaderImageRegion(0, 0, 10, 10)
+    val square = ReaderImageGeometry(10, 10)
+    val half = ReaderImageGeometry(5, 5)
 
-    assertTrue(outer.contains(ReaderImageRegion(0, 5, 10, 10)))
-    assertFalse(outer.contains(ReaderImageRegion(0, 5, 10, 11)))
+    // A region outside its grid, and a grid above its image.
+    assertThrowsExactly(IllegalArgumentException::class.java) {
+      ReaderImageCoverage(square, half, ReaderImageRegion(0, 0, 6, 5), true)
+    }
+
+    assertThrowsExactly(IllegalArgumentException::class.java) {
+      ReaderImageCoverage(half, square, ReaderImageRegion(0, 0, 5, 5), true)
+    }
+  }
+
+  @Test
+  fun `the grid of an image never scales up and rounds its height`() {
+    val page = ReaderImageGeometry(4320, 6480)
+    val segment = ReaderImageGeometry(1440, 40_000)
+
+    assertEquals(page, page.grid(null))
+    assertEquals(page, page.grid(4320))
+    assertEquals(page, page.grid(10_000))
+    assertEquals(ReaderImageGeometry(1080, 1620), page.grid(1080))
+
+    // A height of one and a half rows rounds up, and no grid has less than
+    // one row.
+    assertEquals(ReaderImageGeometry(1080, 30_000), segment.grid(1080))
+    assertEquals(ReaderImageGeometry(3, 2), ReaderImageGeometry(4, 2).grid(3))
+    assertEquals(
+      ReaderImageGeometry(10, 1),
+      ReaderImageGeometry(1000, 1).grid(10),
+    )
+  }
+
+  @Test
+  fun `a band takes the grid rows that its image rows intersect`() {
+    val segment = ReaderImageGeometry(1440, 40_000)
+    val scaled = segment.grid(1080)
+
+    assertEquals(2560..<5120, segment.gridRows(2560, 5120, segment))
+    assertEquals(14_040..<15_960, segment.gridRows(18_720, 21_280, scaled))
+
+    // An image row inside a grid row takes that grid row on both sides.
+    assertEquals(0..<2, segment.gridRows(1, 2, scaled))
+    assertEquals(29_999..<30_000, segment.gridRows(39_999, 40_000, scaled))
+  }
+
+  @Test
+  fun `a request admits only the coverage of its grid and of its rows`() {
+    val page = ReaderImageGeometry(4320, 6480)
+    val grid = ReaderImageGeometry(1080, 1620)
+
+    fun covered(top: Int, bottom: Int, right: Int = grid.width) =
+      ReaderImageCoverage(
+        page,
+        grid,
+        ReaderImageRegion(0, top, right, bottom),
+        true,
+      )
+
+    val whole = ReaderOutputRequest.Whole(1080)
+
+    assertTrue(whole.admits(covered(0, 1620)))
+    assertFalse(ReaderOutputRequest.Whole().admits(covered(0, 1620)))
+    assertFalse(ReaderOutputRequest.Whole(540).admits(covered(0, 1620)))
+
+    // The image rows 400 to 800 are the grid rows 100 to 200.
+    val band = ReaderOutputRequest.Band(page, 400, 800, 1080)
+
+    assertTrue(band.admits(covered(100, 200)))
+    assertTrue(band.admits(covered(100, 101)))
+    assertFalse(band.admits(covered(99, 200)))
+    assertFalse(band.admits(covered(100, 201)))
+    assertFalse(band.admits(covered(100, 200, right = 1079)))
+
+    val other =
+      ReaderOutputRequest.Band(ReaderImageGeometry(4320, 6481), 400, 800, 1080)
+
+    assertFalse(other.admits(covered(100, 200)))
+  }
+
+  @Test
+  fun `a request rejects rows outside its image and an empty width`() {
+    val page = ReaderImageGeometry(4, 4)
+
+    assertThrowsExactly(IllegalArgumentException::class.java) {
+      ReaderOutputRequest.Whole(0)
+    }
+
+    assertThrowsExactly(IllegalArgumentException::class.java) {
+      ReaderOutputRequest.Band(page, 2, 2)
+    }
+
+    assertThrowsExactly(IllegalArgumentException::class.java) {
+      ReaderOutputRequest.Band(page, 0, 5)
+    }
+
+    assertThrowsExactly(IllegalArgumentException::class.java) {
+      ReaderOutputRequest.Band(page, 0, 4, maxOutputWidth = 0)
+    }
   }
 
   private companion object {

@@ -21,6 +21,15 @@ internal data class ScriptedCall(
   val resetPeak: Boolean = false,
 )
 
+/** The fields of one job request that a [ScriptedSan] received. */
+internal data class ScriptedRequest(
+  val left: Int,
+  val top: Int,
+  val right: Int,
+  val bottom: Int,
+  val maxOutputWidth: Int,
+)
+
 /** A copy destination of JVM tests, which records the copies into it. */
 internal class ScriptedTarget(
   val width: Int,
@@ -314,6 +323,9 @@ internal class ScriptedSan : SanCalls {
   /** Every answered call, in the order of its return. */
   val calls: MutableList<ScriptedCall> = CopyOnWriteArrayList()
 
+  /** The fields of every job request, in the order of the calls. */
+  val requested: MutableList<ScriptedRequest> = CopyOnWriteArrayList()
+
   /** The broken call rules that San cannot detect, in their order. */
   val violations: MutableList<String> = CopyOnWriteArrayList()
 
@@ -559,6 +571,8 @@ internal class ScriptedSan : SanCalls {
     jobOut: LongArray,
   ): Int =
     answer("jobRequest", content, out = jobOut) {
+      requested += ScriptedRequest(left, top, right, bottom, maxOutputWidth)
+
       val open = liveContents[content] ?: return@answer closedOrInvalid(content)
       val whole = left == 0 && top == 0 && right == 0 && bottom == 0
       val region = left in 0..<right && top in 0..<bottom

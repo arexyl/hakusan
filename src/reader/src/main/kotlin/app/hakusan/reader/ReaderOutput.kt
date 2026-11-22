@@ -2,11 +2,126 @@ package app.hakusan.reader
 
 import android.graphics.Bitmap
 
+/** The width and the height of an image or of an output grid, in pixels. */
+public data class ReaderImageGeometry(
+  public val width: Int,
+  public val height: Int,
+) {
+  init {
+    require(width > 0 && height > 0) { "A geometry must have pixels." }
+  }
+
+  /**
+   * The output grid of an image of this geometry for [maxOutputWidth], or the
+   * image itself for null: the whole image scaled uniformly to that width,
+   * never up, with the height rounded to the nearest row, halves up.
+   */
+  internal fun grid(maxOutputWidth: Int?): ReaderImageGeometry {
+    val columns = minOf(maxOutputWidth ?: width, width)
+    val rows = (2L * height * columns + width) / (2L * width)
+
+    return ReaderImageGeometry(columns, maxOf(rows, 1L).toInt())
+  }
+
+  /**
+   * The rows of [grid], an output grid of an image of this geometry, that the
+   * image rows `[top, bottom)` intersect. Adjacent bands share one grid, and a
+   * grid row that straddles their boundary belongs to both.
+   */
+  internal fun gridRows(
+    top: Int,
+    bottom: Int,
+    grid: ReaderImageGeometry,
+  ): IntRange {
+    val first = top.toLong() * grid.height / height
+    val end = (bottom.toLong() * grid.height + height - 1) / height
+
+    return first.toInt()..<end.toInt()
+  }
+}
+
 /**
- * A half-open rectangle `[left, right) × [top, bottom)` in image coordinates.
+ * What a content request asks of its image: the whole image or a band of its
+ * rows, at a scale of 1:1 or scaled down to a width.
  *
- * A region is a bounded request or result. It never establishes a provider
- * unit, a reading position, or a chapter boundary.
+ * A request never establishes a provider unit, a reading position, or a chapter
+ * boundary.
+ */
+public sealed interface ReaderOutputRequest {
+  /**
+   * The largest width of the output grid in pixels, or null for a scale of 1:1.
+   * The grid is the whole image scaled uniformly to that width, and an image
+   * that is narrower keeps its size.
+   */
+  public val maxOutputWidth: Int?
+
+  /** The whole image. */
+  public data class Whole(override val maxOutputWidth: Int? = null) :
+    ReaderOutputRequest {
+    init {
+      require(maxOutputWidth == null || maxOutputWidth > 0) {
+        "An output width must have pixels."
+      }
+    }
+  }
+
+  /**
+   * The image rows `[top, bottom)` at every column of an image of [geometry],
+   * which the caller learned from an earlier request of that image.
+   */
+  public data class Band(
+    public val geometry: ReaderImageGeometry,
+    public val top: Int,
+    public val bottom: Int,
+    override val maxOutputWidth: Int? = null,
+  ) : ReaderOutputRequest {
+    init {
+      require(top in 0..<bottom && bottom <= geometry.height) {
+        "A band must have rows inside its image."
+      }
+
+      require(maxOutputWidth == null || maxOutputWidth > 0) {
+        "An output width must have pixels."
+      }
+    }
+  }
+}
+
+/**
+ * Whether [coverage] is an output of this request: its grid is the grid of the
+ * request, and for a band its image is the image of the band and its region
+ * spans every column and lies within the grid rows that the band intersects.
+ */
+internal fun ReaderOutputRequest.admits(
+  coverage: ReaderImageCoverage
+): Boolean {
+  val grid = coverage.image.grid(maxOutputWidth)
+
+  if (coverage.grid != grid) {
+    return false
+  }
+
+  return when (this) {
+    is ReaderOutputRequest.Whole -> true
+    is ReaderOutputRequest.Band -> {
+      val rows = geometry.gridRows(top, bottom, grid)
+      val region = coverage.region
+
+      coverage.image == geometry &&
+        region.left == 0 &&
+        region.right == grid.width &&
+        region.top >= rows.first &&
+        region.bottom <= rows.last + 1
+    }
+  }
+}
+
+/**
+ * A half-open rectangle `[left, right) × [top, bottom)` in the coordinates of
+ * an output grid, which are those of the image at a scale of 1:1.
+ *
+ * A region is a bounded result. It never establishes a provider unit, a reading
+ * position, or a chapter boundary.
  */
 public data class ReaderImageRegion(
   public val left: Int,
@@ -18,36 +133,34 @@ public data class ReaderImageRegion(
     require(left >= 0 && top >= 0) { "A region origin must not be negative." }
     require(right > left && bottom > top) { "A region must have an area." }
   }
-
-  /** Whether [other] lies entirely inside this region. */
-  internal fun contains(other: ReaderImageRegion): Boolean =
-    left <= other.left &&
-      top <= other.top &&
-      right >= other.right &&
-      bottom >= other.bottom
 }
 
 /**
  * The valid content of one published output.
  *
+ * The pixels of the output are those of [region], so its first row is the row
+ * `region.top` of [grid], and its first column the column `region.left`.
+ *
  * Coverage and its quality are separate from the completion of the input and of
  * the request.
  */
 public data class ReaderImageCoverage(
-  /** The image width in pixels. */
-  public val imageWidth: Int,
-  /** The image height in pixels. */
-  public val imageHeight: Int,
-  /** The covered region, which lies inside the image. */
+  /** The encoded image. */
+  public val image: ReaderImageGeometry,
+  /** The output grid: the whole image at the scale of the output. */
+  public val grid: ReaderImageGeometry,
+  /** The covered region, which lies inside the grid. */
   public val region: ReaderImageRegion,
   /** Whether the region has its final quality, so no refinement follows. */
   public val finalQuality: Boolean,
 ) {
   init {
-    require(imageWidth > 0 && imageHeight > 0) { "An image must have pixels." }
+    require(grid.width <= image.width && grid.height <= image.height) {
+      "An output grid must not exceed its image."
+    }
 
-    require(region.right <= imageWidth && region.bottom <= imageHeight) {
-      "The covered region must lie inside the image."
+    require(region.right <= grid.width && region.bottom <= grid.height) {
+      "The covered region must lie inside the grid."
     }
   }
 }

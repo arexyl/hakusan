@@ -227,9 +227,9 @@ class ReaderContentConcurrencyTest {
     ): ReaderContentRequest? {
       val unit = submitting.nextInt(3)
 
-      val region = REGIONS.random(submitting)
+      val output = REQUESTS.random(submitting)
 
-      val request = requests.submit(book.descriptor(unit), region)
+      val request = requests.submit(book.descriptor(unit), output)
 
       if (request != null) {
         submitted += request
@@ -401,7 +401,7 @@ class ReaderContentConcurrencyTest {
           else -> return outcome(read)
         }
 
-        val output = lease(input.representation, request.region)
+        val output = lease(input.representation, request.output)
 
         when (requests.publish(request, output)) {
           ReaderPublishResult.PUBLISHED -> {
@@ -470,8 +470,14 @@ class ReaderContentConcurrencyTest {
 
     private fun lease(
       representation: ReaderRepresentation,
-      region: ReaderImageRegion?,
+      output: ReaderOutputRequest,
     ): ReaderOutputLease {
+      // A band is covered whole, and a whole image by its first rows.
+      val region =
+        (output as? ReaderOutputRequest.Band)?.let {
+          ReaderImageRegion(0, it.top, testSegment.width, it.bottom)
+        }
+
       val count = AtomicInteger()
 
       val (covered, failure) =
@@ -526,12 +532,8 @@ class ReaderContentConcurrencyTest {
     /** A coverage outside the bounded request region of 400 rows. */
     val FULL_REGION = ReaderImageRegion(0, 0, 100, 4000)
 
-    /** The request regions: the whole image and two bounded regions. */
-    val REGIONS =
-      listOf(
-        null,
-        ReaderImageRegion(0, 0, 100, 400),
-        ReaderImageRegion(0, 0, 100, 4000),
-      )
+    /** The requests: the whole image, and a band of 400 and of all rows. */
+    val REQUESTS =
+      listOf(ReaderOutputRequest.Whole(), testBand(0, 400), testBand(0, 4000))
   }
 }

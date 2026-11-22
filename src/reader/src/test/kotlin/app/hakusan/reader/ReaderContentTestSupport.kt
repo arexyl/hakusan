@@ -16,6 +16,13 @@ internal fun completed(): ReaderContentTerminal =
 /** A target without pixels, which only its identity tells apart. */
 internal class TestTarget : ReaderTarget
 
+/** The segment of the test leases, at a scale of 1:1. */
+internal val testSegment = ReaderImageGeometry(100, 4000)
+
+/** The rows `[top, bottom)` of the test segment at a scale of 1:1. */
+internal fun testBand(top: Int, bottom: Int): ReaderOutputRequest =
+  ReaderOutputRequest.Band(testSegment, top, bottom)
+
 /**
  * A lease of one 100 × 4000 segment whose top 100 rows are final, as the first
  * publication of a target of its own.
@@ -28,7 +35,7 @@ internal fun testLease(
 ): ReaderOutputLease =
   ReaderOutputLease(
     representation,
-    ReaderImageCoverage(100, 4000, region, finalQuality),
+    ReaderImageCoverage(testSegment, testSegment, region, finalQuality),
     revision = 1,
     target = TestTarget(),
     release,

@@ -3,7 +3,8 @@ package app.hakusan.reader
 import kotlinx.coroutines.CompletableDeferred
 
 /**
- * One technical content request: a provider unit and an optional region.
+ * One technical content request: a provider unit and what is asked of its
+ * image.
  *
  * Its identity is unrelated to reading-event order. Only
  * [ReaderContentRequests.submit] creates it.
@@ -12,8 +13,8 @@ public class ReaderContentRequest
 internal constructor(
   /** The provider unit whose content is requested. */
   public val descriptor: ReaderContentDescriptor,
-  /** The requested region, or null for the whole image. */
-  public val region: ReaderImageRegion?,
+  /** The requested part and scale of the image. */
+  public val output: ReaderOutputRequest,
 ) {
   private val cancellation = CompletableDeferred<Unit>()
 
@@ -78,9 +79,11 @@ public enum class ReaderPublishResult {
 
   /**
    * The request can no longer publish: it was cancelled or superseded, its
-   * owner is closing, or the output belongs to another representation or lies
-   * outside the requested region. The owner has released the output. This is
-   * terminal for the request, so every later publication of it is stale too.
+   * owner is closing, or the output belongs to another representation, has
+   * another grid than the requested scale gives, or, for a band, belongs to
+   * another image, does not span every column, or lies outside the requested
+   * rows. The owner has released the output. This is terminal for the request,
+   * so every later publication of it is stale too.
    */
   STALE,
 
@@ -142,10 +145,10 @@ internal constructor(cause: Throwable) :
  * acknowledged its terminal outcome, so replacements never overlap.
  *
  * **Publication.** The executor binds the representation of its input and
- * publishes outputs of that representation inside the requested region. The
- * owner holds every published lease until presentation or the owner releases
- * it, so a lease taken by presentation survives the end of its request. The
- * executor hands every output that it does not publish to [discard].
+ * publishes outputs of that representation that its request admits. The owner
+ * holds every published lease until presentation or the owner releases it, so a
+ * lease taken by presentation survives the end of its request. The executor
+ * hands every output that it does not publish to [discard].
  *
  * **Wakeups.** The owner tells presentation that a publication is queued, and
  * the producer of the executing request that presentation took a publication or
@@ -196,18 +199,18 @@ public class ReaderContentRequests(
   }
 
   /**
-   * Submits a request for [descriptor] and [region], where null requests the
-   * whole image. It replaces the waiting request and requests cancellation of
-   * the executing one. Queued outputs that presentation has not taken are
-   * released.
+   * Submits a request for [output] of the image of [descriptor], by default the
+   * whole image at a scale of 1:1. It replaces the waiting request and requests
+   * cancellation of the executing one. Queued outputs that presentation has not
+   * taken are released.
    *
    * Returns the new request, or null once closing has begun.
    */
   public fun submit(
     descriptor: ReaderContentDescriptor,
-    region: ReaderImageRegion? = null,
+    output: ReaderOutputRequest = ReaderOutputRequest.Whole(),
   ): ReaderContentRequest? {
-    val request = ReaderContentRequest(descriptor, region)
+    val request = ReaderContentRequest(descriptor, output)
 
     val superseded =
       synchronized(monitor) {
@@ -493,15 +496,12 @@ public class ReaderContentRequests(
   private fun publishable(
     request: ReaderContentRequest,
     output: ReaderOutputLease,
-  ): Boolean {
-    val within = request.region?.contains(output.coverage.region) ?: true
-
-    return !closing &&
+  ): Boolean =
+    !closing &&
       !request.cancellationRequested &&
       !request.stale &&
       request.representation === output.representation &&
-      within
-  }
+      request.output.admits(output.coverage)
 
   /**
    * Whether another publication would exceed an output limit. An output whose

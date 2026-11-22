@@ -2,6 +2,7 @@ package app.hakusan.reader
 
 import app.hakusan.reader.ReaderContentTerminal.Canceled
 import app.hakusan.reader.san.SanAbi
+import app.hakusan.reader.san.ScriptedRequest
 import app.hakusan.reader.san.ScriptedSan
 import app.hakusan.reader.san.ScriptedTarget
 import app.hakusan.reader.san.rowsOfFourBytes
@@ -412,19 +413,19 @@ class ReaderOutputExecutionTest {
     }
 
   @Test
-  fun `a publication outside the requested region ends the job as stale`() =
+  fun `a publication outside the requested band ends the job as stale`() =
     readerTest {
       val requests = contentOwner()
       val presenter = TestPresenter(requests)
-      val region = ReaderImageRegion(0, 0, 4, 2)
+      val band = ReaderOutputRequest.Band(ReaderImageGeometry(4, 4), 0, 2)
       val input = liveInput()
 
       source.supply(input)
 
-      // The script ignores the region and covers the whole image.
+      // The script ignores the band and covers the whole image.
       san.script(rowsOfFourBytes(width = 4, height = 4))
 
-      val request = checkNotNull(requests.submit(book.descriptor(0), region))
+      val request = checkNotNull(requests.submit(book.descriptor(0), band))
 
       val running = executing(requests)
 
@@ -440,6 +441,118 @@ class ReaderOutputExecutionTest {
       assertEquals(Canceled, request.terminal)
       assertEquals(listOf(1, 2), presenter.taken.map { it.rows })
       assertNull(requests.takePublication())
+      assertReleased()
+    }
+
+  @Test
+  fun `a whole page at a width publishes the rows of its grid`() = readerTest {
+    val requests = contentOwner()
+    val presenter = TestPresenter(requests)
+    val whole = ReaderOutputRequest.Whole(maxOutputWidth = 4)
+
+    source.supply(completeInput())
+
+    // An image of eight by six pixels in a grid of four by three.
+    san.script {
+      if (content.ended) {
+        describe(8, 6, outputWidth = 4, outputHeight = 3)
+        admit(4, 3, earlyPublication = false)
+        cover(3)
+
+        SanAbi.STATUS_OK
+      } else {
+        SanAbi.STATUS_INPUT_NEEDED
+      }
+    }
+
+    val request = checkNotNull(requests.submit(book.descriptor(0), whole))
+    val running = executing(requests)
+    val output = presenter.take()
+
+    assertEquals(listOf(ScriptedRequest(0, 0, 0, 0, 4)), san.requested)
+
+    assertEquals(
+      ReaderImageCoverage(
+        image = ReaderImageGeometry(8, 6),
+        grid = ReaderImageGeometry(4, 3),
+        region = ReaderImageRegion(0, 0, 4, 3),
+        finalQuality = true,
+      ),
+      output.coverage,
+    )
+
+    // The target has the size of the lease, which is the grid here.
+    assertEquals(listOf(4 to 3), platform.created.map { it.width to it.height })
+    output.close()
+
+    assertSame(request, running.request())
+    assertEquals(completed(), request.terminal)
+    assertReleased()
+  }
+
+  @Test
+  fun `an output in another grid than the requested width is stale`() =
+    readerTest {
+      val requests = contentOwner()
+      val whole = ReaderOutputRequest.Whole(maxOutputWidth = 2)
+      val input = liveInput()
+
+      source.supply(input)
+
+      // The script ignores the width and keeps the image at its size.
+      san.script(rowsOfFourBytes(width = 4, height = 4))
+
+      val request = checkNotNull(requests.submit(book.descriptor(0), whole))
+      val running = executing(requests)
+
+      input.receiveThrough(4)
+
+      assertSame(request, running.request())
+      assertEquals(Canceled, request.terminal)
+      assertEquals(listOf(ScriptedRequest(0, 0, 0, 0, 2)), san.requested)
+      assertNull(requests.takePublication())
+      assertReleased()
+    }
+
+  @Test
+  fun `a band requests its rows at every column and publishes them`() =
+    readerTest {
+      val requests = contentOwner()
+      val presenter = TestPresenter(requests)
+      val image = ReaderImageGeometry(4, 8)
+      val band = ReaderOutputRequest.Band(image, top = 2, bottom = 6)
+
+      source.supply(completeInput())
+
+      // The lease holds the four rows of the band, from the grid row 2 on.
+      san.script {
+        if (content.ended) {
+          describe(4, 8)
+          admit(4, 4, top = 2, earlyPublication = false)
+          decoded(6)
+          cover(4)
+
+          SanAbi.STATUS_OK
+        } else {
+          SanAbi.STATUS_INPUT_NEEDED
+        }
+      }
+
+      val request = checkNotNull(requests.submit(book.descriptor(0), band))
+      val running = executing(requests)
+      val output = presenter.take()
+
+      assertEquals(listOf(ScriptedRequest(0, 2, 4, 6, 0)), san.requested)
+
+      assertEquals(
+        ReaderImageCoverage(image, image, ReaderImageRegion(0, 2, 4, 6), true),
+        output.coverage,
+      )
+
+      output.close()
+
+      assertSame(request, running.request())
+      assertEquals(completed(), request.terminal)
       assertReleased()
     }
 

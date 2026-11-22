@@ -4,6 +4,7 @@ import app.hakusan.reader.ReaderContentFailure
 import app.hakusan.reader.ReaderContentRequest
 import app.hakusan.reader.ReaderContentRequests
 import app.hakusan.reader.ReaderImageCoverage
+import app.hakusan.reader.ReaderImageGeometry
 import app.hakusan.reader.ReaderImageRegion
 import app.hakusan.reader.ReaderOutputLease
 import app.hakusan.reader.ReaderPublishResult
@@ -224,15 +225,26 @@ internal class SanOutput(
     target.rows = covered
   }
 
-  /** The coverage of the lease rows `[0, covered)` at a scale of 1:1. */
+  /**
+   * The coverage of the lease rows `[0, covered)`, which lie in the output grid
+   * from the origin of the lease on.
+   */
   private fun coverage(covered: Int): ReaderImageCoverage {
     val left = element(SanAbi.JOB_REPORT_LEASE_LEFT)
     val top = element(SanAbi.JOB_REPORT_LEASE_TOP)
     val right = left + element(SanAbi.JOB_REPORT_LEASE_WIDTH)
 
     return ReaderImageCoverage(
-      imageWidth = element(SanAbi.JOB_REPORT_IMAGE_WIDTH),
-      imageHeight = element(SanAbi.JOB_REPORT_IMAGE_HEIGHT),
+      image =
+        ReaderImageGeometry(
+          element(SanAbi.JOB_REPORT_IMAGE_WIDTH),
+          element(SanAbi.JOB_REPORT_IMAGE_HEIGHT),
+        ),
+      grid =
+        ReaderImageGeometry(
+          element(SanAbi.JOB_REPORT_OUTPUT_WIDTH),
+          element(SanAbi.JOB_REPORT_OUTPUT_HEIGHT),
+        ),
       region = ReaderImageRegion(left, top, right, top + covered),
       finalQuality = true,
     )

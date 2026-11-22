@@ -105,7 +105,7 @@ class ReaderContentRequestsTest {
 
         val requests = owner.requests
 
-        val bound = owner.execute(book.descriptor(0), REGION)
+        val bound = owner.execute(book.descriptor(0), testBand(0, 100))
 
         var releases = 0
 
@@ -737,9 +737,9 @@ class ReaderContentRequestsTest {
     /** Submits, takes, and binds a request to a new representation. */
     fun execute(
       descriptor: ReaderContentDescriptor,
-      region: ReaderImageRegion? = null,
+      output: ReaderOutputRequest = ReaderOutputRequest.Whole(),
     ): Bound {
-      val request = checkNotNull(requests.submit(descriptor, region))
+      val request = checkNotNull(requests.submit(descriptor, output))
 
       check(requests.takeNext() === request)
 

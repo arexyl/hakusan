@@ -9,6 +9,7 @@ import app.hakusan.reader.ReaderEncodedSource
 import app.hakusan.reader.ReaderEngineAccess
 import app.hakusan.reader.ReaderInputOpenResult
 import app.hakusan.reader.ReaderInputRead
+import app.hakusan.reader.ReaderOutputRequest
 import app.hakusan.reader.ReaderResourceOwner
 import app.hakusan.reader.section
 import app.hakusan.reader.toContentFailure
@@ -183,16 +184,19 @@ internal class SanExecution(
     content = handle[0]
 
     try {
-      val region = request.region
+      // Four zeros request the whole image, and a width of zero a scale of
+      // 1:1. A band names every column of its image.
+      val wanted = request.output
+      val band = wanted as? ReaderOutputRequest.Band
 
       val requested =
         san.jobRequest(
           content,
-          left = region?.left ?: 0,
-          top = region?.top ?: 0,
-          right = region?.right ?: 0,
-          bottom = region?.bottom ?: 0,
-          maxOutputWidth = 0,
+          left = 0,
+          top = band?.top ?: 0,
+          right = band?.geometry?.width ?: 0,
+          bottom = band?.bottom ?: 0,
+          maxOutputWidth = wanted.maxOutputWidth ?: 0,
           handle,
         )
 
