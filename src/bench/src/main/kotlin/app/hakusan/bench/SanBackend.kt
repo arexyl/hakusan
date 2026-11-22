@@ -33,6 +33,7 @@ import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.selects.select
 import kotlinx.coroutines.withTimeoutOrNull
+import org.json.JSONObject
 
 /**
  * The native path: San through the reader, as the reader runs it.
@@ -56,6 +57,23 @@ internal class SanBackend : Backend {
 
   override suspend fun open(fixture: Fixture): Content =
     SanContent(owner, gate.start(), fixture)
+
+  /** Reads the ledger of the engine, which exists from its first request. */
+  override suspend fun ledger(reset: Boolean): JSONObject? {
+    val counters = owner.counters(resetPeak = reset) ?: return null
+
+    return JSONObject()
+      .put("live_bytes", counters.liveBytes)
+      .put("reserved_bytes", counters.reservedBytes)
+      .put("peak_live_bytes", counters.peakLiveBytes)
+      .put("peak_committed_bytes", counters.peakCommittedBytes)
+      .put("input_bytes", counters.inputBytes)
+      .put("metadata_bytes", counters.metadataBytes)
+      .put("output_bytes", counters.outputBytes)
+      .put("contents", counters.contentCount)
+      .put("jobs", counters.jobCount)
+      .put("leases", counters.leaseCount)
+  }
 
   /** Shuts the engine down, which fails when an attempt left something. */
   override suspend fun close() {

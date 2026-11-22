@@ -3,6 +3,7 @@ package app.hakusan.bench
 import android.graphics.Bitmap
 import android.graphics.ColorSpace
 import androidx.compose.ui.unit.IntSize
+import org.json.JSONObject
 
 /** One request of a workload. */
 internal sealed interface Step
@@ -49,6 +50,14 @@ internal interface Backend {
 
   /** Opens [fixture] as the input and the decoder state of one attempt. */
   suspend fun open(fixture: Fixture): Content
+
+  /**
+   * Reads the counters of the memory that the backend accounts itself, or
+   * returns null when it accounts none or holds nothing to count yet. With
+   * [reset], the read also restarts the peaks. No decode of the backend runs
+   * during the call.
+   */
+  suspend fun ledger(reset: Boolean): JSONObject? = null
 
   /**
    * Ends the backend after the last attempt of its block, on any thread, once

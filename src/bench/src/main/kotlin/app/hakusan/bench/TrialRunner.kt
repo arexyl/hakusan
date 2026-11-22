@@ -77,8 +77,14 @@ internal class TrialRunner(
   /** The input of the running attempt and the decode of its last request. */
   private class Session {
     @Volatile var content: Content? = null
-    var decoding: Deferred<Publication>? = null
+    var decoding: Deferred<Decoded>? = null
+
+    /** The entry of the last request, which takes the readings of the close. */
+    var entry: JSONObject? = null
   }
+
+  /** The last output of a request and the counters of its backend, if any. */
+  private class Decoded(val output: Publication, val ledger: JSONObject?)
 
   /**
    * Runs the block. A failed request does not end it, and a failure of the
@@ -167,6 +173,8 @@ internal class TrialRunner(
 
           val entry = request(request, step, session, backend, fixture)
 
+          session.entry = entry
+
           requests.put(
             entry
               .put("attempt", attempt)
@@ -181,7 +189,8 @@ internal class TrialRunner(
           }
         }
       } finally {
-        closed = withContext(NonCancellable) { close(request, session) }
+        closed =
+          withContext(NonCancellable) { close(request, session, backend) }
       }
 
       if (timedOut) {
@@ -218,12 +227,13 @@ internal class TrialRunner(
         .put("offset_us", offset.inWholeMicroseconds)
         .put("conditions", conditions.request())
 
-    val clock = JSONObject().put("request", SystemClock.elapsedRealtimeNanos())
+    val marked = SystemClock.elapsedRealtimeNanos()
+    val clock = JSONObject().put("request", marked)
 
     Marks.instant(Marks.request(request))
 
     val decoding = decodes.async {
-      decode(request, step, session, backend, fixture)
+      decode(request, marked, step, session, backend, fixture)
     }
 
     session.decoding = decoding
@@ -231,20 +241,21 @@ internal class TrialRunner(
     try {
       val finished =
         withTimeoutOrNull(WATCHDOG) {
-          val output = decoding.await()
+          val decoded = decoding.await()
 
           clock.put("decoded", SystemClock.elapsedRealtimeNanos())
-          consumer.drawn.first { it === output }
+          consumer.drawn.first { it === decoded.output }
           clock.put("drawn", SystemClock.elapsedRealtimeNanos())
           repeat(plan.hold) { withFrameNanos {} }
 
-          output
+          decoded
         }
 
       if (finished == null) {
         entry.put("outcome", "timeout")
       } else {
-        entry.put("outcome", "ok").put("output", describe(finished))
+        entry.put("outcome", "ok").put("output", describe(finished.output))
+        finished.ledger?.let { entry.put("ledger", it) }
       }
     } catch (failure: CancellationException) {
       throw failure
@@ -255,18 +266,25 @@ internal class TrialRunner(
     return entry.put("clock", clock)
   }
 
-  /** Decodes one step on the decode thread and returns its last output. */
+  /**
+   * Decodes one step on the decode thread and returns its last output, with the
+   * counters of the backend before the decode and at its end.
+   */
   private suspend fun decode(
     request: Int,
+    marked: Long,
     step: Step,
     session: Session,
     backend: Backend,
     fixture: Fixture,
-  ): Publication =
+  ): Decoded =
     Marks.section(Marks.decode(request)) {
       val content =
         session.content ?: backend.open(fixture).also { session.content = it }
 
+      // The peaks of the request start here, right before it executes.
+      val reset = backend.ledger(reset = true)
+      val offset = SystemClock.elapsedRealtimeNanos() - marked
       var last: Publication? = null
 
       content.decode(request, step) { output ->
@@ -289,7 +307,15 @@ internal class TrialRunner(
         "The last output of the request lacks rows."
       }
 
-      output
+      val ledger =
+        backend.ledger(reset = false)?.let { terminal ->
+          JSONObject()
+            .put("reset_offset_us", offset / 1000)
+            .put("reset", reset ?: JSONObject.NULL)
+            .put("terminal", terminal)
+        }
+
+      Decoded(output, ledger)
     }
 
   /**
@@ -301,7 +327,11 @@ internal class TrialRunner(
    * request timed out. The outputs are then released without a frame, and a
    * running decode is cancelled and keeps its input.
    */
-  private suspend fun close(request: Int, session: Session): Boolean {
+  private suspend fun close(
+    request: Int,
+    session: Session,
+    backend: Backend,
+  ): Boolean {
     val idle = session.decoding?.isActive != true
 
     // Before the display empties: the cancellation ends a decode that waits
@@ -320,7 +350,19 @@ internal class TrialRunner(
     }
 
     if (idle) {
-      withContext(decode) { session.content?.close() }
+      val closed =
+        withContext(decode) {
+          session.content?.close()
+          backend.ledger(reset = false)
+        }
+
+      // What the backend still holds once the attempt has ended.
+      if (closed != null) {
+        val entry = session.entry
+        val ledger = entry?.optJSONObject("ledger") ?: JSONObject()
+
+        entry?.put("ledger", ledger.put("close", closed))
+      }
     }
 
     Marks.instant(Marks.close(request))
