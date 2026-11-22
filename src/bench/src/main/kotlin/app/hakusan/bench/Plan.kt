@@ -61,11 +61,12 @@ internal enum class BackendKind(val id: String) {
   REGION_DECODER("region-decoder"),
   SAN("san");
 
-  fun create(): Backend =
+  /** Creates the backend of a block whose display has [viewport]. */
+  fun create(viewport: IntSize): Backend =
     when (this) {
       IMAGE_DECODER -> ImageDecoderBackend()
       REGION_DECODER -> RegionDecoderBackend()
-      SAN -> SanBackend()
+      SAN -> SanBackend(viewport)
     }
 }
 

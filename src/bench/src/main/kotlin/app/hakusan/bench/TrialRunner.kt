@@ -127,7 +127,7 @@ internal class TrialRunner(
       withContext(Dispatchers.IO) { corpus.fixture(plan.cell.fixture) }
 
     val steps = plan.cell.steps(fixture.image, corpus.viewport)
-    val backend = plan.backend.create()
+    val backend = plan.backend.create(corpus.viewport)
 
     conditions.requireWindow(corpus.viewport)
 
