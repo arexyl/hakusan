@@ -58,12 +58,14 @@ internal enum class Cell(val id: String, val fixture: String) {
 /** The decode backends of the harness. */
 internal enum class BackendKind(val id: String) {
   IMAGE_DECODER("image-decoder"),
-  REGION_DECODER("region-decoder");
+  REGION_DECODER("region-decoder"),
+  SAN("san");
 
   fun create(): Backend =
     when (this) {
       IMAGE_DECODER -> ImageDecoderBackend()
       REGION_DECODER -> RegionDecoderBackend()
+      SAN -> SanBackend()
     }
 }
 

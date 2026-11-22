@@ -7,11 +7,14 @@ import android.content.pm.ApplicationInfo
 import android.os.BatteryManager
 import android.os.Build
 import android.os.PowerManager
+import android.os.Process
 import android.provider.Settings
 import android.system.Os
 import android.system.OsConstants
 import android.view.Display
 import androidx.compose.ui.unit.IntSize
+import java.io.File
+import java.io.FileNotFoundException
 import kotlin.math.roundToInt
 import org.json.JSONArray
 import org.json.JSONObject
@@ -116,7 +119,8 @@ internal class Conditions(private val activity: Activity) {
         JSONObject()
           .put("debuggable", flags and ApplicationInfo.FLAG_DEBUGGABLE != 0)
           .put("decode_thread", DECODE_THREAD)
-          .put("decode_nice", decodeNice),
+          .put("decode_nice", decodeNice)
+          .put("san", san() ?: JSONObject.NULL),
       )
       .put(
         "display",
@@ -176,8 +180,44 @@ internal class Conditions(private val activity: Activity) {
       .put("battery_decidegrees", temperature ?: -1)
   }
 
+  /**
+   * The name and the scheduling priority of the thread of this process whose
+   * kernel name is [name], with a null priority when no thread has that name.
+   */
+  fun thread(name: String): JSONObject {
+    require(name.length <= KERNEL_NAME) { "The kernel shortens the name." }
+
+    val task =
+      File("/proc/self/task").listFiles().orEmpty().firstOrNull {
+        // A thread may end between the listing and the read.
+        runCatching { File(it, "comm").readText().trim() }.getOrNull() == name
+      }
+
+    val nice = task?.let { Process.getThreadPriority(it.name.toInt()) }
+
+    return JSONObject().put("name", name).put("nice", nice ?: JSONObject.NULL)
+  }
+
+  /**
+   * The manifest of the San build whose library the harness packages, which
+   * names its commit and the hash of each library, or null without one.
+   */
+  private fun san(): JSONObject? =
+    try {
+      activity.assets.open(SAN_MANIFEST).bufferedReader().use {
+        JSONObject(it.readText())
+      }
+    } catch (_: FileNotFoundException) {
+      null
+    }
+
   companion object {
     /** The name of the one thread that runs every decode. */
     const val DECODE_THREAD = "hakusan-bench-decode"
+
+    private const val SAN_MANIFEST = "san/manifest.json"
+
+    /** The longest thread name that the kernel keeps whole. */
+    private const val KERNEL_NAME = 15
   }
 }

@@ -9,11 +9,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
-import java.util.concurrent.atomic.AtomicReference
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.flow.getAndUpdate
 
 /** What one frame of the viewport shows for a request. */
 internal sealed interface Frame {
@@ -54,11 +54,11 @@ internal class Publication(
  * and each display frame promotes at most one, so every promoted revision is
  * drawn in a display frame of its own.
  *
- * Everything but [queue] runs on the main thread.
+ * Everything but [queue] and [room] runs on the main thread.
  */
 internal class DisplayConsumer {
   private val main = Handler(Looper.getMainLooper())
-  private val queued = AtomicReference<Frame?>(null)
+  private val queued = MutableStateFlow<Frame?>(null)
   private val wake = Channel<Unit>(Channel.CONFLATED)
   private val superseded = mutableListOf<Publication>()
   private val lastDrawn = MutableStateFlow<Frame?>(null)
@@ -85,6 +85,15 @@ internal class DisplayConsumer {
     check(queued.compareAndSet(null, frame)) { "A frame is already queued." }
 
     wake.trySend(Unit)
+  }
+
+  /**
+   * Suspends, on any thread, until no frame is queued: a display frame has
+   * promoted the last one. A backend with several revisions of one output
+   * thereby hands over at most one per display frame.
+   */
+  suspend fun room() {
+    queued.first { it == null }
   }
 
   /** Promotes queued frames, one per display frame, until cancelled. */
@@ -122,7 +131,7 @@ internal class DisplayConsumer {
    * alive until its next frame.
    */
   fun abandon() {
-    val pending = queued.getAndSet(null)
+    val pending = queued.getAndUpdate { null }
     val outputs = superseded + listOfNotNull(shown as? Publication)
 
     superseded.clear()
@@ -156,7 +165,7 @@ internal class DisplayConsumer {
   }
 
   private fun promote() {
-    val next = queued.getAndSet(null) ?: return
+    val next = queued.getAndUpdate { null } ?: return
     val previous = shown
 
     if (previous is Publication) {

@@ -18,6 +18,7 @@ android {
 
   defaultConfig {
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    consumerProguardFiles("consumer-rules.pro")
 
     // The tests of the San library run only in a build that packages it.
     if (localSan.isPresent) {
@@ -55,6 +56,11 @@ androidComponents {
       variant.sources.jniLibs?.addGeneratedSourceDirectory(
         stageLocalSan,
         StageLocalSan::jniLibs,
+      )
+
+      variant.sources.assets?.addGeneratedSourceDirectory(
+        stageLocalSan,
+        StageLocalSan::assets,
       )
     }
 

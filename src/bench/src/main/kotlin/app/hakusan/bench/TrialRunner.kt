@@ -19,6 +19,7 @@ import kotlinx.coroutines.async
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.job
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONArray
@@ -121,9 +122,39 @@ internal class TrialRunner(
 
     val steps = plan.cell.steps(fixture.image, corpus.viewport)
     val backend = plan.backend.create()
-    var request = 0
 
     conditions.requireWindow(corpus.viewport)
+
+    try {
+      return attempts(steps, backend, fixture)
+    } finally {
+      withContext(NonCancellable) {
+        // The thread of a backend exists only once it has decoded. A failed
+        // read leaves the record without it and still ends the backend.
+        runCatching {
+          backend.worker?.let { record.put("worker", conditions.thread(it)) }
+        }
+
+        // A cancelled decode ends soon unless it cannot be interrupted. Its
+        // backend then stays open, because the close would wait for it.
+        val ended =
+          withTimeoutOrNull(TEARDOWN) {
+            decodes.coroutineContext.job.children.forEach { it.join() }
+          }
+
+        if (ended != null) {
+          backend.close()
+        }
+      }
+    }
+  }
+
+  private suspend fun attempts(
+    steps: List<Step>,
+    backend: Backend,
+    fixture: Fixture,
+  ): String {
+    var request = 0
 
     for (attempt in 1..plan.warmups + plan.attempts) {
       val session = Session()
@@ -225,7 +256,7 @@ internal class TrialRunner(
   }
 
   /** Decodes one step on the decode thread and returns its last output. */
-  private fun decode(
+  private suspend fun decode(
     request: Int,
     step: Step,
     session: Session,
@@ -240,8 +271,10 @@ internal class TrialRunner(
 
       content.decode(request, step) { output ->
         try {
+          // The one output of a reference never waits here.
+          consumer.room()
           consumer.queue(output)
-        } catch (failure: IllegalStateException) {
+        } catch (failure: Throwable) {
           output.release()
 
           throw failure
@@ -266,17 +299,25 @@ internal class TrialRunner(
    * It returns false when the attempt did not end that way: no display frame
    * came, as after the activity stopped, or the decode still runs after its
    * request timed out. The outputs are then released without a frame, and a
-   * running decode keeps its input.
+   * running decode is cancelled and keeps its input.
    */
   private suspend fun close(request: Int, session: Session): Boolean {
+    val idle = session.decoding?.isActive != true
+
+    // Before the display empties: the cancellation ends a decode that waits
+    // for room, which would otherwise queue an output behind the blank frame,
+    // and it keeps the output of one that cannot be interrupted off the
+    // display.
+    if (!idle) {
+      session.decoding?.cancel()
+    }
+
     val cleared =
       withTimeoutOrNull(TEARDOWN) { consumer.clear(Blank(request)) } != null
 
     if (!cleared) {
       consumer.abandon()
     }
-
-    val idle = session.decoding?.isActive != true
 
     if (idle) {
       withContext(decode) { session.content?.close() }

@@ -19,7 +19,8 @@ import org.gradle.api.tasks.TaskAction
 import org.gradle.process.ExecOperations
 
 /**
- * Stages the San library of a local San build as a `jniLibs` directory.
+ * Stages the San library of a local San build as a `jniLibs` directory, and its
+ * manifest as an asset.
  *
  * A local build serves rehearsal and diagnosis only. The task takes it only
  * when its manifest names the builder `local`, when every library has the size
@@ -39,6 +40,12 @@ public abstract class StageLocalSan : DefaultTask() {
   /** The `jniLibs` directory that the task replaces. */
   @get:OutputDirectory public abstract val jniLibs: DirectoryProperty
 
+  /**
+   * The assets directory that the task replaces. It receives the manifest as
+   * `san/manifest.json`, so that a package states which build its library is.
+   */
+  @get:OutputDirectory public abstract val assets: DirectoryProperty
+
   @get:Inject protected abstract val exec: ExecOperations
 
   @get:Inject protected abstract val files: FileSystemOperations
@@ -52,21 +59,25 @@ public abstract class StageLocalSan : DefaultTask() {
   public fun stage() {
     val set = localSet.get().asFile
     val target = jniLibs.get().asFile
+    val stated = assets.get().asFile
 
-    // A failed check leaves no library behind, of this run or an earlier one.
-    files.delete { it.delete(target) }
+    // A failed check leaves nothing behind, of this run or an earlier one.
+    files.delete { it.delete(target, stated) }
 
     try {
-      stage(set, target)
+      stage(set, target, File(stated, MANIFEST_ASSET))
     } catch (failure: Exception) {
-      files.delete { it.delete(target) }
+      files.delete { it.delete(target, stated) }
 
       throw failure
     }
   }
 
-  private fun stage(set: File, target: File) {
-    val manifest = JsonSlurper().parse(File(set, "manifest.json")) as? Map<*, *>
+  private fun stage(set: File, target: File, stated: File) {
+    // The checks read the copy, which is the manifest that is packaged.
+    File(set, "manifest.json").copyTo(stated)
+
+    val manifest = JsonSlurper().parse(stated) as? Map<*, *>
     val format = manifest.field<Any>("format")
 
     if (format != FORMAT) {
@@ -176,6 +187,7 @@ public abstract class StageLocalSan : DefaultTask() {
   private companion object {
     const val FORMAT = 1
     const val BINDINGS = "share/bindings"
+    const val MANIFEST_ASSET = "san/manifest.json"
 
     /** A library at its path inside a set, which is also its staged path. */
     val LIBRARY = Regex("[A-Za-z0-9_-]+/libsan\\.so")

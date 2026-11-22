@@ -35,23 +35,50 @@ internal data class Band(val top: Int, val bottom: Int) : Step {
 /**
  * A decode backend behind the display consumer.
  *
- * It supplies decoded output only. Every call runs on the decode thread.
+ * It supplies decoded output only. Every call but [close] runs on the decode
+ * thread, which a backend leaves only for a thread that it names as its
+ * [worker].
  */
-internal fun interface Backend {
+internal interface Backend {
+  /**
+   * The name of the thread that decodes in place of the decode thread, or null
+   * when the decode thread itself decodes. The record states its priority.
+   */
+  val worker: String?
+    get() = null
+
   /** Opens [fixture] as the input and the decoder state of one attempt. */
-  fun open(fixture: Fixture): Content
+  suspend fun open(fixture: Fixture): Content
+
+  /**
+   * Ends the backend after the last attempt of its block, on any thread, once
+   * no decode of the block runs any longer.
+   */
+  suspend fun close() {}
 }
 
 /** The input and the decoder state of one attempt. */
-internal interface Content : AutoCloseable {
+internal interface Content {
   /**
    * Decodes [step] and hands each output to [publish], the last one with every
-   * row of the step, before it returns.
+   * row of the step, before it returns. [publish] returns once the output is
+   * queued for presentation, which waits for the display frame that promotes an
+   * output queued before it.
    *
    * @throws IllegalArgumentException when the backend has no such step.
    * @throws IllegalStateException when an output differs from the request.
    */
-  fun decode(request: Int, step: Step, publish: (Publication) -> Unit)
+  suspend fun decode(
+    request: Int,
+    step: Step,
+    publish: suspend (Publication) -> Unit,
+  )
+
+  /**
+   * Ends the attempt. Presentation holds none of its outputs by then, unless
+   * the block ended without display frames.
+   */
+  suspend fun close()
 }
 
 /**

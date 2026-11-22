@@ -63,6 +63,7 @@ androidComponents {
 }
 
 dependencies {
+  implementation(project(":reader"))
   implementation(platform(libs.compose.bom))
   implementation(libs.activity.compose)
   implementation(libs.compose.foundation)

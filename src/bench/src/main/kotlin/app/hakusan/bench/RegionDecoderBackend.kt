@@ -17,17 +17,17 @@ import androidx.compose.ui.unit.IntSize
  * samples only by whole factors, so the viewport scales it.
  */
 internal class RegionDecoderBackend : Backend {
-  override fun open(fixture: Fixture): Content {
+  override suspend fun open(fixture: Fixture): Content {
     val decoder =
       fixture.file.inputStream().use {
         checkNotNull(BitmapRegionDecoder.newInstance(it)) { "No decoder." }
       }
 
     return object : Content {
-      override fun decode(
+      override suspend fun decode(
         request: Int,
         step: Step,
-        publish: (Publication) -> Unit,
+        publish: suspend (Publication) -> Unit,
       ) {
         require(step is Band) { "BitmapRegionDecoder decodes bands only." }
 
@@ -61,7 +61,7 @@ internal class RegionDecoderBackend : Backend {
         )
       }
 
-      override fun close() {
+      override suspend fun close() {
         decoder.recycle()
       }
     }

@@ -13,14 +13,14 @@ import androidx.compose.ui.unit.IntSize
  * between two decodes.
  */
 internal class ImageDecoderBackend : Backend {
-  override fun open(fixture: Fixture): Content {
+  override suspend fun open(fixture: Fixture): Content {
     val source = ImageDecoder.createSource(fixture.file)
 
     return object : Content {
-      override fun decode(
+      override suspend fun decode(
         request: Int,
         step: Step,
-        publish: (Publication) -> Unit,
+        publish: suspend (Publication) -> Unit,
       ) {
         require(step is Whole) { "ImageDecoder decodes whole images only." }
 
@@ -58,7 +58,7 @@ internal class ImageDecoderBackend : Backend {
         )
       }
 
-      override fun close() {}
+      override suspend fun close() {}
     }
   }
 }
