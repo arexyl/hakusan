@@ -3,10 +3,12 @@ package app.hakusan.reader.san
 import app.hakusan.reader.ReaderContentFailure
 import app.hakusan.reader.ReaderContentRequest
 import app.hakusan.reader.ReaderContentRequests
+import app.hakusan.reader.ReaderEngineSettings
 import app.hakusan.reader.ReaderImageCoverage
 import app.hakusan.reader.ReaderImageGeometry
 import app.hakusan.reader.ReaderImageRegion
 import app.hakusan.reader.ReaderOutputLease
+import app.hakusan.reader.ReaderOutputRequest
 import app.hakusan.reader.ReaderPublishResult
 import app.hakusan.reader.ReaderRepresentation
 import app.hakusan.reader.ReaderResourceOwner
@@ -50,8 +52,18 @@ internal class SanOutput(
   private var ended = false
   private var stale = false
 
+  private var described = false
+
   /** Whether the ceiling of the targets refused this output. */
   var refused: Boolean = false
+    private set
+
+  /** Whether the report described another image or grid than a band names. */
+  var changed: Boolean = false
+    private set
+
+  /** Whether the request was canceled before the report showed [changed]. */
+  var canceledBefore: Boolean = false
     private set
 
   /**
@@ -65,8 +77,73 @@ internal class SanOutput(
       lease = report[SanAbi.JOB_REPORT_LEASE]
     }
 
+    if (!described && report[SanAbi.JOB_REPORT_IMAGE_WIDTH] != 0L) {
+      described = true
+      check()
+    }
+
+    // The bytes of another image than the band names give no output.
+    if (changed) {
+      return
+    }
+
     reserve()
     publish()
+  }
+
+  /**
+   * Compares the image and the grid of the first report that describes them
+   * with what a band names, before any target or copy. A difference means that
+   * the bytes are another image than the caller learned.
+   */
+  private fun check() {
+    val band = request.output as? ReaderOutputRequest.Band ?: return
+    val grid = band.geometry.grid(band.maxOutputWidth)
+
+    if (image() != band.geometry || grid() != grid) {
+      changed = true
+
+      // A request that was canceled first stays canceled.
+      canceledBefore = request.cancellationRequested
+
+      cancel(
+        ReaderContentFailure.REPRESENTATION_CHANGED.takeUnless {
+          canceledBefore
+        }
+      )
+    }
+  }
+
+  /**
+   * The image whose requested output the engine refused because its pixels
+   * exceed the ceiling of one lease less the band margin of [settings], or null
+   * when the last report shows no such refusal: no image, an admitted lease, or
+   * a lease that fits, which another limit refused.
+   */
+  fun oversized(settings: ReaderEngineSettings): ReaderImageGeometry? {
+    val described = report[SanAbi.JOB_REPORT_IMAGE_WIDTH] != 0L
+    val admitted = report[SanAbi.JOB_REPORT_LEASE_WIDTH] != 0L
+
+    if (!described || admitted || changed) {
+      return null
+    }
+
+    val image = image()
+    val grid = grid()
+
+    val rows =
+      when (val wanted = request.output) {
+        is ReaderOutputRequest.Whole -> grid.height
+        is ReaderOutputRequest.Band ->
+          image.gridRows(wanted.top, wanted.bottom, grid).let {
+            it.last - it.first + 1
+          }
+      }
+
+    val pixels = rows.toLong() * grid.width * PIXEL_BYTES
+    val room = settings.outputLeaseBytes - settings.bandMarginBytes
+
+    return image.takeIf { pixels > room }
   }
 
   /**
@@ -84,7 +161,8 @@ internal class SanOutput(
         covered() > publishedRows &&
         !request.cancellationRequested &&
         !stale &&
-        !refused
+        !refused &&
+        !changed
 
     return pending &&
       (busy ||
@@ -235,22 +313,33 @@ internal class SanOutput(
     val right = left + element(SanAbi.JOB_REPORT_LEASE_WIDTH)
 
     return ReaderImageCoverage(
-      image =
-        ReaderImageGeometry(
-          element(SanAbi.JOB_REPORT_IMAGE_WIDTH),
-          element(SanAbi.JOB_REPORT_IMAGE_HEIGHT),
-        ),
-      grid =
-        ReaderImageGeometry(
-          element(SanAbi.JOB_REPORT_OUTPUT_WIDTH),
-          element(SanAbi.JOB_REPORT_OUTPUT_HEIGHT),
-        ),
+      image = image(),
+      grid = grid(),
       region = ReaderImageRegion(left, top, right, top + covered),
       finalQuality = true,
     )
   }
 
+  /** The image of a report that describes one. */
+  private fun image(): ReaderImageGeometry =
+    ReaderImageGeometry(
+      element(SanAbi.JOB_REPORT_IMAGE_WIDTH),
+      element(SanAbi.JOB_REPORT_IMAGE_HEIGHT),
+    )
+
+  /** The output grid of a report that describes an image. */
+  private fun grid(): ReaderImageGeometry =
+    ReaderImageGeometry(
+      element(SanAbi.JOB_REPORT_OUTPUT_WIDTH),
+      element(SanAbi.JOB_REPORT_OUTPUT_HEIGHT),
+    )
+
   private fun covered(): Int = element(SanAbi.JOB_REPORT_COVERED_ROWS)
 
   private fun element(index: Int): Int = Math.toIntExact(report[index])
+
+  private companion object {
+    /** The bytes of one pixel of a lease. */
+    const val PIXEL_BYTES = 4
+  }
 }

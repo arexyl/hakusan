@@ -138,6 +138,15 @@ public sealed interface ReaderContentTerminal {
   /** The operation ended with [failure]. */
   public data class Failed(public val failure: ReaderContentFailure) :
     ReaderContentTerminal
+
+  /**
+   * The engine admitted the image and refused the requested output, because its
+   * pixels exceed what one output may hold. This is the answer of the admission
+   * and not a failure that a retry replaces: the caller follows it with
+   * requests of bands of [image] that fit. Nothing was published.
+   */
+  public data class Oversized(public val image: ReaderImageGeometry) :
+    ReaderContentTerminal
 }
 
 /** Maps an acquisition category onto its reader-level failure. */

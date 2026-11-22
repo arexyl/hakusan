@@ -76,6 +76,7 @@ androidComponents {
           listOf(
             "manifest.json",
             "journey/ordinary.png",
+            "journey/long.png",
             "qualification/fault/png-truncated-prefix.png",
           )
       }

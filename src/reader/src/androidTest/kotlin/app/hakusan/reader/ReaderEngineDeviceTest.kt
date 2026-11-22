@@ -177,6 +177,69 @@ class ReaderEngineDeviceTest {
   }
 
   @Test
+  fun longSegmentAtAWidthIsRefusedWithItsGeometry() = onStage {
+    val segment = DeviceCorpus.file(LONG)
+    val image = ReaderImageGeometry(segment.width, segment.height)
+
+    // The grid of the whole segment at this width exceeds one lease.
+    val request = submit(ReaderOutputRequest.Whole(maxOutputWidth = 1080))
+
+    execute(PacedInput(segment.bytes))
+
+    assertEquals(ReaderContentTerminal.Oversized(image), request.terminal)
+    assertEquals(emptyList<Bitmap>(), created)
+    assertIdle()
+  }
+
+  @Test
+  fun largestBandOfTheSegmentIsAdmittedAndOneRowMoreIsNot() = onStage {
+    val segment = DeviceCorpus.file(LONG)
+    val image = ReaderImageGeometry(segment.width, segment.height)
+    val settings = ReaderEngineSettings.FIRST_ITERATION
+
+    // The rows whose pixels fill one lease up to the band margin.
+    val rows =
+      ((settings.outputLeaseBytes - settings.bandMarginBytes) /
+          (image.width * 4))
+        .toInt()
+
+    val largest = submit(ReaderOutputRequest.Band(image, 0, rows))
+
+    execute(PacedInput(segment.bytes))
+
+    assertEquals(ReaderContentTerminal.Completed.of(), largest.terminal)
+    assertShown(image.width, rows)
+    assertIdle()
+    clearView()
+
+    val beyond = submit(ReaderOutputRequest.Band(image, 0, rows + 1))
+
+    execute(PacedInput(segment.bytes))
+
+    assertEquals(ReaderContentTerminal.Oversized(image), beyond.terminal)
+    assertIdle()
+  }
+
+  @Test
+  fun bandOfAnotherGeometryThanItsImageGetsNoTarget() = onStage {
+    val page = DeviceCorpus.file(ORDINARY)
+
+    // The band lies inside the page, so the engine admits its lease.
+    val taller = ReaderImageGeometry(page.width, page.height + 1)
+    val request = submit(ReaderOutputRequest.Band(taller, 0, 100))
+
+    execute(PacedInput(page.bytes))
+
+    assertEquals(
+      ReaderContentTerminal.Failed(ReaderContentFailure.REPRESENTATION_CHANGED),
+      request.terminal,
+    )
+
+    assertEquals(emptyList<Bitmap>(), created)
+    assertIdle()
+  }
+
+  @Test
   fun closingDuringADecodeCancelsItAndFreesTheEngine() = onStage {
     val page = DeviceCorpus.file(ORDINARY)
     val request = submit()
@@ -450,6 +513,7 @@ class ReaderEngineDeviceTest {
 
   private companion object {
     const val ORDINARY = "journey/ordinary.png"
+    const val LONG = "journey/long.png"
     const val TRUNCATED = "qualification/fault/png-truncated-prefix.png"
     const val TIMEOUT_MILLIS = 30_000L
   }

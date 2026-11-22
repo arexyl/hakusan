@@ -229,8 +229,14 @@ internal class SanExecution(
 
       val status = steps(san)
 
-      val outcome =
-        jobTerminal(status, report[SanAbi.JOB_REPORT_WARNINGS], cancelCause)
+      // What a job that ended in a step cost, for a trace: its status and the
+      // image rows that it decoded, which include those above a band. The
+      // name holds no byte count, because a length could tell a page.
+      val decoded = report[SanAbi.JOB_REPORT_DECODED_ROWS]
+
+      owner.platform.section("reader.job $status $decoded") {}
+
+      val outcome = terminal(status, publishing)
 
       jobSettled = true
 
@@ -249,6 +255,37 @@ internal class SanExecution(
     } finally {
       withContext(NonCancellable) { cleanUp(san, watcher) }
     }
+  }
+
+  /**
+   * The outcome of a job that ended with [status]. A band whose bytes are
+   * another image than it names ends as a changed representation, also when the
+   * engine ended the job before it observed the cancellation for it, unless its
+   * request was canceled first. A refusal of an output too large for one lease
+   * is the answer of the admission. Every other status maps as its call site
+   * states.
+   */
+  private fun terminal(
+    status: Int,
+    publishing: SanOutput,
+  ): ReaderContentTerminal {
+    if (publishing.changed && publishing.canceledBefore) {
+      return ReaderContentTerminal.Canceled
+    }
+
+    if (publishing.changed && status != SanAbi.STATUS_CANCELED) {
+      return ReaderContentTerminal.Failed(
+        ReaderContentFailure.REPRESENTATION_CHANGED
+      )
+    }
+
+    if (status == SanAbi.STATUS_BUDGET_EXCEEDED) {
+      publishing.oversized(owner.settings)?.let {
+        return ReaderContentTerminal.Oversized(it)
+      }
+    }
+
+    return jobTerminal(status, report[SanAbi.JOB_REPORT_WARNINGS], cancelCause)
   }
 
   /** Steps the job to its terminal status, which it returns unchecked. */

@@ -310,6 +310,8 @@ class ReaderContentConcurrencyTest {
         is ReaderContentTerminal.Completed -> reached(Path.COMPLETED)
         ReaderContentTerminal.Canceled -> reached(Path.CANCELED)
         is ReaderContentTerminal.Failed -> reached(Path.FAILED)
+        is ReaderContentTerminal.Oversized ->
+          error("The executor of the run refuses no lease.")
       }
     }
 

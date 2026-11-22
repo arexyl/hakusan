@@ -53,6 +53,13 @@ public data class ReaderEngineSettings(
   public val targetBytes: Long,
   /** The targets of the output copies, across all content owners. */
   public val targetCount: Int,
+  /**
+   * The bytes of [outputLeaseBytes] that the pixels of one lease leave free,
+   * for what the engine counts with them. A lease whose pixels exceed the rest
+   * is too large for one output, and a caller sizes its bands below that. The
+   * engine takes no such limit.
+   */
+  public val bandMarginBytes: Long,
 ) {
   init {
     val limits =
@@ -104,6 +111,10 @@ public data class ReaderEngineSettings(
       "One output lease exceeds the output ceiling."
     }
 
+    require(bandMarginBytes in 1..<outputLeaseBytes) {
+      "The band margin must lie inside the ceiling of one lease."
+    }
+
     require(
       maxOf(metadataBytes, outputBytes, transferStagingBytes) <=
         aggregateBudgetBytes
@@ -141,6 +152,7 @@ public data class ReaderEngineSettings(
         transferStagingBytes = 2L shl 20,
         targetBytes = 64L shl 20,
         targetCount = 4,
+        bandMarginBytes = 4L shl 10,
       )
   }
 }

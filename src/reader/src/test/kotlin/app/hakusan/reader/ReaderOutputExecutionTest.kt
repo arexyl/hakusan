@@ -4,6 +4,7 @@ import app.hakusan.reader.ReaderContentTerminal.Canceled
 import app.hakusan.reader.san.SanAbi
 import app.hakusan.reader.san.ScriptedRequest
 import app.hakusan.reader.san.ScriptedSan
+import app.hakusan.reader.san.ScriptedStep
 import app.hakusan.reader.san.ScriptedTarget
 import app.hakusan.reader.san.rowsOfFourBytes
 import java.util.concurrent.CopyOnWriteArrayList
@@ -93,6 +94,9 @@ class ReaderOutputExecutionTest {
           "reader.copy 1 0 1",
           "reader.copy 2 0 2",
           "reader.copy 3 1 2",
+          // The job ended as OK, before its final copy. The script counts no
+          // decoded row.
+          "reader.job 0 0",
           "reader.copy 4 2 2",
         ),
         platform.sections.filter { it != "reader.step" },
@@ -356,6 +360,191 @@ class ReaderOutputExecutionTest {
 
       assertEquals(
         failed(ReaderContentFailure.BUDGET_EXCEEDED),
+        request.terminal,
+      )
+
+      assertEquals(emptyList<ScriptedTarget>(), platform.created)
+      assertReleased()
+    }
+
+  @Test
+  fun `an output too large for one lease ends as the answer of admission`() =
+    readerTest {
+      val segment = ReaderImageGeometry(1440, 40_000)
+
+      // The pixels of 2,912 rows at 1440 columns fill the lease up to the
+      // band margin, and so do 3,882 grid rows at 1080 columns. The image
+      // rows up to 5177 take the grid row 3882 too, which straddles them.
+      val requested =
+        listOf(
+          ReaderOutputRequest.Whole() to true,
+          ReaderOutputRequest.Whole(maxOutputWidth = 1080) to true,
+          ReaderOutputRequest.Band(segment, 0, 2913) to true,
+          ReaderOutputRequest.Band(segment, 0, 2912) to false,
+          ReaderOutputRequest.Band(segment, 0, 5177, 1080) to true,
+          ReaderOutputRequest.Band(segment, 0, 5176, 1080) to false,
+          ReaderOutputRequest.Whole(maxOutputWidth = 4) to false,
+        )
+
+      for ((output, oversized) in requested) {
+        val requests = contentOwner()
+        val grid = segment.grid(output.maxOutputWidth)
+
+        source.supply(completeInput())
+
+        // The image and the grid are reported, and no lease is admitted.
+        san.script {
+          describe(segment.width, segment.height, grid.width, grid.height)
+
+          SanAbi.STATUS_BUDGET_EXCEEDED
+        }
+
+        val request = checkNotNull(requests.submit(book.descriptor(0), output))
+
+        owner.execute(requests, source)
+
+        // A refused lease that fits one output met another ceiling.
+        val expected =
+          if (oversized) {
+            ReaderContentTerminal.Oversized(segment)
+          } else {
+            failed(ReaderContentFailure.BUDGET_EXCEEDED)
+          }
+
+        assertEquals(expected, request.terminal, "$output")
+      }
+
+      assertEquals(emptyList<ScriptedTarget>(), platform.created)
+      assertReleased()
+    }
+
+  @Test
+  fun `a refusal before the image is described stays a budget failure`() =
+    readerTest {
+      val requests = contentOwner()
+
+      source.supply(completeInput())
+      san.script { SanAbi.STATUS_BUDGET_EXCEEDED }
+
+      val request = submit(requests)
+
+      owner.execute(requests, source)
+
+      assertEquals(
+        failed(ReaderContentFailure.BUDGET_EXCEEDED),
+        request.terminal,
+      )
+
+      assertReleased()
+    }
+
+  @Test
+  fun `a band of another image than its bytes gets no target and no copy`() =
+    readerTest {
+      val band = ReaderOutputRequest.Band(ReaderImageGeometry(4, 8), 0, 4)
+
+      // Each script describes an image of nine rows: one goes on and is
+      // canceled, one completes in the step that describes the image, and one
+      // is refused there, because the band could leave such an image.
+      val scripts =
+        listOf<ScriptedStep>(
+          rowsOfFourBytes(width = 4, height = 9),
+          {
+            describe(4, 9)
+            admit(4, 9)
+            cover(9)
+
+            SanAbi.STATUS_OK
+          },
+          {
+            describe(4, 9)
+
+            SanAbi.STATUS_UNSUPPORTED_OPERATION
+          },
+        )
+
+      for (script in scripts) {
+        val requests = contentOwner()
+
+        source.supply(completeInput())
+        san.script(script)
+
+        val request = checkNotNull(requests.submit(book.descriptor(0), band))
+
+        owner.execute(requests, source)
+
+        assertEquals(
+          failed(ReaderContentFailure.REPRESENTATION_CHANGED),
+          request.terminal,
+        )
+
+        assertNull(requests.takePublication())
+      }
+
+      assertEquals(emptyList<ScriptedTarget>(), platform.created)
+      assertReleased()
+    }
+
+  @Test
+  fun `a request canceled before its image differs stays canceled`() =
+    readerTest {
+      val band = ReaderOutputRequest.Band(ReaderImageGeometry(4, 8), 0, 4)
+
+      // Each script describes an image of nine rows in a step that runs
+      // after the cancellation of its request: one goes on, and one completes
+      // there.
+      for (completes in listOf(false, true)) {
+        val requests = contentOwner()
+
+        source.supply(completeInput())
+
+        san.script {
+          if (report[SanAbi.JOB_REPORT_IMAGE_WIDTH] == 0L) {
+            requests.beginClose()
+            describe(4, 9)
+            admit(4, 9)
+          }
+
+          if (completes) {
+            cover(9)
+
+            SanAbi.STATUS_OK
+          } else {
+            SanAbi.STATUS_INPUT_NEEDED
+          }
+        }
+
+        val request = checkNotNull(requests.submit(book.descriptor(0), band))
+
+        owner.execute(requests, source)
+
+        assertEquals(Canceled, request.terminal, "completes: $completes")
+      }
+
+      // A job that ended as canceled is traced with its status too.
+      assertTrue("reader.job ${SanAbi.STATUS_CANCELED} 0" in platform.sections)
+      assertEquals(emptyList<ScriptedTarget>(), platform.created)
+      assertReleased()
+    }
+
+  @Test
+  fun `a band in another grid than its width gives is a changed image`() =
+    readerTest {
+      val requests = contentOwner()
+      val image = ReaderImageGeometry(8, 6)
+      val band = ReaderOutputRequest.Band(image, 0, 6, maxOutputWidth = 4)
+
+      source.supply(completeInput())
+
+      // The script ignores the width and keeps the image at its size.
+      san.script(rowsOfFourBytes(width = 8, height = 6))
+
+      val request = checkNotNull(requests.submit(book.descriptor(0), band))
+
+      owner.execute(requests, source)
+
+      assertEquals(
+        failed(ReaderContentFailure.REPRESENTATION_CHANGED),
         request.terminal,
       )
 
