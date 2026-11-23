@@ -58,6 +58,9 @@ def run_block(
     if arguments.hold_refresh:
         command.append("--hold-refresh")
 
+    if arguments.hold_pointer:
+        command.append("--hold-pointer")
+
     if not memory:
         command.append("--no-memory")
 
@@ -95,6 +98,7 @@ def main() -> int:
     parser.add_argument("--settle-ms", type=int, default=500)
     parser.add_argument("--refresh-hz", type=int, required=True)
     parser.add_argument("--hold-refresh", action="store_true")
+    parser.add_argument("--hold-pointer", action="store_true")
 
     parser.add_argument(
         "--pause-seconds", type=float, default=0, help="the wait between blocks"

@@ -31,6 +31,7 @@ def row(block: str, memory: bool, display: float) -> dict:
         "step": 0,
         "warmup": False,
         "memory_events": memory,
+        "pointer_held": False,
         "display_ms": display,
     }
 
@@ -230,6 +231,7 @@ class Cancellations(unittest.TestCase):
             "warmup": False,
             "outcome": "ok",
             "terminal": "canceled",
+            "pointer_held": False,
             "gaps": "",
             "cancel_settled_ms": 2.0,
             "cancel_rows_bound": 0,
@@ -253,6 +255,7 @@ class Cancellations(unittest.TestCase):
             "warmup": False,
             "outcome": "ok",
             "terminal": "completed",
+            "pointer_held": False,
             "gaps": "",
             "display_ms": 100.0,
             "frame_period_ms": 8.3,
@@ -267,6 +270,45 @@ class Cancellations(unittest.TestCase):
         self.assertEqual(summary["gpu_peak_bytes"]["maximum"], 0.0)
         self.assertEqual(summary["gpu_level_bytes"]["median"], 94_000_000.0)
         self.assertEqual(summary["gpu_level_bytes"]["maximum"], 95_000_000.0)
+
+    def test_the_blocks_under_a_held_pointer_are_summarized_apart(self) -> None:
+        free = {
+            "block": "a",
+            "cell": "ordinary",
+            "backend": "san",
+            "step": 0,
+            "warmup": False,
+            "outcome": "ok",
+            "terminal": "completed",
+            "pointer_held": False,
+            "memory_events": True,
+            "gaps": "",
+            "display_ms": 100.0,
+            "frame_period_ms": 16.6,
+        }
+
+        held = {
+            **free,
+            "block": "b",
+            "pointer_held": True,
+            "memory_events": False,
+            "display_ms": 70.0,
+            "frame_period_ms": 8.3,
+        }
+
+        without, under = analyze.summarize([free, held])
+
+        self.assertEqual(
+            (without["pointer_held"], without["frame_periods_ms"]), (False, [16.6])
+        )
+
+        self.assertEqual(
+            (under["pointer_held"], under["display_ms"]["median"]), (True, 70.0)
+        )
+
+        # The blocks with the memory events under one condition are no side
+        # of a check of the blocks without them under the other.
+        self.assertEqual(analyze.overhead([free, held]), [])
 
 
 if __name__ == "__main__":

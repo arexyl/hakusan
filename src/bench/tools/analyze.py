@@ -634,6 +634,8 @@ def analyze_block(
             "cell": record["cell"],
             "backend": record["backend"],
             "memory_events": host["memory_events"],
+            # A block that was stored before the option existed held none.
+            "pointer_held": host.get("held_pointer", False),
             "request": request,
             "attempt": entry["attempt"],
             "step": entry["step"],
@@ -756,6 +758,7 @@ COLUMNS = [
     "cell",
     "backend",
     "memory_events",
+    "pointer_held",
     "request",
     "attempt",
     "step",
@@ -804,17 +807,19 @@ LATENCIES = (
 
 def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Returns the statistics of each cell, backend, and step position over
-    its measured requests. Step positions are never pooled."""
-    groups: dict[tuple[str, str, int], list[dict[str, Any]]] = {}
+    its measured requests. Step positions are never pooled, and neither are
+    the blocks under a held pointer with the blocks without one, because a
+    display may refresh at another rate under a touch."""
+    groups: dict[tuple[str, str, int, bool], list[dict[str, Any]]] = {}
 
     for row in rows:
         if not row["warmup"]:
-            key = (row["cell"], row["backend"], row["step"])
+            key = (row["cell"], row["backend"], row["step"], row["pointer_held"])
             groups.setdefault(key, []).append(row)
 
     summaries = []
 
-    for (cell, backend, step), group in sorted(groups.items()):
+    for (cell, backend, step, pointer), group in sorted(groups.items()):
         timed = [row for row in group if "display_ms" in row]
         blocks: dict[str, list[float]] = {}
 
@@ -833,6 +838,7 @@ def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "cell": cell,
             "backend": backend,
             "step": step,
+            "pointer_held": pointer,
             "requests": len(group),
             "not_ok": sum(row["outcome"] != "ok" for row in group),
             "terminals": dict(
@@ -894,11 +900,13 @@ def overhead(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     display time differ by less than the range of the block medians without
     the events.
     """
-    groups: dict[tuple[str, str, int], dict[bool, dict[str, list[float]]]] = {}
+    groups: dict[
+        tuple[str, str, int, bool], dict[bool, dict[str, list[float]]]
+    ] = {}
 
     for row in rows:
         if not row["warmup"] and "display_ms" in row:
-            key = (row["cell"], row["backend"], row["step"])
+            key = (row["cell"], row["backend"], row["step"], row["pointer_held"])
             sides = groups.setdefault(key, {True: {}, False: {}})
             sides[row["memory_events"]].setdefault(row["block"], []).append(
                 row["display_ms"]
@@ -906,7 +914,7 @@ def overhead(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     checks = []
 
-    for (cell, backend, step), sides in sorted(groups.items()):
+    for (cell, backend, step, pointer), sides in sorted(groups.items()):
         if not sides[True] or not sides[False]:
             continue
 
@@ -924,6 +932,7 @@ def overhead(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "cell": cell,
                 "backend": backend,
                 "step": step,
+                "pointer_held": pointer,
                 "with_events_ms": combined(sides[True]),
                 "without_events_ms": combined(sides[False]),
                 "range_without_events_ms": spread,
@@ -982,7 +991,8 @@ def main() -> int:
         display = cell.get("display_ms")
 
         print(
-            f"{cell['cell']} {cell['backend']} step {cell['step']}:"
+            f"{cell['cell']} {cell['backend']} step {cell['step']}"
+            f"{' under a held pointer' if cell['pointer_held'] else ''}:"
             f" {cell['requests']} requests, {cell['timing_gaps']} timing gaps,"
             f" {cell['not_ok']} not ok"
             + (

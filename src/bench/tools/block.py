@@ -207,6 +207,19 @@ def restore_refresh(previous: str) -> None:
         shell(f"settings put system {MIN_REFRESH} {previous}")
 
 
+def center() -> tuple[int, int]:
+    """Returns the middle of the display, in pixels of the size in use."""
+    sizes = re.findall(r"(\d+)x(\d+)", shell("wm size"))
+
+    if not sizes:
+        raise Failure("wm size states no display size")
+
+    # An override size follows the physical one and replaces it.
+    width, height = sizes[-1]
+
+    return int(width) // 2, int(height) // 2
+
+
 def install(arguments: argparse.Namespace) -> None:
     """Installs the harness and compiles all of it ahead of time."""
     adb("install", "-r", str(arguments.apk))
@@ -228,6 +241,7 @@ def block(arguments: argparse.Namespace) -> None:
     notes = {
         "name": name,
         "memory_events": arguments.memory,
+        "held_pointer": arguments.hold_pointer,
         "trace_configuration_sha256": hashlib.sha256(configuration).hexdigest(),
         "compilation": compilation(),
         "transport": arguments.transport,
@@ -260,6 +274,15 @@ def block(arguments: argparse.Namespace) -> None:
                 f" --ei refresh_hz {arguments.refresh_hz}"
                 f" --es record {name}.json"
             )
+
+            if arguments.hold_pointer:
+                x, y = center()
+
+                # The release is registered before the pointer goes down, so
+                # that none stays down, and it runs while the harness still
+                # has the window. A release without a pointer changes nothing.
+                run.callback(shell, f"input motionevent UP {x} {y}", check=False)
+                shell(f"input motionevent DOWN {x} {y}")
 
             record = wait_for_record(
                 f"{name}.json", START_SECONDS + requests * REQUEST_SECONDS
@@ -305,6 +328,13 @@ def main() -> int:
         action="store_true",
         help="keep the display at that rate through a system setting, which"
         " the tool restores after the block",
+    )
+
+    runner.add_argument(
+        "--hold-pointer",
+        action="store_true",
+        help="keep one pointer down on the harness for the block, without a"
+        " move, for a device that renders at its high rate only under a touch",
     )
 
     runner.add_argument("--name", type=plain, required=True, help="the file stem")
