@@ -1,6 +1,7 @@
 package app.hakusan.reader
 
 import android.graphics.Bitmap
+import android.graphics.Color
 import androidx.test.core.app.ActivityScenario
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import app.hakusan.reader.san.SanCalls
@@ -45,7 +46,13 @@ class ReaderEngineDeviceTest {
       assertShows(page)
       assertIdle()
       clearView()
+
+      // No frame draws the targets now. The second request gets them back
+      // and must write each of their rows again.
+      onMain { created.forEach { it.eraseColor(Color.MAGENTA) } }
     }
+
+    assertEquals(2, created.size)
   }
 
   @Test

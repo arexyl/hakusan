@@ -201,6 +201,11 @@ internal constructor(
             } finally {
               stopping = true
 
+              // No request follows, so no kept target finds an output. No
+              // return reaches a kept target, so only this ends it, also
+              // after a shutdown that failed.
+              targets.drain()
+
               if (targets.isEmpty) {
                 executor.shutdown()
               }

@@ -127,7 +127,7 @@ class ReaderTargetDeviceTest {
             )
           }
 
-          // The ended output keeps only the target that presentation holds.
+          // The target that presentation holds outlives its ended output.
           assertFalse(shown.isRecycled)
           view.clear()
         }

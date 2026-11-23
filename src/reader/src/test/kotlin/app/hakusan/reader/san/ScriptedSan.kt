@@ -824,6 +824,12 @@ internal class ScriptedSan : SanCalls {
     const val OUTPUT_LEASE_COUNT = 15
 
     val INJECTABLE =
-      setOf("engineCreate", "contentOpen", "contentFeed", "jobRequest")
+      setOf(
+        "engineCreate",
+        "contentOpen",
+        "contentFeed",
+        "jobRequest",
+        "outputCopy",
+      )
   }
 }

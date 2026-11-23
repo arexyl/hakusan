@@ -594,14 +594,112 @@ class ReaderOutputExecutionTest {
 
       val last = presenter.take()
 
+      // The returned target has the geometry of the waiting output and serves
+      // it, alone, so it publishes once.
       assertEquals(2, last.rows)
-      assertEquals(3, platform.created.size)
+      assertSame(first.scripted, last.scripted)
+      assertEquals(2, platform.created.size)
+      assertEquals(emptyList<ReaderTarget>(), platform.recycled)
       assertSame(waiting, next.request())
       assertEquals(completed(), waiting.terminal)
       second.close()
       last.close()
       assertReleased()
     }
+
+  @Test
+  fun `an output of the same geometry copies into the targets of the one before`() =
+    readerTest {
+      val requests = contentOwner()
+      val presenter = TestPresenter(requests)
+      val input = liveInput(count = 8)
+
+      source.supply(input)
+      source.supply(completeInput(count = 8))
+      repeat(2) { san.script(rowsOfFourBytes(width = 4, height = 2)) }
+
+      val ended = submit(requests)
+      val running = executing(requests)
+
+      input.receiveThrough(4)
+
+      val first = presenter.take()
+
+      input.receiveThrough(8)
+      input.end()
+
+      val second = presenter.take()
+
+      assertSame(ended, running.request())
+      first.close()
+      second.close()
+
+      // The worker applies both returns before it reads its counters.
+      owner.counters()
+
+      val next = submit(requests, unit = 1)
+      val following = executing(requests)
+      val early = presenter.take()
+      val last = presenter.take()
+
+      // Both kept targets held rows of the first output, and the second one
+      // copies its own into each from the first row on.
+      assertEquals(listOf(1, 2), listOf(early.rows, last.rows))
+
+      assertEquals(
+        setOf(first.scripted, second.scripted),
+        setOf(early.scripted, last.scripted),
+      )
+
+      assertEquals(copy(0, 1), early.scripted.rowCopies().last())
+      assertEquals(copy(0, 2), last.scripted.rowCopies().last())
+      assertEquals(listOf(2, 2), platform.created.map { it.copies.size })
+      assertSame(next, following.request())
+      assertEquals(completed(), next.terminal)
+      assertEquals(emptyList<ReaderTarget>(), platform.recycled)
+      early.close()
+      last.close()
+      assertReleased()
+    }
+
+  @Test
+  fun `a target whose copy failed serves no later output`() = readerTest {
+    val requests = contentOwner()
+
+    requests.recordRows()
+    repeat(2) { source.supply(completeInput(count = 8)) }
+    repeat(2) { san.script(rowsOfFourBytes(width = 4, height = 2)) }
+    san.failNext("outputCopy", SanAbi.STATUS_BINDING_MISMATCH)
+
+    val failing = submit(requests)
+
+    val failure =
+      async(Dispatchers.Default) {
+          runCatching { owner.execute(requests, source) }
+        }
+        .await()
+        .exceptionOrNull()
+
+    assertTrue(failure is IllegalStateException)
+
+    assertEquals(
+      failed(ReaderContentFailure.ENGINE_FAILURE),
+      failing.terminal,
+    )
+
+    // The copy failed into the first target, and the second got none.
+    val next = submit(requests, unit = 1)
+
+    assertSame(next, executing(requests).request())
+    assertEquals(completed(), next.terminal)
+    assertEquals(3, platform.created.size)
+    assertEquals(listOf<ReaderTarget>(platform.created[0]), platform.recycled)
+    assertEquals(0, platform.created[0].copies.size)
+    owner.close()
+
+    assertEquals(platform.created.toSet(), platform.recycled.toSet())
+    assertEquals(emptyList<String>(), platform.violations)
+  }
 
   @Test
   fun `a publication outside the requested band ends the job as stale`() =

@@ -288,7 +288,7 @@ internal class SanOutput(
 
     // The ordinal counts only once presentation holds the lease, so that the
     // return of a lease that was never handed over changes nothing.
-    val ordinal = target.ordinal + 1
+    val ordinal = target.issue()
 
     // A lease that the worker discards itself returns nothing: its return
     // would wake the worker, which would publish and discard again.
@@ -308,8 +308,7 @@ internal class SanOutput(
 
     when (requests.publish(request, output)) {
       ReaderPublishResult.PUBLISHED -> {
-        target.ordinal = ordinal
-        target.held = true
+        target.hand(ordinal)
         publishedRows = covered
         busy = false
       }
@@ -338,6 +337,10 @@ internal class SanOutput(
 
     val revision = report[SanAbi.JOB_REPORT_REVISION]
 
+    // A copy that fails leaves the target in no known state, and a later
+    // output would fail on it again.
+    target.failed = true
+
     owner.platform.section("reader.copy $revision $first $count") {
       checkSettled(
         "outputCopy",
@@ -345,6 +348,7 @@ internal class SanOutput(
       )
     }
 
+    target.failed = false
     target.rows = covered
   }
 
