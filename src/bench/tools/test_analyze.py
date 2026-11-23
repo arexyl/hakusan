@@ -242,6 +242,32 @@ class Cancellations(unittest.TestCase):
         self.assertEqual(summary["cancel_settled_ms"]["count"], 2)
         self.assertEqual(summary["cancel_rows_bound"]["maximum"], 0)
 
+    def test_a_summary_describes_the_level_of_gpu_memory_beside_its_growth(
+        self,
+    ) -> None:
+        request = {
+            "block": "a",
+            "cell": "ordinary",
+            "backend": "san",
+            "step": 0,
+            "warmup": False,
+            "outcome": "ok",
+            "terminal": "completed",
+            "gaps": "",
+            "display_ms": 100.0,
+            "frame_period_ms": 8.3,
+            "gpu_peak_bytes": 0.0,
+            "gpu_level_bytes": 93_000_000.0,
+        }
+
+        (summary,) = analyze.summarize(
+            [request, {**request, "gpu_level_bytes": 95_000_000.0}]
+        )
+
+        self.assertEqual(summary["gpu_peak_bytes"]["maximum"], 0.0)
+        self.assertEqual(summary["gpu_level_bytes"]["median"], 94_000_000.0)
+        self.assertEqual(summary["gpu_level_bytes"]["maximum"], 95_000_000.0)
+
 
 if __name__ == "__main__":
     unittest.main()

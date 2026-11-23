@@ -718,6 +718,12 @@ def analyze_block(
 
                     row[f"{column}_peak_bytes"] = peak - base
 
+                    # A renderer that reuses its textures moves the counter
+                    # only while the process starts, so the growth of a later
+                    # request is 0 and the level alone shows what it holds.
+                    if counter == GPU:
+                        row["gpu_level_bytes"] = peak
+
                     # The retained values belong to the attempt, so its last
                     # request carries them.
                     if following is None and close is not None and settled is not None:
@@ -776,6 +782,7 @@ COLUMNS = [
     "anon_retained_close_bytes",
     "anon_retained_settled_bytes",
     "gpu_peak_bytes",
+    "gpu_level_bytes",
     "gpu_retained_close_bytes",
     "gpu_retained_settled_bytes",
     "settle_ms",
