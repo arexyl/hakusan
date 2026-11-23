@@ -726,6 +726,12 @@ def analyze_block(
                     if counter == GPU:
                         row["gpu_level_bytes"] = peak
 
+                    # Memory that a backend keeps between its requests is no
+                    # growth above a request, so the value at the request
+                    # alone shows it.
+                    if counter == ANON:
+                        row["anon_level_bytes"] = base
+
                     # The retained values belong to the attempt, so its last
                     # request carries them.
                     if following is None and close is not None and settled is not None:
@@ -782,6 +788,7 @@ COLUMNS = [
     "ledger_peak_committed_bytes",
     "ledger_close_live_bytes",
     "anon_peak_bytes",
+    "anon_level_bytes",
     "anon_retained_close_bytes",
     "anon_retained_settled_bytes",
     "gpu_peak_bytes",

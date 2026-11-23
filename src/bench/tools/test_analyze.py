@@ -271,6 +271,31 @@ class Cancellations(unittest.TestCase):
         self.assertEqual(summary["gpu_level_bytes"]["median"], 94_000_000.0)
         self.assertEqual(summary["gpu_level_bytes"]["maximum"], 95_000_000.0)
 
+    def test_a_summary_describes_the_level_of_anonymous_memory_at_a_request(
+        self,
+    ) -> None:
+        request = {
+            "block": "a",
+            "cell": "ordinary",
+            "backend": "san",
+            "step": 0,
+            "warmup": False,
+            "outcome": "ok",
+            "terminal": "completed",
+            "pointer_held": False,
+            "gaps": "",
+            "anon_peak_bytes": 15_000_000.0,
+            "anon_level_bytes": 120_000_000.0,
+        }
+
+        (summary,) = analyze.summarize(
+            [request, {**request, "anon_level_bytes": 150_000_000.0}]
+        )
+
+        self.assertEqual(summary["anon_peak_bytes"]["maximum"], 15_000_000.0)
+        self.assertEqual(summary["anon_level_bytes"]["median"], 135_000_000.0)
+        self.assertEqual(summary["anon_level_bytes"]["maximum"], 150_000_000.0)
+
     def test_the_blocks_under_a_held_pointer_are_summarized_apart(self) -> None:
         free = {
             "block": "a",
