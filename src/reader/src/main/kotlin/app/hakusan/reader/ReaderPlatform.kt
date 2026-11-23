@@ -57,20 +57,29 @@ internal object AndroidReaderPlatform : ReaderPlatform {
   override fun calls(worker: Thread): SanCalls = SanAbiCalls(worker)
 
   // A mutable, premultiplied Bitmap, as the copy requires of its destination.
+  // The platform erases an ARGB_8888 Bitmap that it creates without alpha,
+  // which writes every page of it before the first copy, so an opaque target
+  // is created with alpha and loses the flag before anything else sees it.
   override fun createTarget(
     width: Int,
     height: Int,
     opaque: Boolean,
-  ): ReaderTarget =
-    ReaderBitmapTarget(
+  ): ReaderTarget {
+    val bitmap =
       Bitmap.createBitmap(
         width,
         height,
         Bitmap.Config.ARGB_8888,
-        !opaque,
+        true,
         ColorSpace.get(ColorSpace.Named.SRGB),
       )
-    )
+
+    if (opaque) {
+      bitmap.setHasAlpha(false)
+    }
+
+    return ReaderBitmapTarget(bitmap)
+  }
 
   override fun recycle(target: ReaderTarget) {
     check(target is ReaderBitmapTarget) { "The target holds no Bitmap." }

@@ -91,6 +91,8 @@ class ReaderOutputExecutionTest {
 
       assertEquals(
         listOf(
+          // Both targets of an early output, before its first copy.
+          "reader.targets",
           "reader.copy 1 0 1",
           "reader.copy 2 0 2",
           "reader.copy 3 1 2",

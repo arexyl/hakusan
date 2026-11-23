@@ -251,8 +251,10 @@ internal class SanOutput(
     val height = element(SanAbi.JOB_REPORT_LEASE_HEIGHT)
     val opaque = element(SanAbi.JOB_REPORT_ALPHA) == SanAbi.ALPHA_OPAQUE
 
-    repeat(wanted) {
-      pool.create(width, height, opaque)?.let(targets::add)
+    // The creation runs on the worker between two steps, and a trace would
+    // otherwise show its time as time of no section.
+    owner.platform.section(TARGETS) {
+      repeat(wanted) { pool.create(width, height, opaque)?.let(targets::add) }
     }
 
     if (targets.isEmpty() && !pool.awaitsRoom) {
@@ -384,6 +386,9 @@ internal class SanOutput(
   companion object {
     /** The bytes of one pixel of a lease. */
     private const val PIXEL_BYTES = 4
+
+    /** The trace section of the creation of the targets of an output. */
+    private const val TARGETS = "reader.targets"
 
     /**
      * The report of a job that would have just completed the band of [strip]:
