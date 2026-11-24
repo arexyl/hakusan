@@ -54,5 +54,52 @@ class Configuration(unittest.TestCase):
         )
 
 
+class Device(unittest.TestCase):
+    def test_a_policy_line_names_its_governor_its_frequency_and_its_cores(
+        self,
+    ) -> None:
+        text = (
+            "policy0 walt 3628800 0 1 2 3 4 5\n"
+            "policy6 schedutil 4320000 6 7\n"
+            # A device that denies a file leaves its line short.
+            "policy8 schedutil\n"
+            "\n"
+        )
+
+        self.assertEqual(
+            block.policies(text),
+            [
+                {
+                    "policy": "policy0",
+                    "governor": "walt",
+                    "max_khz": 3628800,
+                    "cpus": [0, 1, 2, 3, 4, 5],
+                },
+                {
+                    "policy": "policy6",
+                    "governor": "schedutil",
+                    "max_khz": 4320000,
+                    "cpus": [6, 7],
+                },
+            ],
+        )
+
+        self.assertEqual(block.policies("cat: Permission denied\n"), [])
+
+    def test_the_bracketed_word_is_the_selected_choice(self) -> None:
+        self.assertEqual(block.selected("always [madvise] never\n"), "madvise")
+        self.assertEqual(block.selected("[always] madvise never"), "always")
+        self.assertIsNone(block.selected("cat: No such file or directory\n"))
+        self.assertIsNone(block.selected(""))
+
+    def test_a_line_of_meminfo_gives_its_kilobytes(self) -> None:
+        text = "MemTotal:       11482912 kB\nSwapTotal:      12582908 kB\n"
+
+        self.assertEqual(block.meminfo_kb(text, "MemTotal"), 11482912)
+        self.assertEqual(block.meminfo_kb(text, "SwapTotal"), 12582908)
+        self.assertIsNone(block.meminfo_kb(text, "SwapFree"))
+        self.assertIsNone(block.meminfo_kb("", "MemTotal"))
+
+
 if __name__ == "__main__":
     unittest.main()

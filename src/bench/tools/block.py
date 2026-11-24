@@ -19,6 +19,7 @@ import re
 import subprocess
 import sys
 import time
+from typing import Any
 
 PACKAGE = "app.hakusan.bench"
 ACTIVITY = f"{PACKAGE}/.BenchActivity"
@@ -332,6 +333,93 @@ def require_device(arguments: argparse.Namespace) -> None:
         )
 
 
+def apk_sha256() -> str | None:
+    """Returns the SHA-256 of the installed harness, which names its build,
+    or None when the device does not give it."""
+    paths = [
+        line.removeprefix("package:")
+        for line in shell(f"pm path {PACKAGE}", check=False).split()
+        if line.startswith("package:")
+    ]
+
+    if len(paths) != 1:
+        return None
+
+    digest = shell(f"sha256sum {paths[0]}", check=False).split()
+
+    return digest[0] if digest and len(digest[0]) == 64 else None
+
+
+# One line per frequency policy: its name, its governor, the highest
+# frequency of its cores in kHz, and the cores.
+POLICIES = (
+    "for p in /sys/devices/system/cpu/cpufreq/policy*; do"
+    ' echo "${p##*/} $(cat $p/scaling_governor) $(cat $p/cpuinfo_max_freq)'
+    ' $(cat $p/related_cpus)"; done'
+)
+
+
+def policies(text: str) -> list[dict[str, Any]]:
+    """Returns the frequency policies that the lines of `POLICIES` name. A
+    line that a device cut short, because it denies a file, is left out."""
+    found = []
+
+    for line in text.splitlines():
+        fields = line.split()
+
+        if len(fields) >= 4 and fields[2].isdigit():
+            found.append(
+                {
+                    "policy": fields[0],
+                    "governor": fields[1],
+                    "max_khz": int(fields[2]),
+                    "cpus": [int(cpu) for cpu in fields[3:] if cpu.isdigit()],
+                }
+            )
+
+    return found
+
+
+def selected(text: str) -> str | None:
+    """Returns the choice that a kernel file marks with brackets among its
+    choices, as in `always [madvise] never`, or None without one."""
+    for word in text.split():
+        if word.startswith("[") and word.endswith("]"):
+            return word[1:-1]
+
+    return None
+
+
+def meminfo_kb(text: str, name: str) -> int | None:
+    """Returns the value of the line `name` of /proc/meminfo in kB."""
+    for line in text.splitlines():
+        fields = line.split()
+
+        if len(fields) >= 2 and fields[0] == f"{name}:" and fields[1].isdigit():
+            return int(fields[1])
+
+    return None
+
+
+def device_configuration() -> dict[str, Any]:
+    """Returns how the device is set up where no application can read it:
+    the governors, the kernel, the memory, and the allocator. A value that
+    the device denies is None or left out. A summary groups by none of it:
+    it is constant for a device and belongs to the description of one."""
+    meminfo = shell("cat /proc/meminfo", check=False)
+    huge = "/sys/kernel/mm/transparent_hugepage/enabled"
+
+    return {
+        "kernel": shell("uname -r", check=False).strip() or None,
+        "policies": policies(shell(POLICIES, check=False)),
+        "transparent_hugepage": selected(shell(f"cat {huge}", check=False)),
+        "mem_total_kb": meminfo_kb(meminfo, "MemTotal"),
+        "swap_total_kb": meminfo_kb(meminfo, "SwapTotal"),
+        # The reading process maps its own allocator, which is the system's.
+        "scudo": "scudo" in shell("cat /proc/self/maps", check=False),
+    }
+
+
 def install(arguments: argparse.Namespace) -> None:
     """Installs the harness and compiles all of it ahead of time."""
     adb("install", "-r", str(arguments.apk))
@@ -359,6 +447,8 @@ def block(arguments: argparse.Namespace) -> None:
         "min_refresh_rate": refresh_setting(),
         "memory": arguments.memory,
         "held_pointer": arguments.hold_pointer,
+        "apk_sha256": apk_sha256(),
+        "device": device_configuration(),
         "trace_configuration_sha256": hashlib.sha256(configuration).hexdigest(),
         "compilation": compilation(),
         "transport": arguments.transport,

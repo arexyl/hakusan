@@ -31,6 +31,7 @@ def row(block: str, memory: bool | str, display: float) -> dict:
         "step": 0,
         "warmup": False,
         "memory": memory if isinstance(memory, str) else "trace" if memory else "none",
+        "requested_refresh_hz": 120.0,
         "pointer_held": False,
         "display_ms": display,
     }
@@ -413,6 +414,7 @@ class AfterJob(unittest.TestCase):
             "warmup": False,
             "outcome": "ok",
             "terminal": "completed",
+            "requested_refresh_hz": 120.0,
             "pointer_held": False,
             "memory": "none",
             "gaps": "",
@@ -469,6 +471,7 @@ class Cancellations(unittest.TestCase):
             "warmup": False,
             "outcome": "ok",
             "terminal": "canceled",
+            "requested_refresh_hz": 120.0,
             "pointer_held": False,
             "memory": "none",
             "gaps": "",
@@ -494,6 +497,7 @@ class Cancellations(unittest.TestCase):
             "warmup": False,
             "outcome": "ok",
             "terminal": "completed",
+            "requested_refresh_hz": 120.0,
             "pointer_held": False,
             "memory": "trace",
             "gaps": "",
@@ -522,6 +526,7 @@ class Cancellations(unittest.TestCase):
             "warmup": False,
             "outcome": "ok",
             "terminal": "completed",
+            "requested_refresh_hz": 120.0,
             "pointer_held": False,
             "memory": "trace",
             "gaps": "",
@@ -546,6 +551,7 @@ class Cancellations(unittest.TestCase):
             "warmup": False,
             "outcome": "ok",
             "terminal": "completed",
+            "requested_refresh_hz": 120.0,
             "pointer_held": False,
             "memory": "none",
             "gaps": "",
@@ -588,6 +594,7 @@ class Cancellations(unittest.TestCase):
             "warmup": False,
             "outcome": "ok",
             "terminal": "completed",
+            "requested_refresh_hz": 120.0,
             "pointer_held": False,
             "memory": "trace",
             "gaps": "",
@@ -617,6 +624,168 @@ class Cancellations(unittest.TestCase):
         # The blocks with the memory events under one condition are no side
         # of a check of the blocks without them under the other.
         self.assertEqual(analyze.overhead([free, held]), [])
+
+    def test_the_blocks_at_two_requested_rates_are_summarized_apart(self) -> None:
+        fast = {
+            "block": "a",
+            "cell": "ordinary",
+            "backend": "san",
+            "step": 0,
+            "warmup": False,
+            "outcome": "ok",
+            "terminal": "completed",
+            "requested_refresh_hz": 120.0,
+            "pointer_held": False,
+            "memory": "none",
+            "gaps": "",
+            "display_ms": 70.0,
+            "frame_period_ms": 8.3,
+        }
+
+        slow = {
+            **fast,
+            "block": "b",
+            "requested_refresh_hz": 60.0,
+            "display_ms": 100.0,
+            "frame_period_ms": 16.6,
+        }
+
+        # The lower rate sorts first. Neither block holds a pointer, so the
+        # rate alone keeps the two conditions of one display apart.
+        at_60, at_120 = analyze.summarize([fast, slow, slow])
+
+        self.assertEqual(
+            (at_60["requested_refresh_hz"], at_60["requests"]), (60.0, 2)
+        )
+
+        self.assertEqual(
+            (at_120["requested_refresh_hz"], at_120["display_ms"]["median"]),
+            (120.0, 70.0),
+        )
+
+        self.assertEqual(
+            analyze.overhead([{**fast, "memory": "trace"}, slow]), []
+        )
+
+    def test_a_summary_reports_the_thermal_status_and_keeps_its_requests(
+        self,
+    ) -> None:
+        cool = {
+            "block": "a",
+            "cell": "ordinary",
+            "backend": "san",
+            "step": 0,
+            "warmup": False,
+            "outcome": "ok",
+            "terminal": "completed",
+            "requested_refresh_hz": 120.0,
+            "pointer_held": False,
+            "memory": "none",
+            "gaps": "",
+            "display_ms": 70.0,
+            "frame_period_ms": 8.3,
+            "thermal_status": 0,
+        }
+
+        warm = {**cool, "display_ms": 140.0, "thermal_status": 2}
+
+        # A request under a limit stays in its group, where it is slow.
+        (summary,) = analyze.summarize([cool, cool, warm])
+
+        self.assertEqual(
+            (summary["thermal_requests"], summary["thermal_maximum"]), (1, 2)
+        )
+
+        self.assertEqual(summary["display_ms"]["maximum"], 140.0)
+
+        # A row without the status, as of a block that recorded none.
+        del cool["thermal_status"]
+
+        (unread,) = analyze.summarize([cool])
+
+        self.assertEqual(
+            (unread["thermal_requests"], unread["thermal_maximum"]), (0, None)
+        )
+
+
+def conditions(model: str = "phone", page_size: int = 4096) -> dict:
+    return {
+        "os": {"sdk": 36, "incremental": "1"},
+        "device": {"model": model, "soc": "soc", "page_size": page_size},
+        "display": {
+            "window": [1080, 2340],
+            "modes": [{"width": 1080, "height": 2340, "refresh_hz": 120.0}],
+            "requested_refresh_hz": 120.0,
+            "refresh_hz": 120.0,
+        },
+        "harness": {
+            "debuggable": False,
+            "decode_thread": "decode",
+            "decode_nice": 0,
+            "take": "frame",
+            "san": {"commit": "a"},
+        },
+    }
+
+
+class Identity(unittest.TestCase):
+    def ending(self, block: str, record: dict, host: dict) -> dict:
+        return {"block": block, "identity": analyze.identity(record, host)}
+
+    def test_blocks_of_one_device_and_one_build_share_their_identity(self) -> None:
+        record = {"conditions": conditions()}
+        endings = [
+            self.ending("a", record, {"apk_sha256": "1"}),
+            self.ending("b", record, {"apk_sha256": "1"}),
+            # A block that failed before its first request has none.
+            {"block": "c"},
+        ]
+
+        shared = analyze.shared_identity(endings)
+
+        self.assertEqual(shared["device"]["model"], "phone")
+        self.assertEqual(shared["apk_sha256"], "1")
+        self.assertTrue(all("identity" not in ending for ending in endings))
+        self.assertIsNone(analyze.shared_identity([{"block": "c"}]))
+
+    def test_the_rate_that_a_block_requests_is_no_part_of_the_identity(self) -> None:
+        other = conditions()
+        other["display"]["requested_refresh_hz"] = 60.0
+        other["display"]["refresh_hz"] = 60.0
+
+        analyze.shared_identity(
+            [
+                self.ending("a", {"conditions": conditions()}, {}),
+                self.ending("b", {"conditions": other}, {}),
+            ]
+        )
+
+    def test_blocks_that_differ_in_what_they_share_fail_the_analysis(self) -> None:
+        san = conditions()
+        san["harness"]["san"] = {"commit": "b"}
+
+        window = conditions()
+        window["display"]["window"] = [1440, 3120]
+
+        cases = {
+            "device.model": ({"conditions": conditions(model="other")}, {}),
+            # Two virtual devices may differ in nothing but their pages.
+            "device.page_size": ({"conditions": conditions(page_size=16384)}, {}),
+            "harness.san.commit": ({"conditions": san}, {}),
+            "display.window": ({"conditions": window}, {}),
+            "apk_sha256": ({"conditions": conditions()}, {"apk_sha256": "2"}),
+        }
+
+        for where, (record, host) in cases.items():
+            with self.subTest(where), self.assertRaises(analyze.Failure) as raised:
+                analyze.shared_identity(
+                    [
+                        self.ending("a", {"conditions": conditions()}, {}),
+                        self.ending("b", record, host),
+                    ]
+                )
+
+            self.assertIn(f"a and b differ in {where}:", str(raised.exception))
 
 
 if __name__ == "__main__":

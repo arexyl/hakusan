@@ -681,6 +681,65 @@ def resident(
     return values, gaps
 
 
+def identity(record: dict[str, Any], host: dict[str, Any]) -> dict[str, Any]:
+    """Returns what every block of one analysis shares: the device with its
+    system build and its page size, the display that the harness drew on,
+    and the builds of the harness and of San. A summary pools the blocks of
+    a cell, which means nothing across two of any of these."""
+    conditions = record["conditions"]
+    display = conditions["display"]
+    harness = conditions["harness"]
+
+    return {
+        "device": conditions["device"],
+        "os": conditions["os"],
+        "display": {"window": display["window"], "modes": display["modes"]},
+        "harness": {
+            key: harness[key]
+            for key in ("decode_thread", "decode_nice", "take", "san")
+        },
+        # A block that was stored before the host read it names none.
+        "apk_sha256": host.get("apk_sha256"),
+    }
+
+
+def unequal_at(first: Any, second: Any, path: str = "") -> str | None:
+    """Returns the path of the first value in which two identities differ,
+    or None when they are equal."""
+    if isinstance(first, dict) and isinstance(second, dict):
+        for key in sorted(first.keys() | second.keys()):
+            where = unequal_at(first.get(key), second.get(key), f"{path}.{key}")
+
+            if where is not None:
+                return where
+
+        return None
+
+    return None if first == second else path.lstrip(".")
+
+
+def shared_identity(endings: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Takes the identity out of each ending and returns the one that all
+    share, or None when no block recorded its conditions. Two blocks that
+    differ fail the analysis."""
+    known = [
+        (ending["block"], ending.pop("identity"))
+        for ending in endings
+        if "identity" in ending
+    ]
+
+    for block, other in known[1:]:
+        where = unequal_at(known[0][1], other)
+
+        if where is not None:
+            raise Failure(
+                f"{known[0][0]} and {block} differ in {where}: one analysis"
+                " holds the blocks of one device, one harness, and one San build"
+            )
+
+    return known[0][1] if known else None
+
+
 def analyze_block(
     directory: pathlib.Path, name: str
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -716,6 +775,8 @@ def analyze_block(
     if (memory == "proc") != ("memory" in record):
         raise Failure(f"{name}: the harness and the host name two sources of memory")
 
+    ending["identity"] = identity(record, host)
+
     if memory == "proc":
         # The kernel counts resident memory in pages.
         ending["resident_resolution_bytes"] = record["conditions"]["device"][
@@ -749,6 +810,11 @@ def analyze_block(
             "cell": record["cell"],
             "backend": record["backend"],
             "memory": memory,
+            # The rate that the block asked of the display. What the display
+            # gave is the frame period of each request.
+            "requested_refresh_hz": record["conditions"]["display"][
+                "requested_refresh_hz"
+            ],
             # A block that was stored before the option existed held none.
             "pointer_held": host.get("held_pointer", False),
             "request": request,
@@ -901,6 +967,7 @@ COLUMNS = [
     "cell",
     "backend",
     "memory",
+    "requested_refresh_hz",
     "pointer_held",
     "request",
     "attempt",
@@ -957,23 +1024,38 @@ LATENCIES = (
 )
 
 
+class Condition(NamedTuple):
+    """What a block sets for its requests, and so what a summary never
+    pools: the cell, the backend, the step position, and the two settings
+    of the display, the rate that the block asks for and a held pointer,
+    under which a display may refresh at another rate. What the device does
+    under them, such as its thermal status, is reported and is no part of
+    it: a group split by it would hide its slow requests."""
+
+    cell: str
+    backend: str
+    step: int
+    requested_refresh_hz: float
+    pointer_held: bool
+
+    @classmethod
+    def of(cls, row: dict[str, Any]) -> Condition:
+        return cls(*(row[field] for field in cls._fields))
+
+
 def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Returns the statistics of each cell, backend, and step position over
-    its measured requests. Step positions are never pooled, and neither are
-    the blocks under a held pointer with the blocks without one, because a
-    display may refresh at another rate under a touch. The times of a cell
-    come from its blocks without memory where it has such blocks, and its
-    memory from every block that read it."""
-    groups: dict[tuple[str, str, int, bool], list[dict[str, Any]]] = {}
+    """Returns the statistics of each condition over its measured requests.
+    The times of a cell come from its blocks without memory where it has
+    such blocks, and its memory from every block that read it."""
+    groups: dict[Condition, list[dict[str, Any]]] = {}
 
     for row in rows:
         if not row["warmup"]:
-            key = (row["cell"], row["backend"], row["step"], row["pointer_held"])
-            groups.setdefault(key, []).append(row)
+            groups.setdefault(Condition.of(row), []).append(row)
 
     summaries = []
 
-    for (cell, backend, step, pointer), group in sorted(groups.items()):
+    for condition, group in sorted(groups.items()):
         # Reading its memory may slow a request, so a cell that has blocks
         # without memory takes its times from those alone. A cell whose blocks
         # all read memory, as in a validation, has no other times.
@@ -993,12 +1075,15 @@ def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if "display_ms" not in row
         )
 
+        # The status that the system reported at each request, where the
+        # harness recorded it. Above 0 the device limits itself.
+        thermal = [row["thermal_status"] for row in group if "thermal_status" in row]
+
         summary: dict[str, Any] = {
-            "cell": cell,
-            "backend": backend,
-            "step": step,
-            "pointer_held": pointer,
+            **condition._asdict(),
             "requests": len(group),
+            "thermal_requests": sum(status > 0 for status in thermal),
+            "thermal_maximum": max(thermal, default=None),
             "timed_requests": len(clocked),
             "times_from_blocks_without_memory": bool(plain),
             "not_ok": sum(row["outcome"] != "ok" for row in group),
@@ -1072,9 +1157,7 @@ def overhead(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     display time differ by less than the range of the block medians without
     the events. A block whose harness reads /proc/self is no side of it.
     """
-    groups: dict[
-        tuple[str, str, int, bool], dict[bool, dict[str, list[float]]]
-    ] = {}
+    groups: dict[Condition, dict[bool, dict[str, list[float]]]] = {}
 
     for row in rows:
         if (
@@ -1082,15 +1165,14 @@ def overhead(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             and "display_ms" in row
             and row["memory"] in ("trace", "none")
         ):
-            key = (row["cell"], row["backend"], row["step"], row["pointer_held"])
-            sides = groups.setdefault(key, {True: {}, False: {}})
+            sides = groups.setdefault(Condition.of(row), {True: {}, False: {}})
             sides[row["memory"] == "trace"].setdefault(row["block"], []).append(
                 row["display_ms"]
             )
 
     checks = []
 
-    for (cell, backend, step, pointer), sides in sorted(groups.items()):
+    for condition, sides in sorted(groups.items()):
         if not sides[True] or not sides[False]:
             continue
 
@@ -1105,10 +1187,7 @@ def overhead(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
         checks.append(
             {
-                "cell": cell,
-                "backend": backend,
-                "step": step,
-                "pointer_held": pointer,
+                **condition._asdict(),
                 "with_events_ms": combined(sides[True]),
                 "without_events_ms": combined(sides[False]),
                 "range_without_events_ms": spread,
@@ -1134,12 +1213,13 @@ def main() -> int:
             raise Failure(f"{directory} holds no block")
 
         analyzed = [analyze_block(directory, name) for name in names]
+        endings = [ending for ending, _ in analyzed]
+        shared = shared_identity(endings)
     except Failure as failure:
         print(f"analyze.py: {failure}", file=sys.stderr)
 
         return 1
 
-    endings = [ending for ending, _ in analyzed]
     rows = [row for _, block_rows in analyzed for row in block_rows]
 
     with (directory / "requests.csv").open("w", encoding="utf-8", newline="") as file:
@@ -1150,6 +1230,7 @@ def main() -> int:
 
     summary = {
         "anon_resolution_bytes": ANON_RESOLUTION_BYTES,
+        "identity": shared,
         "blocks": endings,
         "cells": summarize(rows),
         "overhead_checks": overhead(rows),
@@ -1168,6 +1249,7 @@ def main() -> int:
 
         print(
             f"{cell['cell']} {cell['backend']} step {cell['step']}"
+            f" at {cell['requested_refresh_hz']:g} Hz"
             f"{' under a held pointer' if cell['pointer_held'] else ''}:"
             f" {cell['timed_requests']} timed requests,"
             f" {cell['timing_gaps']} timing gaps,"
