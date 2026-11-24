@@ -20,7 +20,6 @@ import json
 import pathlib
 import subprocess
 import sys
-import time
 
 TOOLS = pathlib.Path(__file__).resolve().parent
 
@@ -56,6 +55,7 @@ def run_block(
         f"--attempts={arguments.attempts}",
         f"--settle-ms={arguments.settle_ms}",
         f"--refresh-hz={arguments.refresh_hz}",
+        f"--rest-seconds={arguments.pause_seconds}",
         f"--name={name}",
         f"--output={arguments.output}",
         f"--transport={arguments.transport}",
@@ -141,7 +141,11 @@ def main() -> int:
     parser.add_argument("--hold-pointer", action="store_true")
 
     parser.add_argument(
-        "--pause-seconds", type=float, default=0, help="the wait between blocks"
+        "--pause-seconds",
+        type=float,
+        default=0,
+        help="the rest of the device before each block, the first of the cell"
+        " included, so that the cells of a run do not follow each other at once",
     )
 
     parser.add_argument("--output", type=pathlib.Path, required=True)
@@ -162,10 +166,7 @@ def main() -> int:
         for number, backend in enumerate(memory, 1)
     ]
 
-    for index, (name, backend, with_memory) in enumerate(plan):
-        if index != 0:
-            time.sleep(arguments.pause_seconds)
-
+    for name, backend, with_memory in plan:
         ended = run_block(arguments, name, backend, with_memory)
 
         print(f"{name}: {ended}", flush=True)

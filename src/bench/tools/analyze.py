@@ -17,6 +17,7 @@ display frame, and the end of that display frame is the presentation.
 from __future__ import annotations
 
 import argparse
+import bisect
 import collections
 import csv
 import io
@@ -101,6 +102,24 @@ where (s.name glob 'reader.job *' or s.name glob 'reader.copy *'
        or s.name glob 'reader.withdraw *')
   and t.upid in (select upid from harness)
 order by s.ts;
+
+select ss.ts, ss.dur, ss.cpu
+from sched_slice ss
+where ss.utid in (
+  select distinct tt.utid
+  from slice s
+  join thread_track tt on s.track_id = tt.id
+  join thread t using (utid)
+  where (s.name glob 'bench.decode *' or s.name glob 'reader.job *')
+    and t.upid in (select upid from harness)
+)
+order by ss.ts;
+
+select t.cpu, c.ts, c.value
+from counter c
+join cpu_counter_track t on c.track_id = t.id
+where t.name = 'cpufreq'
+order by c.ts;
 """
 
 ANON = "mem.rss.anon"
@@ -298,9 +317,36 @@ class Trace:
     """What one trace holds about the harness."""
 
     def __init__(self, path: pathlib.Path) -> None:
-        marks, surfaces, displays, counters, frames, losses, events, sections = tables(
-            path
-        )
+        (
+            marks,
+            surfaces,
+            displays,
+            counters,
+            frames,
+            losses,
+            events,
+            sections,
+            runs,
+            frequencies,
+        ) = tables(path)
+
+        # When the threads that decode ran, and on which core: the decode
+        # thread of the harness and the worker of the reader.
+        self.runs = [
+            (int(row["ts"]), int(row["ts"]) + int(row["dur"]), int(row["cpu"]))
+            for row in runs
+            # A thread that still runs at the end of the trace has no end.
+            if int(row["dur"]) > 0
+        ]
+
+        # The frequency of each core in kHz, from each change on.
+        self.frequencies: dict[int, tuple[list[int], list[float]]] = {}
+
+        for row in frequencies:
+            times, values = self.frequencies.setdefault(int(row["cpu"]), ([], []))
+
+            times.append(int(row["ts"]))
+            values.append(float(row["value"]))
 
         # The sections of the reader's worker name no request, so a request
         # finds its own by their times.
@@ -368,6 +414,49 @@ class Trace:
         self.frames = [int(row["ts"]) for row in frames]
         self.losses = {row["name"]: float(row["value"]) for row in losses}
         self.events = {row["name"]: int(row["count"]) for row in events}
+
+    def effort(self, start: int, end: int) -> dict[str, float]:
+        """Returns how long the threads that decode ran between start and
+        end, and the mean frequency of their cores over that time, which
+        tells a request that a device slowed apart from one that had more to
+        do. A device may lower its frequencies under a load that lasts and
+        report no thermal status for it. The frequency is missing where the
+        trace holds no frequency of a core before it ran there."""
+        ran = 0
+        cycles = 0.0
+        known = 0
+
+        for run_start, run_end, cpu in self.runs:
+            low = max(run_start, start)
+            high = min(run_end, end)
+
+            if low >= high:
+                continue
+
+            ran += high - low
+
+            times, values = self.frequencies.get(cpu, ([], []))
+            index = bisect.bisect_right(times, low) - 1
+
+            if index < 0:
+                continue
+
+            # The frequency that held at `low`, then each change before `high`.
+            while low < high:
+                following = times[index + 1] if index + 1 < len(times) else high
+                until = min(following, high)
+
+                cycles += (until - low) * values[index]
+                known += until - low
+                low = until
+                index += 1
+
+        effort = {"decode_cpu_ms": ran / 1e6}
+
+        if known == ran and ran != 0:
+            effort["decode_mhz"] = cycles / ran / 1e3
+
+        return effort
 
     def mark(self, kind: str, request: int) -> dict[str, Any] | None:
         """Returns the one mark of a kind for a request, or None."""
@@ -861,6 +950,15 @@ def analyze_block(
         if decode is not None:
             row["decode_ms"] = decode["dur"] / 1e6
 
+        # The decode work of a request ends with the job of the reader, or
+        # with the decode section of a backend that has no job.
+        if start is not None and "job_ms" in row:
+            row.update(
+                trace.effort(start["ts"], start["ts"] + round(row["job_ms"] * 1e6))
+            )
+        elif start is not None and decode is not None:
+            row.update(trace.effort(start["ts"], decode["ts"] + decode["dur"]))
+
         # Only a backend that reads the file itself counts its bytes, with up
         # to one portion per input that its decoder no longer took.
         if "input" in entry:
@@ -976,6 +1074,8 @@ COLUMNS = [
     "outcome",
     "terminal",
     "decode_ms",
+    "decode_cpu_ms",
+    "decode_mhz",
     "draw_ms",
     "display_ms",
     "frame_period_ms",
@@ -1021,7 +1121,17 @@ LATENCIES = (
     "close_ms",
     "job_ms",
     "final_after_job_ms",
+    "decode_cpu_ms",
 )
+
+
+def slowdown(values: list[float]) -> float:
+    """Returns the median of the last quarter of the display times of a
+    block over the median of its first quarter, in the order of its
+    requests. A block that a device slowed as it went stands above 1."""
+    quarter = max(1, len(values) // 4)
+
+    return statistics.median(values[-quarter:]) / statistics.median(values[:quarter])
 
 
 class Condition(NamedTuple):
@@ -1095,7 +1205,22 @@ def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "block_medians_ms": {
                 block: statistics.median(values) for block, values in blocks.items()
             },
+            "block_slowdowns": {
+                block: round(slowdown(values), 3) for block, values in blocks.items()
+            },
         }
+
+        # The frequency at which the decode of each request ran. A group
+        # whose frequencies lie far apart mixes two states of the device.
+        frequencies = [row["decode_mhz"] for row in timed if "decode_mhz" in row]
+
+        if frequencies:
+            summary["decode_mhz"] = {
+                "count": len(frequencies),
+                "minimum": min(frequencies),
+                "median": statistics.median(frequencies),
+                "maximum": max(frequencies),
+            }
 
         if timed:
             summary["display_ms"] = describe([row["display_ms"] for row in timed])

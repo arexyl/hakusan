@@ -440,10 +440,12 @@ def block(arguments: argparse.Namespace) -> None:
 
     stop_harness()
     shell(f"rm -f {RECORDS}/{name}.json {RECORDS}/{name}.json.partial")
+    time.sleep(arguments.rest_seconds)
 
     notes = {
         "name": name,
         "recovered": recovered,
+        "rest_seconds": arguments.rest_seconds,
         "min_refresh_rate": refresh_setting(),
         "memory": arguments.memory,
         "held_pointer": arguments.hold_pointer,
@@ -543,6 +545,15 @@ def main() -> int:
         action="store_true",
         help="keep one pointer down on the harness for the block, without a"
         " move, for a device that renders at its high rate only under a touch",
+    )
+
+    runner.add_argument(
+        "--rest-seconds",
+        type=float,
+        default=0,
+        help="how long the device rests before the block, with no harness"
+        " process, for a device that slows its processor under a load that"
+        " lasts and reports no thermal status for it",
     )
 
     runner.add_argument("--name", type=plain, required=True, help="the file stem")

@@ -728,6 +728,54 @@ def conditions(model: str = "phone", page_size: int = 4096) -> dict:
     }
 
 
+class Effort(unittest.TestCase):
+    def trace(self, runs: list, frequencies: dict) -> "analyze.Trace":
+        trace = analyze.Trace.__new__(analyze.Trace)
+        trace.runs = runs
+        trace.frequencies = frequencies
+
+        return trace
+
+    def test_the_frequency_is_the_mean_over_the_time_that_the_threads_ran(
+        self,
+    ) -> None:
+        # Core 0 changes from 1 GHz to 3 GHz at 40 ms, and core 1 holds 2 GHz.
+        trace = self.trace(
+            [(10_000_000, 50_000_000, 0), (60_000_000, 80_000_000, 1)],
+            {0: ([0, 40_000_000], [1e6, 3e6]), 1: ([5_000_000], [2e6])},
+        )
+
+        # From 20 ms to 70 ms: 20 ms at 1 GHz, 10 ms at 3 GHz, 10 ms at 2 GHz.
+        effort = trace.effort(20_000_000, 70_000_000)
+
+        self.assertEqual(effort["decode_cpu_ms"], 40.0)
+        self.assertAlmostEqual(effort["decode_mhz"], (20 * 1000 + 10 * 3000 + 10 * 2000) / 40)
+
+    def test_a_window_without_a_run_has_no_frequency(self) -> None:
+        trace = self.trace([(10_000_000, 20_000_000, 0)], {0: ([0], [1e6])})
+
+        self.assertEqual(trace.effort(30_000_000, 40_000_000), {"decode_cpu_ms": 0.0})
+
+    def test_a_core_without_a_frequency_before_the_run_gives_none(self) -> None:
+        # The first frequency of the core comes after the thread ran there,
+        # and an emulator reports none at all.
+        late = self.trace([(10_000_000, 20_000_000, 0)], {0: ([15_000_000], [1e6])})
+        none = self.trace([(10_000_000, 20_000_000, 0)], {})
+
+        for trace in (late, none):
+            self.assertEqual(
+                trace.effort(0, 30_000_000), {"decode_cpu_ms": 10.0}
+            )
+
+    def test_a_block_that_slowed_as_it_went_stands_above_one(self) -> None:
+        flat = [100.0] * 20
+        stepped = [200.0] * 5 + [240.0] * 5 + [360.0] * 5 + [430.0] * 5
+
+        self.assertEqual(analyze.slowdown(flat), 1.0)
+        self.assertEqual(analyze.slowdown(stepped), 2.15)
+        self.assertEqual(analyze.slowdown([50.0]), 1.0)
+
+
 class Identity(unittest.TestCase):
     def ending(self, block: str, record: dict, host: dict) -> dict:
         return {"block": block, "identity": analyze.identity(record, host)}
