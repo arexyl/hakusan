@@ -405,6 +405,14 @@ internal class TrialRunner(
             last = output
           }
 
+          override suspend fun present(
+            source: () -> Publication?
+          ): Publication? {
+            consumer.room()
+
+            return consumer.take(source)?.also { last = it }
+          }
+
           override suspend fun shown(request: Int, rows: Int) {
             consumer.drawn.first { drawn ->
               drawn is Publication &&
@@ -560,7 +568,7 @@ internal class TrialRunner(
      * The version of the record. It rises with every change of a field or of
      * the steps of a cell, so the analysis never pools blocks that differ.
      */
-    const val SCHEMA = 7
+    const val SCHEMA = 8
 
     /** A request that takes longer is a timeout, which stops its block. */
     val WATCHDOG = 10.seconds

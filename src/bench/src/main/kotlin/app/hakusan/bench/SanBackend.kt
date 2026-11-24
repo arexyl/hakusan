@@ -58,10 +58,13 @@ import org.json.JSONObject
  * [backward] variant serves the block, and each attempt has a session and a
  * content owner of its own, so no attempt finds an output or a strip of an
  * earlier one. The worker of the reader decodes. The decode thread opens the
- * input and hands each publication to presentation, which the reader paces: it
- * copies the next revision only into a target that presentation has returned.
- * Where a step asks for it, that thread also watches for the output that ends
- * the hold of an input, and requests the cancellation of the request.
+ * input and asks presentation for a display frame whenever the reader queues a
+ * publication. That frame takes the publication from the reader, so one waits
+ * in the queue of the reader until it is drawn, and the reader paces them: it
+ * copies the next revision only once none waits, into a target that
+ * presentation has returned. Where a step asks for it, the decode thread also
+ * watches for the output that ends the hold of an input, and requests the
+ * cancellation of the request.
  *
  * The decode section of a request therefore spans waits for display frames
  * here. The sections of the reader on its worker hold the time of the engine.
@@ -161,7 +164,7 @@ private class SanContent(
     val top: Int
     val hold: Withheld?
     var resumed: Long? = null
-    var taken = 0
+    var learned = 0
 
     // Before the first execution of the request, which reads all three.
     acquired = Acquired(bytes = 0, again = 0)
@@ -177,7 +180,9 @@ private class SanContent(
       }
 
       is Band -> {
-        wanted = ReaderOutputRequest.Band(discovered(), step.top, step.bottom)
+        wanted =
+          ReaderOutputRequest.Band(discovered(display), step.top, step.bottom)
+
         size = IntSize(fixture.image.width, step.bottom - step.top)
         top = step.top
         hold = null
@@ -199,34 +204,44 @@ private class SanContent(
       }
     }
 
-    val moment = (step as? Interrupted)?.moment
-
     val watch: (suspend () -> Unit)? = hold?.let {
       { resumed = resume(request, it, display) }
     }
 
-    // The first publication is queued and not taken when this thread
-    // learns of it.
-    val arrived = if (moment == Moment.PUBLISHED) ::cancelOnce else null
+    // A publication waits in the queue of the reader, not taken, when this
+    // thread learns of it. The decoder is inside the image at the second one.
+    val cancelAt =
+      when ((step as? Interrupted)?.moment) {
+        Moment.PUBLISHED -> 1
+        Moment.DECODING -> 2
+        null -> 0
+      }
+
+    val arrived = {
+      learned += 1
+
+      if (learned == cancelAt) {
+        cancelOnce()
+      }
+    }
 
     val terminal =
-      execute(wanted, hold, watch, arrived) { lease ->
-        val output = publication(lease, request, size, top)
+      execute(wanted, display, hold, watch, arrived) { lease ->
+        // Read with the take, because the input may go on right after it.
         val held = hold?.waits == true
 
-        taken += 1
-
-        // Before the output goes on: this thread still holds its target.
-        if (moment == Moment.DECODING && taken == 2) {
-          cancelOnce()
-        }
-
-        display.publish(output)
+        val output = publication(lease, request, size, top)
 
         // More rows than the prefix holds would need a withheld byte.
-        check(!held || output.rows <= checkNotNull(hold).rows) {
-          "An output has ${output.rows} rows before the hold point ended."
+        if (held && output.rows > checkNotNull(hold).rows) {
+          lease.close()
+
+          error(
+            "An output has ${output.rows} rows before the hold point ended."
+          )
         }
+
+        output
       }
 
     val ended =
@@ -356,7 +371,7 @@ private class SanContent(
    * attempt learns it as a reader does: it asks for the whole image at the
    * width of the viewport, and the engine refuses that lease with the geometry.
    */
-  private suspend fun discovered(): ReaderImageGeometry {
+  private suspend fun discovered(display: Display): ReaderImageGeometry {
     image?.let {
       return it
     }
@@ -364,7 +379,7 @@ private class SanContent(
     val whole = ReaderOutputRequest.Whole(maxOutputWidth = viewportWidth)
 
     val terminal =
-      execute(whole) { lease ->
+      execute(whole, display) { lease ->
         lease.close()
 
         error("The whole image published an output.")
@@ -387,18 +402,25 @@ private class SanContent(
 
   /**
    * Runs one request to its terminal outcome, which it returns, and hands every
-   * publication to [take]. Its input withholds what [hold] names, if anything,
-   * and [watch] runs beside the takes until the request ends, where a failure
-   * of it ends the request. [arrived] runs when this thread learns of a queued
-   * publication, before it takes it. It counts what the input of the request
-   * delivered, if the reader opened one.
+   * publication to [display] as [wrap] makes it. Its input withholds what
+   * [hold] names, if anything, and [watch] runs beside the takes until the
+   * request ends, where a failure of it ends the request. [arrived] runs when
+   * this thread learns of a queued publication, which it does not take. It
+   * counts what the input of the request delivered, if the reader opened one.
+   *
+   * A publication of the executing request stays in the queue of the reader
+   * until the display frame that draws it takes it there, on the main thread,
+   * as presentation does under the contract of the reader. [wrap] runs with
+   * that take. It closes the lease when it fails, and its failure reaches this
+   * thread.
    */
   private suspend fun execute(
     wanted: ReaderOutputRequest,
+    display: Display,
     hold: Withheld? = null,
     watch: (suspend () -> Unit)? = null,
     arrived: (() -> Unit)? = null,
-    take: suspend (ReaderOutputLease) -> Unit,
+    wrap: (ReaderOutputLease) -> Publication,
   ): ReaderContentTerminal? {
     // The wakeup of the last publication of the request before may still be
     // here, when the end of that execution was seen first.
@@ -445,11 +467,24 @@ private class SanContent(
               published.onReceive { false }
             }
 
-            if (!ended) {
-              arrived?.invoke()
-            }
+            if (ended) {
+              // Nothing reaches a publication of an execution that has ended
+              // any more, and a frame that asked for one in vain would hold a
+              // request that has none. This thread takes it for the next
+              // display frame, which is the one that would have asked.
+              requests.takePublication()?.let {
+                val output = wrap(it.output)
 
-            requests.takePublication()?.let { take(it.output) }
+                Marks.instant(Marks.take(output))
+                display.publish(output)
+              }
+            } else {
+              arrived?.invoke()
+
+              display.present {
+                requests.takePublication()?.let { wrap(it.output) }
+              }
+            }
           } while (!ended)
 
           execution.await()
@@ -503,26 +538,26 @@ private class SanContent(
     request: Int,
     size: IntSize,
     top: Int,
-  ): Publication {
-    val region = lease.coverage.region
-
+  ): Publication =
     try {
+      val region = lease.coverage.region
+
       lease.bitmap.requireProfile(size)
       check(region.top == top) { "The output starts at row ${region.top}." }
-    } catch (failure: IllegalStateException) {
+
+      Publication(
+        bitmap = lease.bitmap,
+        request = request,
+        revision = lease.revision,
+        rows = region.bottom - region.top,
+        release = lease::close,
+      )
+    } catch (failure: RuntimeException) {
+      // Whatever refuses the output: nothing else would release the lease.
       lease.close()
 
       throw failure
     }
-
-    return Publication(
-      bitmap = lease.bitmap,
-      request = request,
-      revision = lease.revision,
-      rows = region.bottom - region.top,
-      release = lease::close,
-    )
-  }
 
   private companion object {
     /** The longest wait for the releases that the close of a display posts. */

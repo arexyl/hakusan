@@ -120,6 +120,8 @@ internal class Conditions(private val activity: Activity) {
           .put("debuggable", flags and ApplicationInfo.FLAG_DEBUGGABLE != 0)
           .put("decode_thread", DECODE_THREAD)
           .put("decode_nice", decodeNice)
+          // When presentation takes a queued publication of the native path.
+          .put("take", "frame")
           .put("san", san() ?: JSONObject.NULL),
       )
       .put(

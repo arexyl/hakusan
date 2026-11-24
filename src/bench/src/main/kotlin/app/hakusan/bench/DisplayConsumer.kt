@@ -9,6 +9,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
+import kotlin.coroutines.cancellation.CancellationException
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
@@ -50,15 +52,26 @@ internal class Publication(
 /**
  * The one display consumer of the harness, behind every backend.
  *
- * It holds at most one queued frame. A queued frame requests a display frame,
- * and each display frame promotes at most one, so every promoted revision is
- * drawn in a display frame of its own.
+ * It holds at most one queued frame, or one take in its place. Either requests
+ * a display frame, and each display frame promotes at most one, so every
+ * promoted revision is drawn in a display frame of its own.
  *
- * Everything but [queue] and [room] runs on the main thread.
+ * Everything but [queue], [take], and [room] runs on the main thread.
  */
 internal class DisplayConsumer {
+  /** What waits for the next display frame. */
+  private sealed interface Pending
+
+  private class Ready(val frame: Frame) : Pending
+
+  /** A source that the display frame asks for its output, and its answer. */
+  private class Late(
+    val source: () -> Publication?,
+    val answer: CompletableDeferred<Publication?>,
+  ) : Pending
+
   private val main = Handler(Looper.getMainLooper())
-  private val queued = MutableStateFlow<Frame?>(null)
+  private val queued = MutableStateFlow<Pending?>(null)
   private val wake = Channel<Unit>(Channel.CONFLATED)
   private val superseded = mutableListOf<Publication>()
   private val lastDrawn = MutableStateFlow<Frame?>(null)
@@ -82,9 +95,35 @@ internal class DisplayConsumer {
    * @throws IllegalStateException when a frame is already queued.
    */
   fun queue(frame: Frame) {
-    check(queued.compareAndSet(null, frame)) { "A frame is already queued." }
+    check(queued.compareAndSet(null, Ready(frame))) {
+      "A frame is already queued."
+    }
 
     wake.trySend(Unit)
+  }
+
+  /**
+   * Asks [source] for an output in the next display frame, on the main thread
+   * inside the frame callback, and returns what it gave once that frame has
+   * taken it, or null when it gave none. An output thereby stays with its
+   * source until the display frame that draws it.
+   *
+   * A [source] that fails has released what it took. Its failure is thrown
+   * here, on the thread that waits, and never in the frame callback.
+   *
+   * @throws IllegalStateException when a frame is already queued.
+   * @throws CancellationException when presentation ended before that frame.
+   */
+  suspend fun take(source: () -> Publication?): Publication? {
+    val answer = CompletableDeferred<Publication?>()
+
+    check(queued.compareAndSet(null, Late(source, answer))) {
+      "A frame is already queued."
+    }
+
+    wake.trySend(Unit)
+
+    return answer.await()
   }
 
   /**
@@ -113,7 +152,7 @@ internal class DisplayConsumer {
    */
   suspend fun clear(blank: Blank) {
     // The next display frame promotes a frame that is still queued.
-    while (!queued.compareAndSet(null, blank)) {
+    while (!queued.compareAndSet(null, Ready(blank))) {
       withFrameNanos {}
     }
 
@@ -138,9 +177,14 @@ internal class DisplayConsumer {
     shown = Blank(request = 0)
     release(outputs)
 
-    // A frame that was never promoted was never counted as held.
-    if (pending is Publication) {
-      pending.release()
+    when (pending) {
+      // A frame that was never promoted was never counted as held.
+      is Ready -> (pending.frame as? Publication)?.release()
+
+      // Its source was never asked, so it still holds its output.
+      is Late -> pending.answer.cancel()
+
+      null -> {}
     }
   }
 
@@ -165,7 +209,16 @@ internal class DisplayConsumer {
   }
 
   private fun promote() {
-    val next = queued.getAndUpdate { null } ?: return
+    val next =
+      when (val pending = queued.getAndUpdate { null }) {
+        is Ready -> pending.frame
+
+        // Without an output, this display frame changes nothing.
+        is Late -> ask(pending) ?: return
+
+        null -> return
+      }
+
     val previous = shown
 
     if (previous is Publication) {
@@ -177,6 +230,29 @@ internal class DisplayConsumer {
     }
 
     shown = next
+  }
+
+  /**
+   * Asks the source of [late] for its output and passes the answer on. A
+   * failure goes to the waiter alone: thrown here, it would end presentation.
+   */
+  private fun ask(late: Late): Publication? {
+    val output =
+      try {
+        late.source()
+      } catch (failure: Exception) {
+        late.answer.completeExceptionally(failure)
+
+        return null
+      }
+
+    if (output != null) {
+      Marks.instant(Marks.take(output))
+    }
+
+    late.answer.complete(output)
+
+    return output
   }
 
   private fun release(outputs: List<Publication>) {

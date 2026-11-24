@@ -39,6 +39,14 @@ internal object Marks {
         "bench.present ${frame.request} ${frame.revision} ${frame.rows}"
     }
 
+  /**
+   * Presentation took [output] from the queue of its backend: on the main
+   * thread, inside the frame callback of the display frame that draws it, or on
+   * the decode thread once the request of the output has ended.
+   */
+  fun take(output: Publication): String =
+    "bench.take ${output.request} ${output.revision}"
+
   /** Presentation returned [output] after a frame without it synchronized. */
   fun release(output: Publication): String =
     "bench.release ${output.request} ${output.revision}"

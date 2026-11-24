@@ -54,9 +54,9 @@ internal enum class Ending(val id: String) {
 /** The state of a request with a local input in which it is cancelled. */
 internal enum class Moment(val id: String) {
   /**
-   * Right after the second publication was taken. The display holds the first
-   * output and the backend the second, so none can be queued, and the decoder
-   * is inside the image.
+   * When the backend learns of the second publication, which waits for its
+   * display frame. The cancellation releases it, so the display keeps the first
+   * output, and the decoder is inside the image.
    */
   DECODING("decoding"),
 
@@ -114,6 +114,17 @@ internal interface Display {
    * for the display frame that promotes an output queued before it.
    */
   suspend fun publish(output: Publication)
+
+  /**
+   * Asks [source] for an output in the next display frame, on the main thread
+   * inside the frame callback, and returns what it gave once that frame has
+   * taken it, or null when it gave none. It waits first for the display frame
+   * that promotes an output queued before.
+   *
+   * A backend whose outputs wait in a queue of their own hands them over this
+   * way, so that each stays in that queue until the frame that draws it.
+   */
+  suspend fun present(source: () -> Publication?): Publication?
 
   /**
    * Suspends until a display frame has drawn an output of [request] with at
