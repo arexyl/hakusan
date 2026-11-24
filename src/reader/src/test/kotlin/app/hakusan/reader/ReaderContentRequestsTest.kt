@@ -619,6 +619,70 @@ class ReaderContentRequestsTest {
   }
 
   @Test
+  fun `a producer takes back the publication that still waits`() = readerTest {
+    val limits = ReaderOutputLimits(liveOutputs = 1, awaitingPublications = 1)
+    val owner = TestOwner.start(limits)
+
+    val requests = owner.requests
+
+    val bound = owner.execute(book.descriptor(0))
+
+    var released = 0
+    var presentations = 0
+    var producers = 0
+
+    val waiting = testLease(bound.representation) { released++ }
+
+    requests.setPresentationWakeup { presentations++ }
+    requests.setProducerWakeup(bound.request) { producers++ }
+
+    // Nothing waits before a publication.
+    assertFalse(requests.withdrawPublication(bound.request))
+    assertEquals(PUBLISHED, requests.publish(bound.request, waiting))
+    assertTrue(requests.withdrawPublication(bound.request))
+
+    // The owner released the output, as it releases a superseded one, and
+    // woke presentation for no second time.
+    assertEquals(1, released)
+    assertFalse(waiting.claimable())
+    assertFalse(requests.publicationWaits(bound.request))
+    assertNull(requests.takePublication())
+    assertEquals(1, presentations)
+    assertEquals(1, producers)
+    assertFalse(requests.withdrawPublication(bound.request))
+
+    // Its release has settled, so it no longer counts as a live output.
+    val last = testLease(bound.representation) {}
+
+    assertEquals(PUBLISHED, requests.publish(bound.request, last))
+    assertSame(last, requests.takePublication()?.output)
+    last.close()
+    requests.acknowledgeTerminal(bound.request, completed())
+  }
+
+  @Test
+  fun `a publication that presentation took is never taken back`() =
+    readerTest {
+      val owner = TestOwner.start()
+
+      val requests = owner.requests
+
+      val bound = owner.execute(book.descriptor(0))
+
+      var released = 0
+
+      val output = testLease(bound.representation) { released++ }
+
+      assertEquals(PUBLISHED, requests.publish(bound.request, output))
+      assertSame(output, requests.takePublication()?.output)
+      assertFalse(requests.withdrawPublication(bound.request))
+      assertEquals(0, released)
+      output.close()
+      assertEquals(1, released)
+      requests.acknowledgeTerminal(bound.request, completed())
+    }
+
+  @Test
   fun `only a queued publication wakes presentation`() = readerTest {
     val limits = ReaderOutputLimits(liveOutputs = 1, awaitingPublications = 1)
 
@@ -758,6 +822,10 @@ class ReaderContentRequestsTest {
 
       assertThrowsExactly(IllegalArgumentException::class.java) {
         requests.setProducerWakeup(waiting) {}
+      }
+
+      assertThrowsExactly(IllegalArgumentException::class.java) {
+        requests.withdrawPublication(waiting)
       }
     }
 

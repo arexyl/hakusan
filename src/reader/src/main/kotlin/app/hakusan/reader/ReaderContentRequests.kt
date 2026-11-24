@@ -164,10 +164,10 @@ internal constructor(cause: Throwable) :
  * has acknowledged its terminal outcome and every held lease has settled.
  *
  * **Failures.** A release failure never escapes [submit], [publish], [discard],
- * [takePublication], or [beginClose]. It travels through one close-failure
- * channel, and [awaitClosed] completes with it. A failed release is never
- * retried. Only a fatal [VirtualMachineError] of a release also propagates
- * where it happens.
+ * [withdrawPublication], [takePublication], or [beginClose]. It travels through
+ * one close-failure channel, and [awaitClosed] completes with it. A failed
+ * release is never retried. Only a fatal [VirtualMachineError] of a release
+ * also propagates where it happens.
  *
  * **Execution.** The owner runs no task, acquisition, or decoder. Its calls are
  * short and safe from any thread. It notifies cancellation observers after its
@@ -367,6 +367,34 @@ public class ReaderContentRequests(
 
       queued.any { it.request === request }
     }
+
+  /**
+   * Takes back the publication of the executing [request] that still waits for
+   * presentation and releases its output, as [publish] releases a superseded
+   * one. Returns whether one waited.
+   *
+   * A producer whose job has ended with unpublished rows calls it before its
+   * last copy: the released output returns its backing, which the last rows
+   * then extend, where the publication would otherwise hold that backing until
+   * a display frame took it. Presentation is not woken, and a publication that
+   * it has taken waits no longer, so it is never withdrawn.
+   *
+   * @throws IllegalArgumentException if [request] is not executing in this
+   *   owner.
+   */
+  internal fun withdrawPublication(request: ReaderContentRequest): Boolean {
+    val withdrawn =
+      synchronized(monitor) {
+        requireExecuting(request)
+
+        queued.firstOrNull { it.request === request }?.also(queued::remove)
+      }
+
+    // Releases run outside the monitor, as every release of the owner does.
+    withdrawn?.output?.close()
+
+    return withdrawn != null
+  }
 
   /**
    * Makes [wakeup] the producer wakeup of the executing [request], until its

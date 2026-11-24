@@ -33,6 +33,13 @@ import app.hakusan.reader.section
  * only the rows that the free target lacks: a later revision covers every row
  * of an earlier one. A target that presentation holds never receives a row.
  *
+ * **Final copy.** When the job has ended with rows beyond a revision that still
+ * waits, the output takes that revision back, and the last rows extend its
+ * target. They can then reach presentation in the display frame that would have
+ * taken the waiting revision, where they would otherwise wait for a target
+ * until that frame had passed. A frame that comes during that copy shows no new
+ * revision.
+ *
  * Confined to the worker. [cancel] requests the cancellation of the job, for a
  * failure or for a stale request.
  */
@@ -50,6 +57,7 @@ internal class SanOutput(
   private var lease = SanAbi.NO_HANDLE
   private var wanted = 0
   private var publishedRows = 0
+  private var publishedRevision = 0
   private var busy = false
   private var ended = false
   private var stale = false
@@ -150,13 +158,22 @@ internal class SanOutput(
 
   /**
    * Makes the final copy after the job ended, and returns whether it still
-   * waits: for a target that presentation will return, or for presentation to
-   * take or settle a publication. A cancellation of the request ends the wait,
-   * and so does a state in which nothing would end it.
+   * waits: for a target that presentation will return, or for a held output to
+   * settle after a busy publication. A revision that waits for presentation
+   * holds nothing back, because the output takes it back first. A cancellation
+   * of the request ends the wait, and so does a state in which nothing would
+   * end it.
    */
   fun finish(): Boolean {
     ended = true
     update()
+
+    if (withdraw()) {
+      // The release has posted the return of its target, and the last copy
+      // extends that target now.
+      pool.applyReturns()
+      publish()
+    }
 
     val pending =
       lease != SanAbi.NO_HANDLE &&
@@ -169,8 +186,27 @@ internal class SanOutput(
     return pending &&
       (busy ||
         targets.any { it.held } ||
-        requests.publicationWaits(request) ||
         (targets.isEmpty() && pool.awaitsRoom))
+  }
+
+  /**
+   * Takes back the revision that still waits for presentation, once the job has
+   * ended with rows beyond it, and returns whether one waited. That revision
+   * would hold one target until a display frame took it, while the drawn one
+   * holds the other, so the last rows would reach presentation a display frame
+   * later. A request that can publish nothing more has no revision that waits:
+   * what cancels it releases the queue of its owner.
+   */
+  private fun withdraw(): Boolean {
+    val unpublished = lease != SanAbi.NO_HANDLE && covered() > publishedRows
+
+    if (!unpublished || !requests.withdrawPublication(request)) {
+      return false
+    }
+
+    owner.platform.section("$WITHDRAW $publishedRevision") {}
+
+    return true
   }
 
   /** Releases the claim on the lease, after the last copy. */
@@ -282,7 +318,9 @@ internal class SanOutput(
       return
     }
 
-    val target = targets.firstOrNull { !it.held } ?: return
+    // The free target that lacks the fewest rows: after a withdrawal, that is
+    // the target of the withdrawn revision, also when the other one is free.
+    val target = targets.filter { !it.held }.maxByOrNull { it.rows } ?: return
 
     copy(target, covered)
 
@@ -310,6 +348,7 @@ internal class SanOutput(
       ReaderPublishResult.PUBLISHED -> {
         target.hand(ordinal)
         publishedRows = covered
+        publishedRevision = output.revision
         busy = false
       }
 
@@ -393,6 +432,12 @@ internal class SanOutput(
 
     /** The trace section of the creation of the targets of an output. */
     private const val TARGETS = "reader.targets"
+
+    /**
+     * The trace section of a withdrawal, without duration, whose name ends with
+     * the revision that was taken back.
+     */
+    private const val WITHDRAW = "reader.withdraw"
 
     /**
      * The report of a job that would have just completed the band of [strip]:

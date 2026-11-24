@@ -36,6 +36,12 @@ internal class ScriptedPlatform(
   /** The name of every section that was opened, in order. */
   val sections = CopyOnWriteArrayList<String>()
 
+  /**
+   * Runs on the worker when it opens a section, with the name of the section,
+   * for a test that acts between two steps of the adapter.
+   */
+  @Volatile var onSection: (String) -> Unit = {}
+
   private val open = AtomicInteger()
 
   override fun bind(): SanBinding {
@@ -69,6 +75,7 @@ internal class ScriptedPlatform(
   override fun beginSection(name: String) {
     sections += name
     open.incrementAndGet()
+    onSection(name)
   }
 
   override fun endSection() {

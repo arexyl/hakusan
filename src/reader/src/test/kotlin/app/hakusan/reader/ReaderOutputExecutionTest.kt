@@ -118,13 +118,27 @@ class ReaderOutputExecutionTest {
   fun `a stalled presentation holds the final copy only until a cancellation`() =
     readerTest {
       val requests = contentOwner()
+      val presenter = TestPresenter(requests)
+      val input = liveInput()
 
-      source.supply(completeInput())
+      source.supply(input)
       san.script(rowsOfFourBytes(width = 4, height = 4))
 
       val request = submit(requests)
       val running = executing(requests)
 
+      input.receiveThrough(4)
+
+      val first = presenter.take()
+
+      input.receiveThrough(8)
+
+      val second = presenter.take()
+
+      // Presentation holds both targets, so no revision waits that the end of
+      // the job could take back, and the last rows have no target.
+      input.receiveThrough(16)
+      input.end()
       san.await { calls.any { it.status == SanAbi.STATUS_OK && it.isStep } }
 
       assertNull(request.terminal)
@@ -132,7 +146,68 @@ class ReaderOutputExecutionTest {
 
       assertSame(request, running.request())
       assertEquals(completed(), request.terminal)
-      assertTrue(copiedRows() < 4)
+      assertEquals(2, copiedRows())
+      assertFalse(platform.sections.any { it.startsWith("reader.withdraw") })
+      first.close()
+      second.close()
+      assertReleased()
+    }
+
+  @Test
+  fun `the end of a job takes back the revision that waits and extends it`() =
+    readerTest {
+      val requests = contentOwner()
+      val input = liveInput()
+
+      source.supply(input)
+      san.script(rowsOfFourBytes(width = 4, height = 4))
+
+      val request = submit(requests)
+      val running = executing(requests)
+
+      // The first revision waits, so the next two rows are copied nowhere.
+      input.receiveThrough(4)
+      san.await { contents.isNotEmpty() && steppedAt(4L) }
+      input.receiveThrough(12)
+      san.await { steppedAt(12L) }
+
+      assertEquals(1, copiedRows())
+      assertTrue(requests.publicationWaits(request))
+
+      // No presentation takes anything, and the request still completes.
+      input.receiveThrough(16)
+      input.end()
+
+      assertSame(request, running.request())
+      assertEquals(completed(), request.terminal)
+
+      val last = checkNotNull(requests.takePublication()).output
+
+      assertEquals(4, last.rows)
+      assertEquals(listOf(copy(0, 1), copy(1, 3)), last.scripted.rowCopies())
+      assertNull(requests.takePublication())
+
+      // The other target of the output was never written.
+      assertEquals(2, platform.created.size)
+      assertEquals(
+        4,
+        platform.created.sumOf { it.copies.sumOf { it.rowCount } },
+      )
+
+      assertEquals(
+        listOf(
+          "reader.targets",
+          "reader.copy 1 0 1",
+          "reader.job 0 0",
+          "reader.withdraw 1",
+          "reader.copy 4 1 3",
+        ),
+        platform.sections.filter { it != "reader.step" },
+      )
+
+      // The return of the withdrawn revision publishes nothing behind it.
+      last.close()
+      assertNull(requests.takePublication())
       assertReleased()
     }
 
@@ -182,11 +257,10 @@ class ReaderOutputExecutionTest {
     val requests = contentOwner()
     val presenter = TestPresenter(requests)
     val stalled = stallAtThreeRows(requests, presenter)
+    val second = presenter.take()
 
     stalled.input.fail(ReaderAcquisitionFailure.FAILED)
     san.await { calls.any { it.status == SanAbi.STATUS_CANCELED } }
-
-    val second = presenter.take()
 
     // Presentation holds both targets, and the third row waits for one.
     assertEquals(2, second.rows)
@@ -205,6 +279,123 @@ class ReaderOutputExecutionTest {
     )
 
     second.close()
+    last.close()
+    assertReleased()
+  }
+
+  @Test
+  fun `a request replaced right after the withdrawal gets no last copy`() =
+    readerTest {
+      cancelAfterWithdrawal { submit(it, unit = 1) }
+    }
+
+  @Test
+  fun `an owner closed right after the withdrawal gets no last copy`() =
+    readerTest {
+      cancelAfterWithdrawal { it.beginClose() }
+    }
+
+  /**
+   * Ends a job while its first revision waits, and runs [cancel] on the worker
+   * between the withdrawal of that revision and the last copy.
+   */
+  private suspend fun CoroutineScope.cancelAfterWithdrawal(
+    cancel: (ReaderContentRequests) -> Unit
+  ) {
+    val requests = contentOwner()
+    val input = liveInput()
+
+    source.supply(input)
+    san.script(rowsOfFourBytes(width = 4, height = 4))
+
+    val request = submit(requests)
+    val running = executing(requests)
+
+    platform.onSection = { name ->
+      if (name.startsWith("reader.withdraw")) {
+        cancel(requests)
+      }
+    }
+
+    input.receiveThrough(4)
+    san.await { contents.isNotEmpty() && steppedAt(4L) }
+    input.receiveThrough(16)
+    input.end()
+
+    // The step accepted the completion before the cancellation, so the
+    // request completes, and its last rows reach no target.
+    assertSame(request, running.request())
+    assertEquals(completed(), request.terminal)
+
+    assertEquals(
+      listOf(
+        "reader.targets",
+        "reader.copy 1 0 1",
+        "reader.job 0 0",
+        "reader.withdraw 1",
+      ),
+      platform.sections.filter { it != "reader.step" },
+    )
+
+    assertEquals(
+      listOf(copy(0, 1)),
+      platform.created.flatMap { it.rowCopies() },
+    )
+    assertNull(requests.takePublication())
+    platform.onSection = {}
+    assertReleased()
+  }
+
+  @Test
+  fun `the last rows extend the free target that lacks the fewest`() =
+    readerTest {
+      val requests = contentOwner()
+      val presenter = TestPresenter(requests)
+      val stalled = stallAtThreeRows(requests, presenter)
+
+      // Presentation returns the first target, with one row, while the second
+      // revision still waits with two.
+      stalled.first.close()
+      stalled.input.receiveThrough(16)
+      stalled.input.end()
+
+      assertSame(stalled.request, stalled.running.request())
+      assertEquals(completed(), stalled.request.terminal)
+
+      val last = presenter.take()
+
+      assertEquals(4, last.rows)
+      assertNotSame(stalled.first.scripted, last.scripted)
+      assertEquals(listOf(copy(0, 2), copy(2, 2)), last.scripted.rowCopies())
+      assertEquals(listOf(copy(0, 1)), stalled.first.scripted.rowCopies())
+      last.close()
+      assertReleased()
+    }
+
+  @Test
+  fun `a producer failure takes back the revision that waits`() = readerTest {
+    val requests = contentOwner()
+    val presenter = TestPresenter(requests)
+    val stalled = stallAtThreeRows(requests, presenter)
+
+    // The second revision waits. The job ends as canceled, and the request
+    // stands, so its last row extends the target of that revision.
+    stalled.input.fail(ReaderAcquisitionFailure.FAILED)
+
+    assertSame(stalled.request, stalled.running.request())
+
+    assertEquals(
+      failed(ReaderContentFailure.INPUT_FAILED),
+      stalled.request.terminal,
+    )
+
+    val last = presenter.take()
+
+    assertEquals(3, last.rows)
+    assertNotSame(stalled.first.scripted, last.scripted)
+    assertEquals(listOf(copy(0, 2), copy(2, 1)), last.scripted.rowCopies())
+    assertEquals(listOf(1, 3), presenter.taken.map { it.revision })
+    stalled.first.close()
     last.close()
     assertReleased()
   }
