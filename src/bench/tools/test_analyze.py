@@ -325,6 +325,113 @@ class Entries(unittest.TestCase):
         self.assertIsNone(analyze.useful_draw(draws, 1537))
 
 
+class AfterJob(unittest.TestCase):
+    MS = 1_000_000
+
+    def values(self, draw: int, withdrawals: tuple[int, ...] = ()) -> dict:
+        """A request from 100 ms on whose job ends at 157 ms, with a frame
+        callback every 16 ms from 110 ms on, in milliseconds."""
+        jobs = [analyze.Job(90 * self.MS, 0, 5), analyze.Job(157 * self.MS, 0, 2400)]
+        frames = [(110 + 16 * index) * self.MS for index in range(8)]
+
+        return analyze.after_job(
+            jobs,
+            [at * self.MS for at in withdrawals],
+            frames,
+            100 * self.MS,
+            draw * self.MS,
+        )
+
+    def test_a_final_output_in_the_first_frame_after_the_job_is_not_late(self) -> None:
+        # The frame callbacks around the end of the job begin at 142 and 158.
+        self.assertEqual(
+            self.values(draw=159),
+            {
+                "job_ms": 57.0,
+                "final_after_job_ms": 2.0,
+                "late_frames": 0,
+                "withdrawals": 0,
+            },
+        )
+
+    def test_each_frame_callback_before_the_one_that_draws_is_a_late_frame(
+        self,
+    ) -> None:
+        self.assertEqual(self.values(draw=175)["late_frames"], 1)
+        self.assertEqual(self.values(draw=191)["late_frames"], 2)
+        self.assertEqual(self.values(draw=175)["final_after_job_ms"], 18.0)
+
+    def test_only_the_withdrawals_of_the_request_count(self) -> None:
+        self.assertEqual(self.values(159, withdrawals=(95, 157, 300))["withdrawals"], 1)
+
+    def test_the_last_job_before_the_draw_is_the_job_of_the_request(self) -> None:
+        early = analyze.Job(120 * self.MS, 0, 0)
+        late = analyze.Job(157 * self.MS, 0, 2400)
+        frames = [158 * self.MS]
+
+        values = analyze.after_job(
+            [early, late], [], frames, 100 * self.MS, 159 * self.MS
+        )
+
+        self.assertEqual(values["job_ms"], 57.0)
+
+    def test_a_request_without_a_job_has_no_value(self) -> None:
+        self.assertEqual(
+            analyze.after_job([], [], [150 * self.MS], 100 * self.MS, 159 * self.MS), {}
+        )
+
+        # A job that ended before the request is no job of it.
+        self.assertEqual(
+            analyze.after_job(
+                [analyze.Job(90 * self.MS, 0, 5)], [], [], 100 * self.MS, 159 * self.MS
+            ),
+            {},
+        )
+
+    def test_a_job_that_ends_inside_the_frame_of_the_draw_is_not_late(self) -> None:
+        # The callback began at 158, before the job ended at 158.5.
+        jobs = [analyze.Job(158 * self.MS + self.MS // 2, 0, 2400)]
+
+        values = analyze.after_job(
+            jobs, [], [158 * self.MS], 100 * self.MS, 159 * self.MS
+        )
+
+        self.assertEqual(values["late_frames"], 0)
+
+    def test_a_summary_counts_the_requests_by_their_late_frames(self) -> None:
+        request = {
+            "block": "a",
+            "cell": "ordinary",
+            "backend": "san",
+            "step": 0,
+            "warmup": False,
+            "outcome": "ok",
+            "terminal": "completed",
+            "pointer_held": False,
+            "memory": "none",
+            "gaps": "",
+            "display_ms": 100.0,
+            "frame_period_ms": 16.6,
+            "job_ms": 57.0,
+            "final_after_job_ms": 2.0,
+            "late_frames": 0,
+            "withdrawals": 1,
+        }
+
+        late = {**request, "late_frames": 1, "withdrawals": 0}
+        (summary,) = analyze.summarize([request, request, late])
+
+        self.assertEqual(summary["late_frames"], {0: 2, 1: 1})
+        self.assertEqual(summary["withdrawals"], 2)
+        self.assertEqual(summary["job_ms"]["median"], 57.0)
+
+        # A reference has no job of the reader, and its summary no such count.
+        for key in ("job_ms", "final_after_job_ms", "late_frames", "withdrawals"):
+            del request[key]
+
+        self.assertNotIn("late_frames", analyze.summarize([request])[0])
+
+
 class Cancellations(unittest.TestCase):
     def test_the_quiescent_job_ends_between_the_cancellation_and_the_return(
         self,

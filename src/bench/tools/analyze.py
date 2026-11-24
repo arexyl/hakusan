@@ -97,7 +97,8 @@ select s.ts, s.dur, s.name
 from slice s
 join thread_track tt on s.track_id = tt.id
 join thread t using (utid)
-where (s.name glob 'reader.job *' or s.name glob 'reader.copy *')
+where (s.name glob 'reader.job *' or s.name glob 'reader.copy *'
+       or s.name glob 'reader.withdraw *')
   and t.upid in (select upid from harness)
 order by s.ts;
 """
@@ -313,6 +314,13 @@ class Trace:
             Copy(int(row["ts"]), *map(int, row["name"].split(" ")[2:]))
             for row in sections
             if row["name"].startswith("reader.copy ")
+        ]
+
+        # When the reader took back a revision that waited at the end of a job.
+        self.withdrawals = [
+            int(row["ts"])
+            for row in sections
+            if row["name"].startswith("reader.withdraw ")
         ]
 
         self.marks: dict[tuple[str, int], list[dict[str, Any]]] = {}
@@ -587,6 +595,37 @@ def cancellation(trace: Trace, request: int, row: dict[str, Any]) -> list[str]:
     return []
 
 
+def after_job(
+    jobs: list[Job], withdrawals: list[int], frames: list[int], start: int, draw: int
+) -> dict[str, Any]:
+    """Returns what lies between the end of the job of a request and the draw
+    of its final output, for a request that began at start and whose final
+    output a frame drew at draw. A request without a job of the reader has
+    nothing here.
+
+    The late frames are the frame callbacks that began after the job had
+    ended and before the one that drew the final output. With none, the last
+    rows reached the first display frame that could show them. A withdrawal
+    is the reader taking back a revision that waited at the end of the job.
+    """
+    ended = [job.end for job in jobs if start <= job.end <= draw]
+
+    if not ended:
+        return {}
+
+    # A request that learns its geometry first has a job before its own.
+    end = ended[-1]
+    between = sum(end <= frame <= draw for frame in frames)
+
+    return {
+        "job_ms": (end - start) / 1e6,
+        "final_after_job_ms": (draw - end) / 1e6,
+        # The frame of the draw began before the draw, so it counts as one.
+        "late_frames": max(between - 1, 0),
+        "withdrawals": sum(start <= withdrawal <= draw for withdrawal in withdrawals),
+    }
+
+
 def resident(
     attempt: list[dict[str, Any]], entry: dict[str, Any], resets: bool
 ) -> tuple[dict[str, int], list[str]]:
@@ -742,6 +781,12 @@ def analyze_block(
             row["draw_ms"] = (draw["ts"] - start["ts"]) / 1e6
             row["frame_period_ms"] = trace.cadence(draw["ts"])
 
+            row.update(
+                after_job(
+                    trace.jobs, trace.withdrawals, trace.frames, start["ts"], draw["ts"]
+                )
+            )
+
             if presented is not None:
                 row["display_ms"] = (presented - start["ts"]) / 1e6
 
@@ -872,6 +917,10 @@ COLUMNS = [
     "cancel_settled_ms",
     "cancel_rows_bound",
     "close_ms",
+    "job_ms",
+    "final_after_job_ms",
+    "late_frames",
+    "withdrawals",
     "acquired_bytes",
     "reacquired_bytes",
     "ledger_peak_live_bytes",
@@ -900,6 +949,8 @@ LATENCIES = (
     "cancel_quiescent_ms",
     "cancel_settled_ms",
     "close_ms",
+    "job_ms",
+    "final_after_job_ms",
 )
 
 
@@ -983,6 +1034,17 @@ def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
             if values:
                 summary[column] = describe(values)
+
+        late = [row["late_frames"] for row in clocked if "late_frames" in row]
+
+        if late:
+            # How many requests drew their final output so many frames after
+            # the first one that began once their job had ended.
+            summary["late_frames"] = dict(sorted(collections.Counter(late).items()))
+
+            summary["withdrawals"] = sum(
+                row["withdrawals"] for row in clocked if "withdrawals" in row
+            )
 
         for column in COLUMNS:
             if column.endswith("_bytes") or column == "cancel_rows_bound":
