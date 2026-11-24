@@ -357,6 +357,7 @@ class Cancellations(unittest.TestCase):
             "outcome": "ok",
             "terminal": "canceled",
             "pointer_held": False,
+            "memory": "none",
             "gaps": "",
             "cancel_settled_ms": 2.0,
             "cancel_rows_bound": 0,
@@ -381,6 +382,7 @@ class Cancellations(unittest.TestCase):
             "outcome": "ok",
             "terminal": "completed",
             "pointer_held": False,
+            "memory": "trace",
             "gaps": "",
             "display_ms": 100.0,
             "frame_period_ms": 8.3,
@@ -408,6 +410,7 @@ class Cancellations(unittest.TestCase):
             "outcome": "ok",
             "terminal": "completed",
             "pointer_held": False,
+            "memory": "trace",
             "gaps": "",
             "anon_peak_bytes": 15_000_000.0,
             "anon_level_bytes": 120_000_000.0,
@@ -420,6 +423,48 @@ class Cancellations(unittest.TestCase):
         self.assertEqual(summary["anon_peak_bytes"]["maximum"], 15_000_000.0)
         self.assertEqual(summary["anon_level_bytes"]["median"], 135_000_000.0)
         self.assertEqual(summary["anon_level_bytes"]["maximum"], 150_000_000.0)
+
+    def test_a_cell_takes_its_times_from_its_blocks_without_memory(self) -> None:
+        timed = {
+            "block": "a",
+            "cell": "ordinary",
+            "backend": "san",
+            "step": 0,
+            "warmup": False,
+            "outcome": "ok",
+            "terminal": "completed",
+            "pointer_held": False,
+            "memory": "none",
+            "gaps": "",
+            "display_ms": 100.0,
+            "frame_period_ms": 16.6,
+            "close_ms": 1.0,
+        }
+
+        slower = {"display_ms": 108.0, "close_ms": 3.0, "anon_peak_bytes": 15.0}
+        events = {**timed, **slower, "block": "m", "memory": "trace"}
+        reads = {**timed, **slower, "block": "p", "memory": "proc"}
+        untimed = {**events, "block": "n"}
+
+        del untimed["display_ms"]
+
+        (summary,) = analyze.summarize([timed, events, reads, untimed])
+
+        self.assertEqual((summary["requests"], summary["timed_requests"]), (4, 1))
+        self.assertTrue(summary["times_from_blocks_without_memory"])
+        self.assertEqual(summary["display_ms"]["maximum"], 100.0)
+        self.assertEqual(summary["close_ms"]["maximum"], 1.0)
+        self.assertEqual(summary["block_medians_ms"], {"a": 100.0})
+        self.assertEqual(summary["timing_gaps"], 0)
+        self.assertEqual(summary["anon_peak_bytes"]["count"], 3)
+
+        # A cell whose blocks all read memory has no other times.
+        (validation,) = analyze.summarize([events, reads, untimed])
+
+        self.assertEqual(validation["timed_requests"], 3)
+        self.assertFalse(validation["times_from_blocks_without_memory"])
+        self.assertEqual(validation["display_ms"]["maximum"], 108.0)
+        self.assertEqual(validation["timing_gaps"], 1)
 
     def test_the_blocks_under_a_held_pointer_are_summarized_apart(self) -> None:
         free = {

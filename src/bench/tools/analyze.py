@@ -907,7 +907,9 @@ def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Returns the statistics of each cell, backend, and step position over
     its measured requests. Step positions are never pooled, and neither are
     the blocks under a held pointer with the blocks without one, because a
-    display may refresh at another rate under a touch."""
+    display may refresh at another rate under a touch. The times of a cell
+    come from its blocks without memory where it has such blocks, and its
+    memory from every block that read it."""
     groups: dict[tuple[str, str, int, bool], list[dict[str, Any]]] = {}
 
     for row in rows:
@@ -918,7 +920,12 @@ def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     summaries = []
 
     for (cell, backend, step, pointer), group in sorted(groups.items()):
-        timed = [row for row in group if "display_ms" in row]
+        # Reading its memory may slow a request, so a cell that has blocks
+        # without memory takes its times from those alone. A cell whose blocks
+        # all read memory, as in a validation, has no other times.
+        plain = [row for row in group if row["memory"] == "none"]
+        clocked = plain or group
+        timed = [row for row in clocked if "display_ms" in row]
         blocks: dict[str, list[float]] = {}
 
         for row in timed:
@@ -928,7 +935,7 @@ def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         # ended otherwise as its step expects is no gap.
         untimed = sum(
             row["outcome"] != "ok" or row["terminal"] == "completed"
-            for row in group
+            for row in clocked
             if "display_ms" not in row
         )
 
@@ -938,6 +945,8 @@ def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "step": step,
             "pointer_held": pointer,
             "requests": len(group),
+            "timed_requests": len(clocked),
+            "times_from_blocks_without_memory": bool(plain),
             "not_ok": sum(row["outcome"] != "ok" for row in group),
             "terminals": dict(
                 sorted(collections.Counter(row["terminal"] for row in group).items())
@@ -970,7 +979,7 @@ def summarize(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             summary["settle_ms"] = None if None in intervals else max(intervals)
 
         for column in LATENCIES:
-            values = [row[column] for row in group if column in row]
+            values = [row[column] for row in clocked if column in row]
 
             if values:
                 summary[column] = describe(values)
@@ -1095,7 +1104,8 @@ def main() -> int:
         print(
             f"{cell['cell']} {cell['backend']} step {cell['step']}"
             f"{' under a held pointer' if cell['pointer_held'] else ''}:"
-            f" {cell['requests']} requests, {cell['timing_gaps']} timing gaps,"
+            f" {cell['timed_requests']} timed requests,"
+            f" {cell['timing_gaps']} timing gaps,"
             f" {cell['not_ok']} not ok"
             + (
                 f", median {display['median']:.1f} ms, p95 {display['p95']:.1f} ms,"
