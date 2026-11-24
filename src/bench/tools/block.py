@@ -434,6 +434,13 @@ def block(arguments: argparse.Namespace) -> None:
     configuration = trace_configuration(arguments.trace, arguments.memory)
     requests = arguments.warmups + arguments.attempts
 
+    # Before anything changes on the device: a block on another phone than
+    # the one that its run names would end in the files of that run.
+    model = shell("getprop ro.product.model").strip()
+
+    if arguments.model is not None and model != arguments.model:
+        raise Failure(f"the device is a {model}, not the {arguments.model} of the run")
+
     output.mkdir(parents=True, exist_ok=True)
 
     recovered = recover()
@@ -559,6 +566,12 @@ def main() -> int:
     runner.add_argument("--name", type=plain, required=True, help="the file stem")
     runner.add_argument("--output", type=pathlib.Path, required=True)
     runner.add_argument("--transport", required=True, help="how adb is attached")
+
+    runner.add_argument(
+        "--model",
+        help="the model that the device must report, as ro.product.model; the"
+        " block refuses another device before it changes anything on it",
+    )
     runner.add_argument("--trace", type=pathlib.Path, default=tools / "trace.textproto")
 
     runner.add_argument(

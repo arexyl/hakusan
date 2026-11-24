@@ -67,6 +67,9 @@ def run_block(
     if arguments.hold_pointer:
         command.append("--hold-pointer")
 
+    if arguments.model is not None:
+        command.append(f"--model={arguments.model}")
+
     command.append(f"--memory={arguments.memory_source if memory else 'none'}")
 
     status = subprocess.run(command, check=False).returncode
@@ -150,6 +153,10 @@ def main() -> int:
 
     parser.add_argument("--output", type=pathlib.Path, required=True)
     parser.add_argument("--transport", required=True)
+
+    parser.add_argument(
+        "--model", help="the model that the device must report in every block"
+    )
     arguments = parser.parse_args()
 
     if len(arguments.backend) not in (1, 2):
