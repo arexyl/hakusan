@@ -459,6 +459,13 @@ class ReaderEngineDeviceTest {
       assertEquals(0L, counters.leaseCount)
       assertEquals(0L, counters.inputBytes)
       assertEquals(0L, counters.outputBytes)
+
+      // What stays is the engine's own bookkeeping and the block that it
+      // keeps for its next lease, which no handle reaches.
+      assertEquals(
+        counters.metadataBytes + counters.keptBytes,
+        counters.liveBytes,
+      )
     }
 
     /** Releases every lease of the view and waits for the frame without one. */

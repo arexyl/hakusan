@@ -300,7 +300,12 @@ class Entries(unittest.TestCase):
                 "peak_committed_bytes": 50,
                 "live_bytes": 60,
             },
-            "close": {"peak_live_bytes": 40, "peak_committed_bytes": 50, "live_bytes": 7},
+            "close": {
+                "peak_live_bytes": 40,
+                "peak_committed_bytes": 50,
+                "live_bytes": 7,
+                "kept_bytes": 5,
+            },
         }
 
         self.assertEqual(
@@ -309,6 +314,7 @@ class Entries(unittest.TestCase):
                 "ledger_peak_live_bytes": 40,
                 "ledger_peak_committed_bytes": 50,
                 "ledger_close_live_bytes": 7,
+                "ledger_close_kept_bytes": 5,
             },
         )
 

@@ -98,6 +98,7 @@ internal class SanBackend(
       .put("input_bytes", counters.inputBytes)
       .put("metadata_bytes", counters.metadataBytes)
       .put("output_bytes", counters.outputBytes)
+      .put("kept_bytes", counters.keptBytes)
       .put("contents", counters.contentCount)
       .put("jobs", counters.jobCount)
       .put("leases", counters.leaseCount)

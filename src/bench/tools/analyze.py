@@ -109,7 +109,7 @@ GPU = "GPU Memory"
 
 # The version of the records that this analysis reads, which the harness
 # raises with every change of a field or of the steps of a cell.
-SCHEMA = 8
+SCHEMA = 9
 
 # The longest distance of two frame callbacks that still count as consecutive.
 CADENCE_LIMIT_NS = 100_000_000
@@ -486,7 +486,8 @@ def terminal(entry: dict[str, Any]) -> str:
 def ledger(entry: dict[str, Any]) -> dict[str, int]:
     """Returns the values of the ledger reads of an entry: the peaks of the
     request from its terminal read, and what the engine holds once the
-    attempt has closed."""
+    attempt has closed, with the part of it that is the block kept for the
+    next lease."""
     reads = entry.get("ledger", {})
     values = {}
 
@@ -496,6 +497,7 @@ def ledger(entry: dict[str, Any]) -> dict[str, int]:
 
     if "close" in reads:
         values["ledger_close_live_bytes"] = reads["close"]["live_bytes"]
+        values["ledger_close_kept_bytes"] = reads["close"]["kept_bytes"]
 
     return values
 
@@ -926,6 +928,7 @@ COLUMNS = [
     "ledger_peak_live_bytes",
     "ledger_peak_committed_bytes",
     "ledger_close_live_bytes",
+    "ledger_close_kept_bytes",
     "resident_peak_bytes",
     "anon_peak_bytes",
     "anon_level_bytes",

@@ -568,7 +568,7 @@ internal class TrialRunner(
      * The version of the record. It rises with every change of a field or of
      * the steps of a cell, so the analysis never pools blocks that differ.
      */
-    const val SCHEMA = 8
+    const val SCHEMA = 9
 
     /** A request that takes longer is a timeout, which stops its block. */
     val WATCHDOG = 10.seconds

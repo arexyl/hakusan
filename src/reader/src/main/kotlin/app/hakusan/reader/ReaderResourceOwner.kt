@@ -34,6 +34,8 @@ public data class ReaderEngineCounters(
   public val metadataBytes: Long,
   /** The live bytes of output leases and intermediates. */
   public val outputBytes: Long,
+  /** The live bytes of the block that the engine keeps for its next lease. */
+  public val keptBytes: Long,
   public val contentCount: Long,
   public val jobCount: Long,
   public val leaseCount: Long,
@@ -349,6 +351,7 @@ internal constructor(
         inputBytes = counters[SanAbi.ENGINE_COUNTERS_INPUT_BYTES],
         metadataBytes = counters[SanAbi.ENGINE_COUNTERS_METADATA_BYTES],
         outputBytes = counters[SanAbi.ENGINE_COUNTERS_OUTPUT_BYTES],
+        keptBytes = counters[SanAbi.ENGINE_COUNTERS_KEPT_BYTES],
         contentCount = counters[SanAbi.ENGINE_COUNTERS_CONTENT_COUNT],
         jobCount = counters[SanAbi.ENGINE_COUNTERS_JOB_COUNT],
         leaseCount = counters[SanAbi.ENGINE_COUNTERS_LEASE_COUNT],
