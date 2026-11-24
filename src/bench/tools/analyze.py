@@ -108,7 +108,7 @@ GPU = "GPU Memory"
 
 # The version of the records that this analysis reads, which the harness
 # raises with every change of a field or of the steps of a cell.
-SCHEMA = 6
+SCHEMA = 7
 
 # The longest distance of two frame callbacks that still count as consecutive.
 CADENCE_LIMIT_NS = 100_000_000
@@ -587,6 +587,59 @@ def cancellation(trace: Trace, request: int, row: dict[str, Any]) -> list[str]:
     return []
 
 
+def resident(
+    attempt: list[dict[str, Any]], entry: dict[str, Any], resets: bool
+) -> tuple[dict[str, int], list[str]]:
+    """Returns the memory values of a request whose harness read them from
+    /proc/self, with the gaps.
+
+    The peak is the highest resident memory since the reset before the
+    request, above the resident memory right after that reset, so it covers
+    file and shared pages beside the anonymous ones. The level and the
+    retained values are anonymous memory, as in a trace. The last request of
+    an attempt carries the retained values.
+    """
+    first = attempt[0].get("memory", {}).get("request")
+    reads = entry.get("memory", {})
+    start = reads.get("request")
+    end = reads.get("end")
+
+    if first is None or start is None or end is None:
+        return {}, ["no memory read at the request or at its end"]
+
+    values = {"anon_level_bytes": start["anon_bytes"]}
+    gaps = []
+
+    if resets:
+        values["resident_peak_bytes"] = end["peak_bytes"] - start["rss_bytes"]
+    else:
+        gaps.append("the platform denied the reset of the peak")
+
+    if start["swap_bytes"] != end["swap_bytes"]:
+        gaps.append("the swap counter changed during the request")
+
+    if entry is attempt[-1]:
+        settled = reads.get("settled")
+        values["anon_retained_close_bytes"] = end["anon_bytes"] - first["anon_bytes"]
+
+        if settled is None:
+            gaps.append("no memory read at the end of the settle interval")
+        else:
+            values["anon_retained_settled_bytes"] = (
+                settled["anon_bytes"] - first["anon_bytes"]
+            )
+
+        # Both retained values subtract the read at the first request.
+        if any(
+            read["swap_bytes"] != first["swap_bytes"]
+            for read in (end, settled)
+            if read is not None
+        ):
+            gaps.append("the swap counter changed during the attempt")
+
+    return values, gaps
+
+
 def analyze_block(
     directory: pathlib.Path, name: str
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
@@ -598,10 +651,18 @@ def analyze_block(
     if record["schema"] != SCHEMA:
         raise Failure(f"{name}: a record of version {record['schema']}, not {SCHEMA}")
 
+    # Where the resident memory of the block comes from: the events of its
+    # trace, the reads of its harness from /proc/self, or nowhere.
+    memory = host["memory"]
+
+    if memory not in ("trace", "proc", "none"):
+        raise Failure(f"{name}: no such source of memory as {memory!r}")
+
     ending = {
         "block": name,
         "outcome": record["outcome"],
         "failure": record.get("failure"),
+        "memory": memory,
     }
 
     # A block that failed before its first request recorded no conditions.
@@ -611,16 +672,29 @@ def analyze_block(
     if record["conditions"]["harness"]["debuggable"]:
         raise Failure(f"{name}: a debuggable harness measures nothing")
 
+    if (memory == "proc") != ("memory" in record):
+        raise Failure(f"{name}: the harness and the host name two sources of memory")
+
+    if memory == "proc":
+        # The kernel counts resident memory in pages.
+        ending["resident_resolution_bytes"] = record["conditions"]["device"][
+            "page_size"
+        ]
+
     trace = Trace(directory / f"{name}.perfetto-trace")
 
     block_gaps = [f"the trace lost data: {loss}" for loss in sorted(trace.losses)]
 
-    if host["memory_events"]:
-        block_gaps += [
-            f"the trace holds no {event} event"
-            for event in ("rss_stat_throttled", "gpu_mem_total")
-            if event not in trace.events
-        ]
+    block_gaps += [
+        f"the trace holds no {event} event"
+        for event in {
+            "trace": ("rss_stat_throttled", "gpu_mem_total"),
+            "proc": ("gpu_mem_total",),
+            "none": (),
+        }[memory]
+        if event not in trace.events
+    ]
+
     requests = record["requests"]
     rows = []
 
@@ -633,7 +707,7 @@ def analyze_block(
             "block": name,
             "cell": record["cell"],
             "backend": record["backend"],
-            "memory_events": host["memory_events"],
+            "memory": memory,
             # A block that was stored before the option existed held none.
             "pointer_held": host.get("held_pointer", False),
             "request": request,
@@ -691,9 +765,22 @@ def analyze_block(
             gaps.extend(early(trace, entry, start, row))
             gaps.extend(cancellation(trace, request, row))
 
-        # A block of an overhead check without the memory events has no
-        # memory values, which is no gap.
-        if start is not None and host["memory_events"]:
+        # A block without the memory events has no memory values, which is no
+        # gap. One whose harness reads /proc/self takes only the memory of the
+        # GPU from its trace.
+        counters = {
+            "trace": ((ANON, "anon"), (GPU, "gpu")),
+            "proc": ((GPU, "gpu"),),
+            "none": (),
+        }[memory]
+
+        if memory == "proc":
+            values, reasons = resident(attempt, entry, record["memory"]["peak_reset"])
+
+            row.update(values)
+            gaps.extend(reasons)
+
+        if start is not None and counters:
             first = trace.mark("bench.request", attempt[0]["request"])
             close = trace.mark("bench.close", attempt[-1]["request"])
             settled = trace.mark("bench.settled", attempt[-1]["request"])
@@ -708,7 +795,7 @@ def analyze_block(
             if end is None or first is None:
                 gaps.append("no end mark for the memory of the request")
             else:
-                for counter, column in ((ANON, "anon"), (GPU, "gpu")):
+                for counter, column in counters:
                     samples = trace.counters[counter]
                     base = samples.at(start["ts"])
                     peak = samples.peak(start["ts"], end["ts"])
@@ -743,15 +830,18 @@ def analyze_block(
                             samples, first["ts"], settled["ts"]
                         )
 
-                if following is None and close is not None and settled is not None:
-                    row["settle_ms"] = settle(
-                        trace.counters[ANON], close["ts"], settled["ts"]
-                    )
+                # The settle interval and the swap rule need the counters of
+                # the resident memory, which only its events give.
+                if memory == "trace":
+                    if following is None and close is not None and settled is not None:
+                        row["settle_ms"] = settle(
+                            trace.counters[ANON], close["ts"], settled["ts"]
+                        )
 
-                swap = trace.counters[SWAP]
+                    swap = trace.counters[SWAP]
 
-                if swap.at(start["ts"]) != swap.at(end["ts"]):
-                    gaps.append("the swap counter changed during the request")
+                    if swap.at(start["ts"]) != swap.at(end["ts"]):
+                        gaps.append("the swap counter changed during the request")
 
         row["gaps"] = "; ".join(gaps)
         rows.append(row)
@@ -763,7 +853,7 @@ COLUMNS = [
     "block",
     "cell",
     "backend",
-    "memory_events",
+    "memory",
     "pointer_held",
     "request",
     "attempt",
@@ -787,6 +877,7 @@ COLUMNS = [
     "ledger_peak_live_bytes",
     "ledger_peak_committed_bytes",
     "ledger_close_live_bytes",
+    "resident_peak_bytes",
     "anon_peak_bytes",
     "anon_level_bytes",
     "anon_retained_close_bytes",
@@ -905,17 +996,21 @@ def overhead(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     The check of a cell and backend passes when the combined medians of the
     display time differ by less than the range of the block medians without
-    the events.
+    the events. A block whose harness reads /proc/self is no side of it.
     """
     groups: dict[
         tuple[str, str, int, bool], dict[bool, dict[str, list[float]]]
     ] = {}
 
     for row in rows:
-        if not row["warmup"] and "display_ms" in row:
+        if (
+            not row["warmup"]
+            and "display_ms" in row
+            and row["memory"] in ("trace", "none")
+        ):
             key = (row["cell"], row["backend"], row["step"], row["pointer_held"])
             sides = groups.setdefault(key, {True: {}, False: {}})
-            sides[row["memory_events"]].setdefault(row["block"], []).append(
+            sides[row["memory"] == "trace"].setdefault(row["block"], []).append(
                 row["display_ms"]
             )
 

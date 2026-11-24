@@ -23,14 +23,14 @@ sys.modules["analyze"] = analyze
 _SPEC.loader.exec_module(analyze)
 
 
-def row(block: str, memory: bool, display: float) -> dict:
+def row(block: str, memory: bool | str, display: float) -> dict:
     return {
         "block": block,
         "cell": "ordinary",
         "backend": "image-decoder",
         "step": 0,
         "warmup": False,
-        "memory_events": memory,
+        "memory": memory if isinstance(memory, str) else "trace" if memory else "none",
         "pointer_held": False,
         "display_ms": display,
     }
@@ -137,6 +137,131 @@ class Overhead(unittest.TestCase):
 
     def test_a_cell_with_one_side_has_no_check(self) -> None:
         self.assertEqual(analyze.overhead([row("a", True, 100.0)]), [])
+
+    def test_a_block_that_reads_proc_is_no_side_of_a_check(self) -> None:
+        rows = [row("a", "proc", 100.0), row("b", False, 102.0)]
+
+        self.assertEqual(analyze.overhead(rows), [])
+        self.assertEqual(len(analyze.overhead([*rows, row("c", True, 101.0)])), 1)
+
+
+def read(rss: int, peak: int, anon: int, swap: int = 0) -> dict:
+    return {
+        "rss_bytes": rss,
+        "peak_bytes": peak,
+        "anon_bytes": anon,
+        "swap_bytes": swap,
+    }
+
+
+class Resident(unittest.TestCase):
+    def attempt(self) -> list[dict]:
+        """Two requests, the second of which ends its attempt. A read right
+        after a reset still differs from its peak, as two reads of a process
+        that runs may."""
+        return [
+            {"memory": {"request": read(100, 103, 60), "end": read(130, 180, 90)}},
+            {
+                "memory": {
+                    "request": read(130, 134, 90),
+                    "end": read(120, 170, 75),
+                    "settled": read(110, 171, 62),
+                }
+            },
+        ]
+
+    def test_the_peak_rises_above_the_resident_memory_after_the_reset(self) -> None:
+        attempt = self.attempt()
+
+        self.assertEqual(
+            analyze.resident(attempt, attempt[0], True),
+            ({"anon_level_bytes": 60, "resident_peak_bytes": 80}, []),
+        )
+
+    def test_the_last_request_carries_what_the_attempt_retains(self) -> None:
+        attempt = self.attempt()
+
+        self.assertEqual(
+            analyze.resident(attempt, attempt[1], True),
+            (
+                {
+                    "anon_level_bytes": 90,
+                    "resident_peak_bytes": 40,
+                    # Above the anonymous memory at the first request.
+                    "anon_retained_close_bytes": 15,
+                    "anon_retained_settled_bytes": 2,
+                },
+                [],
+            ),
+        )
+
+    def test_a_denied_reset_leaves_no_peak(self) -> None:
+        attempt = self.attempt()
+        values, gaps = analyze.resident(attempt, attempt[0], False)
+
+        self.assertEqual(values, {"anon_level_bytes": 60})
+        self.assertEqual(gaps, ["the platform denied the reset of the peak"])
+
+    def test_a_moved_swap_counter_is_a_gap_of_what_it_spans(self) -> None:
+        attempt = self.attempt()
+        attempt[0]["memory"]["end"]["swap_bytes"] = 4096
+        attempt[1]["memory"]["settled"]["swap_bytes"] = 4096
+
+        self.assertEqual(
+            analyze.resident(attempt, attempt[0], True)[1],
+            ["the swap counter changed during the request"],
+        )
+
+        self.assertEqual(
+            analyze.resident(attempt, attempt[1], True)[1],
+            ["the swap counter changed during the attempt"],
+        )
+
+    def test_swap_that_moved_before_the_last_request_is_a_gap_of_the_attempt(
+        self,
+    ) -> None:
+        attempt = self.attempt()
+
+        for point in ("request", "end", "settled"):
+            attempt[1]["memory"][point]["swap_bytes"] = 4096
+
+        # The peak of the last request spans no change, and what the attempt
+        # retains at its close and after it does.
+        self.assertEqual(
+            analyze.resident(attempt, attempt[1], True)[1],
+            ["the swap counter changed during the attempt"],
+        )
+
+        del attempt[1]["memory"]["settled"]
+
+        self.assertIn(
+            "the swap counter changed during the attempt",
+            analyze.resident(attempt, attempt[1], True)[1],
+        )
+
+    def test_a_request_without_its_reads_has_no_value(self) -> None:
+        attempt = self.attempt()
+        del attempt[1]["memory"]["end"]
+
+        self.assertEqual(
+            analyze.resident(attempt, attempt[1], True),
+            ({}, ["no memory read at the request or at its end"]),
+        )
+
+        del attempt[0]["memory"]
+
+        self.assertEqual(analyze.resident(attempt, attempt[0], True)[0], {})
+
+    def test_an_attempt_without_its_settled_read_retains_only_at_the_close(
+        self,
+    ) -> None:
+        attempt = self.attempt()
+        del attempt[1]["memory"]["settled"]
+        values, gaps = analyze.resident(attempt, attempt[1], True)
+
+        self.assertNotIn("anon_retained_settled_bytes", values)
+        self.assertEqual(values["anon_retained_close_bytes"], 15)
+        self.assertEqual(gaps, ["no memory read at the end of the settle interval"])
 
 
 class Entries(unittest.TestCase):
@@ -306,7 +431,7 @@ class Cancellations(unittest.TestCase):
             "outcome": "ok",
             "terminal": "completed",
             "pointer_held": False,
-            "memory_events": True,
+            "memory": "trace",
             "gaps": "",
             "display_ms": 100.0,
             "frame_period_ms": 16.6,
@@ -316,7 +441,7 @@ class Cancellations(unittest.TestCase):
             **free,
             "block": "b",
             "pointer_held": True,
-            "memory_events": False,
+            "memory": "none",
             "display_ms": 70.0,
             "frame_period_ms": 8.3,
         }

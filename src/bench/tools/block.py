@@ -24,7 +24,15 @@ PACKAGE = "app.hakusan.bench"
 ACTIVITY = f"{PACKAGE}/.BenchActivity"
 RECORDS = f"/sdcard/Android/data/{PACKAGE}/files"
 TRACE = "/data/misc/perfetto-traces/hakusan-bench.perfetto-trace"
-MEMORY_MARKER = "# memory"
+
+# The ends of the trace configuration lines that record memory. A block reads
+# the resident memory from the trace, has its harness read it from /proc/self
+# on a device whose trace holds no throttled event of it, or records none.
+MEMORY_MARKERS = {
+    "trace": (),
+    "proc": ("# resident memory",),
+    "none": ("# resident memory", "# memory"),
+}
 
 # The names that reach a device command line: no character that a shell reads.
 WORD = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -105,12 +113,16 @@ def compilation() -> list[str]:
     return entry
 
 
-def trace_configuration(path: pathlib.Path, memory: bool) -> bytes:
-    """Returns the configuration, without the memory events if not memory."""
-    lines = path.read_text(encoding="utf-8").splitlines()
+def trace_configuration(path: pathlib.Path, memory: str) -> bytes:
+    """Returns the configuration, without the memory events that a block
+    with that source of its memory does not record."""
+    removed = MEMORY_MARKERS[memory]
 
-    if not memory:
-        lines = [line for line in lines if not line.endswith(MEMORY_MARKER)]
+    lines = [
+        line
+        for line in path.read_text(encoding="utf-8").splitlines()
+        if not line.endswith(removed)
+    ]
 
     return ("\n".join(lines) + "\n").encode()
 
@@ -240,7 +252,7 @@ def block(arguments: argparse.Namespace) -> None:
 
     notes = {
         "name": name,
-        "memory_events": arguments.memory,
+        "memory": arguments.memory,
         "held_pointer": arguments.hold_pointer,
         "trace_configuration_sha256": hashlib.sha256(configuration).hexdigest(),
         "compilation": compilation(),
@@ -273,6 +285,7 @@ def block(arguments: argparse.Namespace) -> None:
                 f" --ei settle_ms {arguments.settle_ms}"
                 f" --ei refresh_hz {arguments.refresh_hz}"
                 f" --es record {name}.json"
+                + (" --es memory proc" if arguments.memory == "proc" else "")
             )
 
             if arguments.hold_pointer:
@@ -343,10 +356,12 @@ def main() -> int:
     runner.add_argument("--trace", type=pathlib.Path, default=tools / "trace.textproto")
 
     runner.add_argument(
-        "--no-memory",
-        dest="memory",
-        action="store_false",
-        help="record no memory events, for an overhead check",
+        "--memory",
+        choices=sorted(MEMORY_MARKERS),
+        default="trace",
+        help="where the resident memory comes from: the events of the trace,"
+        " /proc/self on a device whose trace holds no throttled event, or"
+        " none, with no memory event at all, as in a timed block",
     )
 
     runner.set_defaults(run=block)

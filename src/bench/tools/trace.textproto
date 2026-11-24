@@ -3,8 +3,9 @@
 # The host stops the trace, so it has no duration. A full buffer discards new
 # data instead of old data, and the analysis rejects a trace that lost any.
 #
-# block.py removes every line that ends with the memory marker to build the
-# configuration of an overhead check without the memory events.
+# block.py removes every line that ends with a memory marker to build the
+# configuration of a block without the memory events, and the lines of the
+# resident memory alone for a block whose harness reads it from /proc/self.
 
 buffers {
   size_kb: 131072
@@ -42,8 +43,8 @@ data_sources {
       ftrace_events: "power/cpu_frequency"
       ftrace_events: "power/cpu_idle"
 
-      ftrace_events: "kmem/rss_stat"  # memory
-      throttle_rss_stat: true  # memory
+      ftrace_events: "kmem/rss_stat"  # resident memory
+      throttle_rss_stat: true  # resident memory
       ftrace_events: "gpu_mem/gpu_mem_total"  # memory
     }
   }

@@ -142,6 +142,11 @@ internal data class Plan(
   val refresh: Int,
   /** The file name of the record in the external files directory. */
   val record: String,
+  /**
+   * Whether the harness reads its resident memory from `/proc/self`, for a
+   * device whose trace holds no throttled event of it.
+   */
+  val proc: Boolean,
 ) {
   init {
     require(warmups >= 0 && attempts > 0) { "A block needs attempts." }
@@ -181,6 +186,12 @@ internal data class Plan(
         hold = intent.getIntExtra("hold", 3),
         refresh = intent.getIntExtra("refresh_hz", 0),
         record = requireNotNull(intent.getStringExtra("record")),
+        proc =
+          when (intent.getStringExtra("memory")) {
+            null -> false
+            "proc" -> true
+            else -> throw IllegalArgumentException("No such memory source.")
+          },
       )
     }
   }

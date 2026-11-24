@@ -3,6 +3,7 @@ package app.hakusan.bench
 import android.os.Process
 import android.os.SystemClock
 import androidx.compose.runtime.withFrameNanos
+import java.io.IOException
 import java.util.concurrent.Executors
 import kotlin.coroutines.CoroutineContext
 import kotlin.coroutines.cancellation.CancellationException
@@ -59,6 +60,10 @@ internal class TrialRunner(
 
   // The name of the record seeds the offsets, so a block repeats its own.
   private val offsets = Random(plan.record.hashCode())
+
+  // Whether the kernel resets the peak of the resident memory for this
+  // process, which the first reset of a block that reads it shows.
+  private var resets = false
 
   /**
    * The record of the block. It is complete once [run] has returned or thrown,
@@ -119,6 +124,21 @@ internal class TrialRunner(
       }
 
       record.put("conditions", conditions.block(mode, nice))
+
+      if (plan.proc) {
+        val refusal = Resident.resetPeak()
+
+        resets = refusal == null
+
+        record.put(
+          "memory",
+          JSONObject()
+            .put("source", "proc")
+            .put("peak_reset", resets)
+            .put("reset_failure", refusal ?: JSONObject.NULL),
+        )
+      }
+
       record.put("outcome", block())
     } catch (failure: CancellationException) {
       record.put("outcome", "aborted")
@@ -247,6 +267,18 @@ internal class TrialRunner(
         .put("request", request)
         .put("offset_us", offset.inWholeMicroseconds)
         .put("conditions", conditions.request())
+
+    if (plan.proc) {
+      // The peak of the request before this one ends where the next one
+      // starts, as it ends at the next request mark in a trace.
+      session.entry?.getJSONObject("memory")?.put("end", Resident.read().json())
+
+      if (resets) {
+        Resident.resetPeak()?.let { error("A later reset failed: $it") }
+      }
+
+      entry.put("memory", JSONObject().put("request", Resident.read().json()))
+    }
 
     val marked = SystemClock.elapsedRealtimeNanos()
     val clock = JSONObject().put("request", marked)
@@ -471,12 +503,32 @@ internal class TrialRunner(
       }
     }
 
+    // An attempt that ended inside a request has no entry of that request.
+    // The reads of the one before it stay as they are, because the reset of
+    // the lost request already ended its peak.
+    val memory =
+      session.entry?.optJSONObject("memory")?.takeUnless { it.has("end") }
+
     Marks.instant(Marks.close(request))
+    memory?.put("end", closingRead())
     delay(plan.settle)
     Marks.instant(Marks.settled(request))
+    memory?.put("settled", closingRead())
 
     return cleared && idle
   }
+
+  /**
+   * Reads the resident memory at the close of an attempt, or returns null when
+   * the read fails: the close also ends an attempt that another failure ended,
+   * which a second one would hide, and the analysis reports a missing read.
+   */
+  private fun closingRead(): JSONObject? =
+    try {
+      Resident.read().json()
+    } catch (_: IOException) {
+      null
+    }
 
   private fun describe(step: Step): JSONObject =
     when (step) {
@@ -508,7 +560,7 @@ internal class TrialRunner(
      * The version of the record. It rises with every change of a field or of
      * the steps of a cell, so the analysis never pools blocks that differ.
      */
-    const val SCHEMA = 6
+    const val SCHEMA = 7
 
     /** A request that takes longer is a timeout, which stops its block. */
     val WATCHDOG = 10.seconds

@@ -5,7 +5,8 @@ A cell compares a candidate backend with a reference backend on one workload,
 or validates one backend alone. Its timed blocks alternate as AB, BA, AB, BA,
 AB, BA, so that neither backend always runs first or right after the other.
 They record no memory events. The memory of the cell is measured in blocks of
-their own, with the events, in the same alternation.
+their own, from the events of their traces or from /proc/self, in the same
+alternation.
 
 The tool runs block.py once per block and stops at the first block that does
 not complete, because a failed block fails its cell and is never replaced by
@@ -61,8 +62,7 @@ def run_block(
     if arguments.hold_pointer:
         command.append("--hold-pointer")
 
-    if not memory:
-        command.append("--no-memory")
+    command.append(f"--memory={arguments.memory_source if memory else 'none'}")
 
     if subprocess.run(command, check=False).returncode != 0:
         return "not run"
@@ -91,6 +91,15 @@ def main() -> int:
 
     parser.add_argument(
         "--memory-blocks", type=int, default=2, help="memory blocks per backend"
+    )
+
+    parser.add_argument(
+        "--memory-source",
+        choices=("trace", "proc"),
+        default="trace",
+        help="where a memory block reads the resident memory: the events of"
+        " its trace, or /proc/self on a device whose trace holds no throttled"
+        " event",
     )
 
     parser.add_argument("--warmups", type=int, default=5)
