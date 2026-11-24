@@ -7,8 +7,10 @@
 # configuration of a block without the memory events, and the lines of the
 # resident memory alone for a block whose harness reads it from /proc/self.
 
+# A block of the scroll over the long segment at 120 Hz wrote 128 MiB of
+# trace sections and scheduling events, and one with the memory events more.
 buffers {
-  size_kb: 131072
+  size_kb: 524288
   fill_policy: DISCARD
 }
 
