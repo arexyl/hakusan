@@ -41,5 +41,28 @@ class Order(unittest.TestCase):
         self.assertEqual(cell.order(["a"], 3), ["a", "a", "a"])
 
 
+class Outcomes(unittest.TestCase):
+    def record(self, outcome: str, *requests: str) -> dict:
+        return {
+            "outcome": outcome,
+            "requests": [{"outcome": request} for request in requests],
+        }
+
+    def test_a_block_with_a_request_that_succeeded_keeps_its_outcome(self) -> None:
+        self.assertEqual(
+            cell.outcome(self.record("completed", "failed", "ok")), "completed"
+        )
+
+    def test_a_completed_block_without_such_a_request_did_not_complete(self) -> None:
+        for requests in ((), ("failed", "failed")):
+            self.assertNotEqual(
+                cell.outcome(self.record("completed", *requests)), "completed"
+            )
+
+    def test_a_block_that_ended_otherwise_keeps_its_outcome(self) -> None:
+        self.assertEqual(cell.outcome(self.record("stopped", "timeout")), "stopped")
+        self.assertEqual(cell.outcome(self.record("failed")), "failed")
+
+
 if __name__ == "__main__":
     unittest.main()

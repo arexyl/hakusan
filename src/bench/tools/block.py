@@ -25,6 +25,23 @@ ACTIVITY = f"{PACKAGE}/.BenchActivity"
 RECORDS = f"/sdcard/Android/data/{PACKAGE}/files"
 TRACE = "/data/misc/perfetto-traces/hakusan-bench.perfetto-trace"
 
+
+# What finds the recorder of a block among the processes of the device: the
+# name of its trace. The brackets keep the pattern from matching the shell
+# that searches with it.
+RECORDER = TRACE.rsplit("/", 1)[1].replace(".", "[.]")
+
+# Where the device keeps the value of a setting that a block replaced, so
+# that the block after an interrupted one still restores it.
+HELD_REFRESH = "/data/local/tmp/hakusan-bench.min-refresh"
+
+# The exit status of a block that failed while adb reached no device. Such a
+# block ended from outside and has not failed as a block of its cell.
+DETACHED = 3
+
+# The longest wait for a recorder to write its trace and exit.
+RECORDER_SECONDS = 30
+
 # The ends of the trace configuration lines that record memory. A block reads
 # the resident memory from the trace, has its harness read it from /proc/self
 # on a device whose trace holds no throttled event of it, or records none.
@@ -91,6 +108,68 @@ def stop_harness() -> None:
         time.sleep(0.1)
 
     raise Failure("the harness process survived force-stop")
+
+
+def recorders() -> bool:
+    """Returns whether a recorder of a block runs on the device."""
+    return shell(f"pgrep -f '{RECORDER}'", check=False).strip() != ""
+
+
+def attached() -> bool:
+    """Returns whether adb reaches the device that it selects."""
+    return adb("get-state", check=False).strip() == b"device"
+
+
+def end_recorders(signal: str) -> bool:
+    """Signals every recorder of a block, and returns whether all exited."""
+    shell(f"pkill -{signal} -f '{RECORDER}'", check=False)
+
+    deadline = time.monotonic() + RECORDER_SECONDS
+
+    while time.monotonic() < deadline:
+        if not recorders():
+            return True
+
+        time.sleep(0.1)
+
+    return False
+
+
+def recover() -> dict[str, bool]:
+    """Ends what an interrupted block left on the device, and returns what it
+    found.
+
+    A host that loses its power stops no recorder, releases no pointer, and
+    restores no setting. A recorder that stays would trace beside the one of
+    the next block, and a pointer that stays down or a setting that stays
+    would hold the display rate of a block that asks for neither.
+
+    It runs before the harness of that block is stopped, because a pointer is
+    released on the window that holds it.
+    """
+    x, y = center()
+
+    # A release without a pointer changes nothing.
+    shell(f"input motionevent UP {x} {y}", check=False)
+
+    kept = shell(f"cat {HELD_REFRESH} 2>/dev/null", check=False).strip()
+
+    if kept != "":
+        if not SETTING.fullmatch(kept):
+            raise Failure(f"{HELD_REFRESH} holds {kept!r}")
+
+        restore_refresh(kept)
+
+    left = recorders()
+
+    # A recorder that does not write its trace in time is ended without it.
+    if left and not end_recorders("TERM") and not end_recorders("KILL"):
+        raise Failure("the recorder of an earlier block did not exit")
+
+    # Its trace holds other processes too, so it does not stay either.
+    shell(f"rm -f {TRACE}")
+
+    return {"recorder": left, "refresh_setting": kept != ""}
 
 
 def compilation() -> list[str]:
@@ -194,6 +273,16 @@ def plain(value: str) -> str:
     return value
 
 
+def refresh_setting() -> str:
+    """Returns the value of the lowest refresh rate of the display."""
+    value = shell(f"settings get system {MIN_REFRESH}").strip()
+
+    if not SETTING.fullmatch(value):
+        raise Failure(f"the setting {MIN_REFRESH} holds {value!r}")
+
+    return value
+
+
 def hold_refresh(refresh: int) -> str:
     """Sets the lowest refresh rate of the display to the rate, and returns
     the value that the setting held.
@@ -201,11 +290,11 @@ def hold_refresh(refresh: int) -> str:
     A device lowers the rate of a display on which nothing changes, and a
     harness that draws one frame per request is such a display.
     """
-    previous = shell(f"settings get system {MIN_REFRESH}").strip()
+    previous = refresh_setting()
 
-    if not SETTING.fullmatch(previous):
-        raise Failure(f"the setting {MIN_REFRESH} holds {previous!r}")
-
+    # The device keeps the value before the setting changes, so a block that
+    # is interrupted from here on leaves what restores it.
+    shell(f"echo {previous} > {HELD_REFRESH}")
     shell(f"settings put system {MIN_REFRESH} {refresh}")
 
     return previous
@@ -217,6 +306,8 @@ def restore_refresh(previous: str) -> None:
         shell(f"settings delete system {MIN_REFRESH}")
     else:
         shell(f"settings put system {MIN_REFRESH} {previous}")
+
+    shell(f"rm -f {HELD_REFRESH}")
 
 
 def center() -> tuple[int, int]:
@@ -230,6 +321,15 @@ def center() -> tuple[int, int]:
     width, height = sizes[-1]
 
     return int(width) // 2, int(height) // 2
+
+
+def require_device(arguments: argparse.Namespace) -> None:
+    """Fails with its own exit status unless adb reaches the device."""
+    if not attached():
+        raise Failure(
+            "adb reaches no device; with several attached, ANDROID_SERIAL"
+            " selects one"
+        )
 
 
 def install(arguments: argparse.Namespace) -> None:
@@ -247,11 +347,16 @@ def block(arguments: argparse.Namespace) -> None:
     requests = arguments.warmups + arguments.attempts
 
     output.mkdir(parents=True, exist_ok=True)
+
+    recovered = recover()
+
     stop_harness()
     shell(f"rm -f {RECORDS}/{name}.json {RECORDS}/{name}.json.partial")
 
     notes = {
         "name": name,
+        "recovered": recovered,
+        "min_refresh_rate": refresh_setting(),
         "memory": arguments.memory,
         "held_pointer": arguments.hold_pointer,
         "trace_configuration_sha256": hashlib.sha256(configuration).hexdigest(),
@@ -366,6 +471,9 @@ def main() -> int:
 
     runner.set_defaults(run=block)
 
+    checker = commands.add_parser("attached", help=require_device.__doc__)
+    checker.set_defaults(run=require_device)
+
     arguments = parser.parse_args()
 
     try:
@@ -373,7 +481,8 @@ def main() -> int:
     except Failure as failure:
         print(f"block.py: {failure}", file=sys.stderr)
 
-        return 1
+        # A device that adb no longer reaches ended the step from outside.
+        return 1 if attached() else DETACHED
 
     return 0
 

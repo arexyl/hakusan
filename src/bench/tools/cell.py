@@ -24,6 +24,11 @@ import time
 
 TOOLS = pathlib.Path(__file__).resolve().parent
 
+# The exit status of block.py for a block that ended from outside, as when
+# adb no longer reaches the device. Its cell then ended from outside too and
+# has not failed, so the tool exits with the same status.
+INTERRUPTED = 3
+
 
 def order(backends: list[str], blocks: int) -> list[str]:
     """Returns the backend of each block of a cell with `blocks` blocks per
@@ -39,7 +44,7 @@ def order(backends: list[str], blocks: int) -> list[str]:
 def run_block(
     arguments: argparse.Namespace, name: str, backend: str, memory: bool
 ) -> str:
-    """Runs one block and returns the outcome that its record states."""
+    """Runs one block and returns how it ended."""
     command = [
         sys.executable,
         "-I",
@@ -64,18 +69,44 @@ def run_block(
 
     command.append(f"--memory={arguments.memory_source if memory else 'none'}")
 
-    if subprocess.run(command, check=False).returncode != 0:
+    status = subprocess.run(command, check=False).returncode
+
+    # A negative status is the signal that ended the block.
+    if status == INTERRUPTED or status < 0:
+        return "interrupted"
+
+    if status != 0:
         return "not run"
 
     record = json.loads(
         (arguments.output / f"{name}.json").read_text(encoding="utf-8")
     )
 
+    return outcome(record)
+
+
+def outcome(record: dict) -> str:
+    """Returns how a block ended: the outcome of its record, unless no
+    request of a completed block went as its step expects.
+
+    Such a block measured nothing, as with a harness that packages no library
+    of its backend, and the blocks after it would measure nothing either.
+    """
+    succeeded = any(request["outcome"] == "ok" for request in record["requests"])
+
+    if record["outcome"] == "completed" and not succeeded:
+        return "completed without a request that succeeded"
+
     return record["outcome"]
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    # No abbreviation, so that a tool that passes options on can tell which
+    # ones it passes.
+    parser = argparse.ArgumentParser(
+        description=__doc__.splitlines()[0], allow_abbrev=False
+    )
+
     parser.add_argument("--cell", required=True)
 
     parser.add_argument(
@@ -135,11 +166,16 @@ def main() -> int:
         if index != 0:
             time.sleep(arguments.pause_seconds)
 
-        outcome = run_block(arguments, name, backend, with_memory)
+        ended = run_block(arguments, name, backend, with_memory)
 
-        print(f"{name}: {outcome}", flush=True)
+        print(f"{name}: {ended}", flush=True)
 
-        if outcome != "completed":
+        if ended == "interrupted":
+            print(f"cell.py: the cell ended from outside at {name}", file=sys.stderr)
+
+            return INTERRUPTED
+
+        if ended != "completed":
             print(f"cell.py: the cell stops at {name}", file=sys.stderr)
 
             return 1
