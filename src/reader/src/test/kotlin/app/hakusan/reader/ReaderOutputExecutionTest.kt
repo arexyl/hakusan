@@ -804,9 +804,10 @@ class ReaderOutputExecutionTest {
       val requests = contentOwner()
       val presenter = TestPresenter(requests)
       val input = liveInput(count = 8)
+      val later = liveInput(count = 8)
 
       source.supply(input)
-      source.supply(completeInput(count = 8))
+      source.supply(later)
       repeat(2) { san.script(rowsOfFourBytes(width = 4, height = 2)) }
 
       val ended = submit(requests)
@@ -830,7 +831,16 @@ class ReaderOutputExecutionTest {
 
       val next = submit(requests, unit = 1)
       val following = executing(requests)
+
+      // The job cannot end before presentation holds its first revision, or
+      // its end would take that revision back and publish once.
+      later.receiveThrough(4)
+
       val early = presenter.take()
+
+      later.receiveThrough(8)
+      later.end()
+
       val last = presenter.take()
 
       // Both kept targets held rows of the first output, and the second one
