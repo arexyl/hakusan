@@ -118,6 +118,40 @@ class ReaderEngineDeviceTest {
   }
 
   @Test
+  fun largePageAtTheWidthOfTheViewportIsTheAreaAverageOfItsPixels() = onStage {
+    val page = DeviceCorpus.file(LARGE)
+
+    val grid = ReaderImageGeometry(page.width, page.height).grid(VIEWPORT_WIDTH)
+
+    val request =
+      submit(ReaderOutputRequest.Whole(maxOutputWidth = VIEWPORT_WIDTH))
+
+    execute(PacedInput(page.bytes))
+
+    assertEquals(ReaderContentTerminal.Completed.of(), request.terminal)
+
+    val scaled = assertShown(grid.width, grid.height)
+
+    // The platform decodes the image only to state what the page holds, and
+    // the manifest decides whether it did.
+    val image = decodeWithPlatform(page.bytes)
+
+    val expected =
+      try {
+        assertEquals(page.samplesSha256, rgbSha256(image))
+
+        areaAverage(image, grid.width, grid.height)
+      } finally {
+        image.recycle()
+      }
+
+    // The width of the page is no multiple of that of the grid, so a pixel
+    // of the grid covers parts of pixels of the image.
+    assertArrayEquals(expected, scaled)
+    assertIdle()
+  }
+
+  @Test
   fun bandOfThePageHasTheRowsOfThePage() = onStage {
     val page = DeviceCorpus.file(ORDINARY)
 
@@ -598,6 +632,10 @@ class ReaderEngineDeviceTest {
   private companion object {
     const val ORDINARY = "journey/ordinary.png"
     const val LONG = "journey/long.png"
+    const val LARGE = "qualification/timed/large.png"
+
+    /** The width of the viewport of the reference workload. */
+    const val VIEWPORT_WIDTH = 1080
 
     /** The rows of one band of the long segment: one viewport at 1:1. */
     const val BAND_ROWS = 2560

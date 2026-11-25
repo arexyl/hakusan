@@ -78,6 +78,7 @@ androidComponents {
             "journey/ordinary.png",
             "journey/long.png",
             "qualification/fault/png-truncated-prefix.png",
+            "qualification/timed/large.png",
           )
       }
 

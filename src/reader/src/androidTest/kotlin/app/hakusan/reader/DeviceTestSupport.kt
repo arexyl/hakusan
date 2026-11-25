@@ -71,7 +71,44 @@ internal class CorpusFile(
   /** The SHA-256 of the decoded image as rows of RGB samples. */
   val samplesSha256: String
     get() = stated.getJSONObject("master").getString("rgb_sha256")
+
+  /**
+   * The part of each panel of the page that its texture fills alone: below the
+   * label and as far inside the panel as the label lies, which keeps the border
+   * of the panel and the label at a distance of several pixels.
+   */
+  val regions: List<CorpusRegion>
+    get() {
+      val panels = stated.getJSONObject("master").getJSONArray("regions")
+
+      return (0..<panels.length()).map(panels::getJSONObject).map { panel ->
+        val label = panel.getJSONArray("label_box")
+        val left = panel.getInt("x")
+        val top = panel.getInt("y")
+        val inset = label.getInt(0) - left
+
+        CorpusRegion(
+          texture = panel.getString("texture"),
+          left = left + inset,
+          top = label.getInt(1) + label.getInt(3) + inset,
+          right = left + panel.getInt("width") - inset,
+          bottom = top + panel.getInt("height") - inset,
+        )
+      }
+    }
 }
+
+/**
+ * An area of one texture of a page in pixels of its image, the far edges
+ * exclusive.
+ */
+internal data class CorpusRegion(
+  val texture: String,
+  val left: Int,
+  val top: Int,
+  val right: Int,
+  val bottom: Int,
+)
 
 internal fun hex(bytes: ByteArray): String =
   bytes.joinToString("") { "%02x".format(it) }
