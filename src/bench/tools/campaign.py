@@ -129,6 +129,17 @@ def forwardable(options: list[str]) -> list[str]:
     return options
 
 
+def from_outside(status: int) -> bool:
+    """Returns whether an exit status tells that the process was ended from
+    outside and did not end itself.
+
+    A negative status is the signal that ended it. Windows has no signals: a
+    forced stop leaves the status -1 there and a fault an NTSTATUS error, and
+    both arrive as unsigned numbers with the highest of 32 bits set.
+    """
+    return status == INTERRUPTED or status < 0 or status >= 0x80000000
+
+
 def patiently(action: Callable[[], object]) -> None:
     """Runs a change of the file system that another process may hold up for
     a moment, as a scanner does on a file that was just written."""
@@ -267,8 +278,7 @@ def run_plan(
             raise Refused("cell.py refused its arguments")
 
         # The entry keeps its first state, so the next run measures it again.
-        # A negative status is the signal that ended the cell.
-        if status == INTERRUPTED or status < 0:
+        if from_outside(status):
             raise Failure(f"{entry.name} ended from outside")
 
         result = "completed" if status == 0 else "failed"

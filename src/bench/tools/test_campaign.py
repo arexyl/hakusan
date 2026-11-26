@@ -220,7 +220,10 @@ class Runs(unittest.TestCase):
     def test_a_cell_that_ended_from_outside_stops_the_run_and_runs_again(
         self,
     ) -> None:
-        for status in (campaign.INTERRUPTED, -15):
+        # A signal, and what Windows reports for a forced stop and for a break.
+        statuses = (campaign.INTERRUPTED, -15, 0xFFFFFFFF, 0xC000013A)
+
+        for status in statuses:
             with self.subTest(status):
                 self.started.clear()
                 self.statuses[ORDINARY.name] = status
@@ -245,7 +248,9 @@ class Runs(unittest.TestCase):
 
                 (self.output / ORDINARY.name).rmdir()
 
-        self.assertEqual(len(list(self.output.glob("*.interrupted-*"))), 2)
+        kept = list(self.output.glob("*.interrupted-*"))
+
+        self.assertEqual(len(kept), len(statuses))
 
     def test_one_run_holds_the_output_directory(self) -> None:
         with campaign.exclusive(self.output):

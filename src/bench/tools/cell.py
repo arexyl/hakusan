@@ -29,6 +29,17 @@ TOOLS = pathlib.Path(__file__).resolve().parent
 INTERRUPTED = 3
 
 
+def from_outside(status: int) -> bool:
+    """Returns whether an exit status tells that the process was ended from
+    outside and did not end itself.
+
+    A negative status is the signal that ended it. Windows has no signals: a
+    forced stop leaves the status -1 there and a fault an NTSTATUS error, and
+    both arrive as unsigned numbers with the highest of 32 bits set.
+    """
+    return status == INTERRUPTED or status < 0 or status >= 0x80000000
+
+
 def order(backends: list[str], blocks: int) -> list[str]:
     """Returns the backend of each block of a cell with `blocks` blocks per
     backend: the backends in their order, then reversed, and so on."""
@@ -74,8 +85,7 @@ def run_block(
 
     status = subprocess.run(command, check=False).returncode
 
-    # A negative status is the signal that ended the block.
-    if status == INTERRUPTED or status < 0:
+    if from_outside(status):
         return "interrupted"
 
     if status != 0:

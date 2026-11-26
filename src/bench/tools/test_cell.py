@@ -41,6 +41,16 @@ class Order(unittest.TestCase):
         self.assertEqual(cell.order(["a"], 3), ["a", "a", "a"])
 
 
+class Statuses(unittest.TestCase):
+    def test_a_status_from_outside_is_told_from_the_end_of_the_tool(self) -> None:
+        # A signal, and what Windows reports for a forced stop and for a break.
+        for status in (cell.INTERRUPTED, -15, 0xFFFFFFFF, 0xC000013A):
+            self.assertTrue(cell.from_outside(status), status)
+
+        for status in (0, 1, 2):
+            self.assertFalse(cell.from_outside(status), status)
+
+
 class Outcomes(unittest.TestCase):
     def record(self, outcome: str, *requests: str) -> dict:
         return {
